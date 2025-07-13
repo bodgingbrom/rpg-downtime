@@ -20,6 +20,7 @@ from discord.ext.commands import Context
 from dotenv import load_dotenv
 
 from database import DatabaseManager
+from config import Settings
 
 load_dotenv()
 
@@ -137,6 +138,7 @@ class DiscordBot(commands.Bot):
         self.database = None
         self.bot_prefix = os.getenv("PREFIX")
         self.invite_link = os.getenv("INVITE_LINK")
+        self.settings: Settings | None = None
 
     async def init_db(self) -> None:
         async with aiosqlite.connect(
@@ -191,6 +193,7 @@ class DiscordBot(commands.Bot):
             f"Running on: {platform.system()} {platform.release()} ({os.name})"
         )
         self.logger.info("-------------------")
+        self.settings = Settings.from_yaml()
         await self.init_db()
         await self.load_cogs()
         self.status_task.start()
