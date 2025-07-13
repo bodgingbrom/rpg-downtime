@@ -14,6 +14,10 @@ import random
 import sys
 
 import aiosqlite
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+
+from derby import Base
 import discord
 from discord.ext import commands, tasks
 from discord.ext.commands import Context
@@ -140,16 +144,19 @@ class DiscordBot(commands.Bot):
         self.invite_link = os.getenv("INVITE_LINK")
         self.settings: Settings | None = None
 
-    async def init_db(self) -> None:
-        async with aiosqlite.connect(
-            f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
-        ) as db:
+    async def init_db(self) -> Engine:
+        db_path = f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
+        async with aiosqlite.connect(db_path) as db:
             with open(
                 f"{os.path.realpath(os.path.dirname(__file__))}/database/schema.sql",
-                encoding = "utf-8"
+                encoding="utf-8",
             ) as file:
                 await db.executescript(file.read())
             await db.commit()
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        Base.metadata.create_all(engine)
+        return engine
 
     async def load_cogs(self) -> None:
         """
@@ -194,13 +201,14 @@ class DiscordBot(commands.Bot):
         )
         self.logger.info("-------------------")
         self.settings = Settings.from_yaml()
-        await self.init_db()
+        engine = await self.init_db()
         await self.load_cogs()
         self.status_task.start()
         self.database = DatabaseManager(
             connection=await aiosqlite.connect(
                 f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
-            )
+            ),
+            engine=engine,
         )
 
     async def on_message(self, message: discord.Message) -> None:
