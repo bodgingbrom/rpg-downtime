@@ -4,3 +4,4 @@ discord.py==2.5.2
 python-dotenv
 pydantic
 PyYAML
+SQLAlchemy>=2

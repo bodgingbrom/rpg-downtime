@@ -7,11 +7,13 @@ Version: 6.3.0
 """
 
 import aiosqlite
+from sqlalchemy.engine import Engine
 
 
 class DatabaseManager:
-    def __init__(self, *, connection: aiosqlite.Connection) -> None:
+    def __init__(self, *, connection: aiosqlite.Connection, engine: Engine) -> None:
         self.connection = connection
+        self.engine = engine
 
     async def add_warn(
         self, user_id: int, server_id: int, moderator_id: int, reason: str
