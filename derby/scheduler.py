@@ -173,7 +173,7 @@ class DerbyScheduler:
             else:
                 msg = f"You lost your bet of {bet.amount} coins on race {race_id}."
             try:
-                await user.send(msg, ephemeral=True)
+                await user.send(msg)
             except (discord.Forbidden, discord.HTTPException):
                 continue
 
