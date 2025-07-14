@@ -1,9 +1,9 @@
 import pytest
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from derby.models import Base, Racer, Race, Bet, Wallet
-from derby.logic import calculate_odds, simulate_race, resolve_payouts
+from derby.logic import calculate_odds, resolve_payouts, simulate_race
+from derby.models import Base, Bet, Race, Racer, Wallet
 
 
 @pytest.fixture()
@@ -47,10 +47,12 @@ async def test_resolve_payouts(session: AsyncSession):
     await session.commit()
     await session.refresh(race)
 
-    session.add_all([
-        Bet(race_id=race.id, user_id=1, racer_id=r1.id, amount=10),
-        Bet(race_id=race.id, user_id=2, racer_id=r2.id, amount=20),
-    ])
+    session.add_all(
+        [
+            Bet(race_id=race.id, user_id=1, racer_id=r1.id, amount=10),
+            Bet(race_id=race.id, user_id=2, racer_id=r2.id, amount=20),
+        ]
+    )
     session.add(Wallet(user_id=1, balance=50))
     await session.commit()
 

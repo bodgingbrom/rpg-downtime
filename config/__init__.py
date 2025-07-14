@@ -19,4 +19,5 @@ class Settings(BaseSettings):
             data = yaml.safe_load(f) or {}
         return cls(**data)
 
+
 __all__ = ["Settings"]

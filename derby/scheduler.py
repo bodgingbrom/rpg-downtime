@@ -4,6 +4,7 @@ import asyncio
 import os
 import random
 from datetime import datetime
+from typing import Any
 
 import discord
 from discord.ext import tasks
@@ -41,8 +42,12 @@ class DerbyScheduler:
             return
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-            inspector = inspect(conn.sync_connection)
-            columns = {c["name"] for c in inspector.get_columns("racers")}
+
+            def get_columns(sync_conn: Any) -> set[str]:
+                inspector = inspect(sync_conn)
+                return {c["name"] for c in inspector.get_columns("racers")}
+
+            columns = await conn.run_sync(get_columns)
             new_columns = {
                 "speed": "INTEGER",
                 "cornering": "INTEGER",
