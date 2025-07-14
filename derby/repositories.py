@@ -55,8 +55,8 @@ async def create_racer(
     speed: int = 0,
     cornering: int = 0,
     stamina: int = 0,
-    temperament: int = 0,
-    mood: int = 0,
+    temperament: str = "Quirky",
+    mood: int = 3,
     injuries: str = "",
 ) -> Racer:
     return await _create(

@@ -60,20 +60,18 @@ class DerbyScheduler:
 
             columns = await conn.run_sync(get_columns)
             new_columns = {
-                "speed": "INTEGER",
-                "cornering": "INTEGER",
-                "stamina": "INTEGER",
-                "temperament": "INTEGER",
-                "mood": "INTEGER",
-                "injuries": "VARCHAR",
+                "speed": ("INTEGER", "0"),
+                "cornering": ("INTEGER", "0"),
+                "stamina": ("INTEGER", "0"),
+                "temperament": ("VARCHAR", "'Quirky'"),
+                "mood": ("INTEGER", "3"),
+                "injuries": ("VARCHAR", "''"),
             }
-            for name, col_type in new_columns.items():
+            for name, (col_type, default) in new_columns.items():
                 if name not in columns:
                     await conn.execute(
                         text(
-                            f"ALTER TABLE racers ADD COLUMN {name} {col_type} DEFAULT 0"
-                            if col_type == "INTEGER"
-                            else f"ALTER TABLE racers ADD COLUMN {name} {col_type} DEFAULT ''"
+                            f"ALTER TABLE racers ADD COLUMN {name} {col_type} DEFAULT {default}"
                         )
                     )
         self._initialized = True

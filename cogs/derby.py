@@ -232,9 +232,7 @@ class Derby(commands.Cog, name="derby"):
         embed.add_field(
             name="Stamina", value=_stat_band(racer_obj.stamina), inline=True
         )
-        embed.add_field(
-            name="Temperament", value=_stat_band(racer_obj.temperament), inline=True
-        )
+        embed.add_field(name="Temperament", value=racer_obj.temperament, inline=True)
         embed.add_field(name="Mood", value=str(racer_obj.mood), inline=True)
         embed.add_field(
             name="Injuries", value=racer_obj.injuries or "None", inline=False
@@ -270,7 +268,7 @@ class Derby(commands.Cog, name="derby"):
         speed="Speed stat",
         cornering="Cornering stat",
         stamina="Stamina stat",
-        temperament="Temperament stat",
+        temperament="Temperament",
     )
     async def add_racer(
         self,
@@ -281,21 +279,21 @@ class Derby(commands.Cog, name="derby"):
         speed: app_commands.Range[int, 0, 31] | None = None,
         cornering: app_commands.Range[int, 0, 31] | None = None,
         stamina: app_commands.Range[int, 0, 31] | None = None,
-        temperament: app_commands.Range[int, 0, 31] | None = None,
+        temperament: str | None = None,
     ) -> None:
         if random_stats:
             stats = {
                 "speed": random.randint(0, 31),
                 "cornering": random.randint(0, 31),
                 "stamina": random.randint(0, 31),
-                "temperament": random.randint(0, 31),
+                "temperament": random.choice(list(logic.TEMPERAMENTS)),
             }
         else:
             stats = {
                 "speed": speed or 0,
                 "cornering": cornering or 0,
                 "stamina": stamina or 0,
-                "temperament": temperament or 0,
+                "temperament": temperament or "Quirky",
             }
         async with self.bot.scheduler.sessionmaker() as session:
             racer = await repo.create_racer(
@@ -311,7 +309,7 @@ class Derby(commands.Cog, name="derby"):
         speed="Speed stat",
         cornering="Cornering stat",
         stamina="Stamina stat",
-        temperament="Temperament stat",
+        temperament="Temperament",
     )
     async def edit_racer(
         self,
@@ -321,7 +319,7 @@ class Derby(commands.Cog, name="derby"):
         speed: app_commands.Range[int, 0, 31] | None = None,
         cornering: app_commands.Range[int, 0, 31] | None = None,
         stamina: app_commands.Range[int, 0, 31] | None = None,
-        temperament: app_commands.Range[int, 0, 31] | None = None,
+        temperament: str | None = None,
     ) -> None:
         updates: dict[str, int | str] = {}
         if name is not None:

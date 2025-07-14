@@ -10,6 +10,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import models
 
+TEMPERAMENTS = {
+    "Agile": {"up": "speed", "down": "stamina"},
+    "Reckless": {"up": "speed", "down": "cornering"},
+    "Tactical": {"up": "cornering", "down": "speed"},
+    "Burly": {"up": "stamina", "down": "cornering"},
+    "Steady": {"up": "stamina", "down": "speed"},
+    "Sharpshift": {"up": "cornering", "down": "stamina"},
+    "Quirky": {"up": None, "down": None},
+}
+
+TEMPERAMENT_MODIFIER = 0.1
+
+
+def apply_temperament(
+    stats: Dict[str, int], temperament: str, modifier: float = TEMPERAMENT_MODIFIER
+) -> Dict[str, int]:
+    """Return ``stats`` adjusted for ``temperament``.
+
+    ``modifier`` is the percentage bonus or penalty applied to the affected
+    statistics. Unknown temperaments return stats unchanged.
+    """
+
+    result = stats.copy()
+    t = TEMPERAMENTS.get(temperament)
+    if not t:
+        return result
+
+    up = t.get("up")
+    down = t.get("down")
+
+    if up is not None:
+        result[up] = int(round(result[up] * (1 + modifier)))
+    if down is not None:
+        result[down] = int(round(result[down] * (1 - modifier)))
+    return result
+
 
 def calculate_odds(
     racers: Sequence[models.Racer] | Sequence[int],

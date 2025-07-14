@@ -20,8 +20,8 @@ class Racer(Base):
     speed: Mapped[int] = mapped_column(Integer, default=0)
     cornering: Mapped[int] = mapped_column(Integer, default=0)
     stamina: Mapped[int] = mapped_column(Integer, default=0)
-    temperament: Mapped[int] = mapped_column(Integer, default=0)
-    mood: Mapped[int] = mapped_column(Integer, default=0)
+    temperament: Mapped[str] = mapped_column(String, default="Quirky")
+    mood: Mapped[int] = mapped_column(Integer, default=3)
     injuries: Mapped[str] = mapped_column(String, default="")
 
 

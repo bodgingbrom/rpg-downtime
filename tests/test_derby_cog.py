@@ -314,14 +314,14 @@ async def test_add_racer_with_stats(tmp_path: Path) -> None:
         speed=20,
         cornering=21,
         stamina=22,
-        temperament=23,
+        temperament="Agile",
     )
 
     async with sessionmaker() as session:
         racer = (await session.execute(select(models.Racer))).scalars().first()
 
     assert racer.speed == 20 and racer.cornering == 21
-    assert racer.stamina == 22 and racer.temperament == 23
+    assert racer.stamina == 22 and racer.temperament == "Agile"
 
 
 @pytest.mark.asyncio
@@ -341,7 +341,9 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
     owner = types.SimpleNamespace(id=99)
 
-    with patch("random.randint", side_effect=[1, 2, 3, 4]):
+    with patch("random.randint", side_effect=[1, 2, 3]), patch(
+        "random.choice", return_value="Burly"
+    ):
         await cog.add_racer(ctx, name="Lucky", owner=owner, random_stats=True)
 
     async with sessionmaker() as session:
@@ -351,7 +353,7 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
         1,
         2,
         3,
-        4,
+        "Burly",
     ]
 
 
@@ -406,11 +408,11 @@ async def test_race_info_bands(tmp_path: Path) -> None:
             speed=31,
             cornering=30,
             stamina=27,
-            temperament=10,
+            temperament="Reckless",
         )
 
     await cog.race_info(ctx, racer=racer.id)
 
     embed = ctx.sent[-1]["embed"]
     values = [f.value for f in embed.fields[:4]]
-    assert values == ["Perfect", "Fantastic", "Very Good", "Decent"]
+    assert values == ["Perfect", "Fantastic", "Very Good", "Reckless"]
