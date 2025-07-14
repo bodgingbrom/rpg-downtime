@@ -14,17 +14,17 @@ import random
 import sys
 
 import aiosqlite
-from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
-
-from derby import Base
 import discord
 from discord.ext import commands, tasks
 from discord.ext.commands import Context
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 
-from database import DatabaseManager
 from config import Settings
+from database import DatabaseManager
+from derby import Base
+from derby.scheduler import DerbyScheduler
 
 load_dotenv()
 
@@ -143,6 +143,7 @@ class DiscordBot(commands.Bot):
         self.bot_prefix = os.getenv("PREFIX")
         self.invite_link = os.getenv("INVITE_LINK")
         self.settings: Settings | None = None
+        self.scheduler: DerbyScheduler | None = None
 
     async def init_db(self) -> Engine:
         db_path = f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
@@ -210,6 +211,8 @@ class DiscordBot(commands.Bot):
             ),
             engine=engine,
         )
+        self.scheduler = DerbyScheduler(self)
+        await self.scheduler.start()
 
     async def on_message(self, message: discord.Message) -> None:
         """
