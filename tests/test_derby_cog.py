@@ -49,3 +49,35 @@ async def test_race_upcoming(tmp_path: Path) -> None:
     assert ctx.sent and ctx.sent[0]["embed"].title == "Upcoming Race"
     fields = ctx.sent[0]["embed"].fields
     assert fields[0].name == "Race ID" and fields[0].value == str(race.id)
+
+
+@pytest.mark.asyncio
+async def test_race_info(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1, default_wallet=100, retirement_threshold=65
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session,
+            name="Bolt",
+            owner_id=1,
+            speed=5,
+            cornering=4,
+            stamina=6,
+            temperament=7,
+            mood=3,
+            injuries="none",
+        )
+
+    await cog.race_info(ctx, racer.id)
+
+    assert ctx.sent
+    embed = ctx.sent[0]["embed"]
+    assert embed.title == "Bolt"

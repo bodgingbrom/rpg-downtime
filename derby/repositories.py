@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import TypeVar, Type
+from typing import Type, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Racer, Race, Bet, Wallet, CourseSegment, GuildSettings
+from .models import Bet, CourseSegment, GuildSettings, Race, Racer, Wallet
 
 ModelT = TypeVar("ModelT", Racer, Race, Bet, Wallet, CourseSegment, GuildSettings)
 
@@ -17,12 +17,16 @@ async def _create(session: AsyncSession, model: Type[ModelT], **kwargs) -> Model
     return obj
 
 
-async def _get(session: AsyncSession, model: Type[ModelT], obj_id: int) -> ModelT | None:
+async def _get(
+    session: AsyncSession, model: Type[ModelT], obj_id: int
+) -> ModelT | None:
     result = await session.get(model, obj_id)
     return result
 
 
-async def _update(session: AsyncSession, model: Type[ModelT], obj_id: int, **kwargs) -> ModelT | None:
+async def _update(
+    session: AsyncSession, model: Type[ModelT], obj_id: int, **kwargs
+) -> ModelT | None:
     obj = await _get(session, model, obj_id)
     if obj is None:
         return None
@@ -41,8 +45,32 @@ async def _delete(session: AsyncSession, model: Type[ModelT], obj_id: int) -> No
 
 
 # Racer
-async def create_racer(session: AsyncSession, **kwargs) -> Racer:
-    return await _create(session, Racer, **kwargs)
+async def create_racer(
+    session: AsyncSession,
+    *,
+    name: str,
+    owner_id: int,
+    retired: bool = False,
+    speed: int = 0,
+    cornering: int = 0,
+    stamina: int = 0,
+    temperament: int = 0,
+    mood: int = 0,
+    injuries: str = "",
+) -> Racer:
+    return await _create(
+        session,
+        Racer,
+        name=name,
+        owner_id=owner_id,
+        retired=retired,
+        speed=speed,
+        cornering=cornering,
+        stamina=stamina,
+        temperament=temperament,
+        mood=mood,
+        injuries=injuries,
+    )
 
 
 async def get_racer(session: AsyncSession, racer_id: int) -> Racer | None:
@@ -113,11 +141,15 @@ async def create_course_segment(session: AsyncSession, **kwargs) -> CourseSegmen
     return await _create(session, CourseSegment, **kwargs)
 
 
-async def get_course_segment(session: AsyncSession, segment_id: int) -> CourseSegment | None:
+async def get_course_segment(
+    session: AsyncSession, segment_id: int
+) -> CourseSegment | None:
     return await _get(session, CourseSegment, segment_id)
 
 
-async def update_course_segment(session: AsyncSession, segment_id: int, **kwargs) -> CourseSegment | None:
+async def update_course_segment(
+    session: AsyncSession, segment_id: int, **kwargs
+) -> CourseSegment | None:
     return await _update(session, CourseSegment, segment_id, **kwargs)
 
 
@@ -130,14 +162,17 @@ async def create_guild_settings(session: AsyncSession, **kwargs) -> GuildSetting
     return await _create(session, GuildSettings, **kwargs)
 
 
-async def get_guild_settings(session: AsyncSession, guild_id: int) -> GuildSettings | None:
+async def get_guild_settings(
+    session: AsyncSession, guild_id: int
+) -> GuildSettings | None:
     return await _get(session, GuildSettings, guild_id)
 
 
-async def update_guild_settings(session: AsyncSession, guild_id: int, **kwargs) -> GuildSettings | None:
+async def update_guild_settings(
+    session: AsyncSession, guild_id: int, **kwargs
+) -> GuildSettings | None:
     return await _update(session, GuildSettings, guild_id, **kwargs)
 
 
 async def delete_guild_settings(session: AsyncSession, guild_id: int) -> None:
     await _delete(session, GuildSettings, guild_id)
-
