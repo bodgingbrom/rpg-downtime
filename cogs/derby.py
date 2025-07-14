@@ -337,7 +337,7 @@ class Derby(commands.Cog, name="derby"):
             if not racers:
                 await context.send("No racers available", ephemeral=True)
                 return
-            participants = random.sample(racers, min(3, len(racers)))
+            participants = random.sample(racers, min(8, len(racers)))
             placements, _log = logic.simulate_race(
                 {"racers": participants}, seed=race.id
             )
