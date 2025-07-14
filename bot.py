@@ -12,9 +12,11 @@ import os
 import platform
 import random
 import sys
+from datetime import datetime
 
 import aiosqlite
 import discord
+import sentry_sdk
 from discord.ext import commands, tasks
 from discord.ext.commands import Context
 from dotenv import load_dotenv
@@ -27,6 +29,7 @@ from derby import Base
 from derby.scheduler import DerbyScheduler
 
 load_dotenv()
+sentry_sdk.init(os.getenv("SENTRY_DSN"))
 
 """	
 Setup bot intents (events restrictions)
@@ -74,35 +77,21 @@ If you want to use prefix commands, make sure to also enable the intent below in
 # Setup both of the loggers
 
 
-class LoggingFormatter(logging.Formatter):
-    # Colors
-    black = "\x1b[30m"
-    red = "\x1b[31m"
-    green = "\x1b[32m"
-    yellow = "\x1b[33m"
-    blue = "\x1b[34m"
-    gray = "\x1b[38m"
-    # Styles
-    reset = "\x1b[0m"
-    bold = "\x1b[1m"
-
-    COLORS = {
-        logging.DEBUG: gray + bold,
-        logging.INFO: blue + bold,
-        logging.WARNING: yellow + bold,
-        logging.ERROR: red,
-        logging.CRITICAL: red + bold,
-    }
-
-    def format(self, record):
-        log_color = self.COLORS[record.levelno]
-        format = "(black){asctime}(reset) (levelcolor){levelname:<8}(reset) (green){name}(reset) {message}"
-        format = format.replace("(black)", self.black + self.bold)
-        format = format.replace("(reset)", self.reset)
-        format = format.replace("(levelcolor)", log_color)
-        format = format.replace("(green)", self.green + self.bold)
-        formatter = logging.Formatter(format, "%Y-%m-%d %H:%M:%S", style="{")
-        return formatter.format(record)
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        log_record = {
+            "time": datetime.fromtimestamp(record.created).isoformat(),
+            "level": record.levelname,
+            "name": record.name,
+            "message": record.getMessage(),
+        }
+        if hasattr(record, "guild_id") and record.guild_id is not None:
+            log_record["guild_id"] = record.guild_id
+        if hasattr(record, "race_id") and record.race_id is not None:
+            log_record["race_id"] = record.race_id
+        if record.exc_info:
+            log_record["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
 
 
 logger = logging.getLogger("discord_bot")
@@ -110,13 +99,10 @@ logger.setLevel(logging.INFO)
 
 # Console handler
 console_handler = logging.StreamHandler()
-console_handler.setFormatter(LoggingFormatter())
+console_handler.setFormatter(JsonFormatter())
 # File handler
 file_handler = logging.FileHandler(filename="discord.log", encoding="utf-8", mode="w")
-file_handler_formatter = logging.Formatter(
-    "[{asctime}] [{levelname:<8}] {name}: {message}", "%Y-%m-%d %H:%M:%S", style="{"
-)
-file_handler.setFormatter(file_handler_formatter)
+file_handler.setFormatter(JsonFormatter())
 
 # Add the handlers
 logger.addHandler(console_handler)
@@ -235,7 +221,8 @@ class DiscordBot(commands.Bot):
         executed_command = str(split[0])
         if context.guild is not None:
             self.logger.info(
-                f"Executed {executed_command} command in {context.guild.name} (ID: {context.guild.id}) by {context.author} (ID: {context.author.id})"
+                f"Executed {executed_command} command in {context.guild.name} (ID: {context.guild.id}) by {context.author} (ID: {context.author.id})",
+                extra={"guild_id": context.guild.id},
             )
         else:
             self.logger.info(
@@ -257,15 +244,16 @@ class DiscordBot(commands.Bot):
                 description=f"**Please slow down** - You can use this command again in {f'{round(hours)} hours' if round(hours) > 0 else ''} {f'{round(minutes)} minutes' if round(minutes) > 0 else ''} {f'{round(seconds)} seconds' if round(seconds) > 0 else ''}.",
                 color=0xE02B2B,
             )
-            await context.send(embed=embed)
+            await context.send(embed=embed, ephemeral=True)
         elif isinstance(error, commands.NotOwner):
             embed = discord.Embed(
                 description="You are not the owner of the bot!", color=0xE02B2B
             )
-            await context.send(embed=embed)
+            await context.send(embed=embed, ephemeral=True)
             if context.guild:
                 self.logger.warning(
-                    f"{context.author} (ID: {context.author.id}) tried to execute an owner only command in the guild {context.guild.name} (ID: {context.guild.id}), but the user is not an owner of the bot."
+                    f"{context.author} (ID: {context.author.id}) tried to execute an owner only command in the guild {context.guild.name} (ID: {context.guild.id}), but the user is not an owner of the bot.",
+                    extra={"guild_id": context.guild.id},
                 )
             else:
                 self.logger.warning(
@@ -278,7 +266,7 @@ class DiscordBot(commands.Bot):
                 + "` to execute this command!",
                 color=0xE02B2B,
             )
-            await context.send(embed=embed)
+            await context.send(embed=embed, ephemeral=True)
         elif isinstance(error, commands.BotMissingPermissions):
             embed = discord.Embed(
                 description="I am missing the permission(s) `"
@@ -286,7 +274,7 @@ class DiscordBot(commands.Bot):
                 + "` to fully perform this command!",
                 color=0xE02B2B,
             )
-            await context.send(embed=embed)
+            await context.send(embed=embed, ephemeral=True)
         elif isinstance(error, commands.MissingRequiredArgument):
             embed = discord.Embed(
                 title="Error!",
@@ -294,9 +282,15 @@ class DiscordBot(commands.Bot):
                 description=str(error).capitalize(),
                 color=0xE02B2B,
             )
-            await context.send(embed=embed)
+            await context.send(embed=embed, ephemeral=True)
         else:
-            raise error
+            self.logger.error(
+                "Unhandled command error",
+                exc_info=error,
+                extra={"guild_id": context.guild.id if context.guild else None},
+            )
+            sentry_sdk.capture_exception(error)
+            await context.send("An unexpected error occurred.", ephemeral=True)
 
 
 bot = DiscordBot()

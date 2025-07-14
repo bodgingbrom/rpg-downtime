@@ -84,7 +84,11 @@ class DerbyScheduler:
             count = result.scalar_one()
             needed = self.bot.settings.race_frequency - count
             for _ in range(max(0, needed)):
-                await repo.create_race(session, guild_id=guild.id)
+                race = await repo.create_race(session, guild_id=guild.id)
+                self.bot.logger.info(
+                    "Race scheduled",
+                    extra={"guild_id": guild.id, "race_id": race.id},
+                )
 
     async def _start_ready_races(self, session: AsyncSession) -> None:
         result = await session.execute(
@@ -103,6 +107,10 @@ class DerbyScheduler:
 
         for race in races:
             participants = random.sample(racers, min(3, len(racers)))
+            self.bot.logger.info(
+                "Race starting",
+                extra={"guild_id": race.guild_id, "race_id": race.id},
+            )
             placements, log = logic.simulate_race({"racers": participants}, race.id)
             await repo.update_race(session, race.id, finished=True)
             bets = (
@@ -120,6 +128,10 @@ class DerbyScheduler:
             await self._stream_commentary(race.id, race.guild_id, log)
             await self._post_results(race.guild_id, placements)
             await self._dm_payouts(bets, race.id)
+            self.bot.logger.info(
+                "Race finished",
+                extra={"guild_id": race.guild_id, "race_id": race.id},
+            )
 
     async def _post_results(self, guild_id: int, placements: list[int]) -> None:
         guild = self.bot.get_guild(guild_id)
