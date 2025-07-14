@@ -47,7 +47,7 @@ the `@app_commands.guilds()` decorator so that it gets registered instantly. Exa
   name="command",
   description="Command description",
 )
-@app_commands.guilds(discord.Object(id=GUILD_ID)) # Place your guild ID here
+@app_commands.guilds(discord.Object(id=int(os.environ["DEV_GUILD_ID"])))
 ```
 
 When using the template you confirm that you have read the [license](LICENSE.md) and comprehend that I can take down
@@ -76,6 +76,10 @@ Alternatively you can do the following:
 To set up the token you will have to make use of the [`.env.example`](.env.example) file; you should rename it to `.env` and replace the `YOUR_BOT...` content with your actual values that match for your bot.
 
 Alternatively you can simply create a system environment variable with the same names and their respective value.
+
+The `.env` file now also supports a `DEV_GUILD_ID` variable. Set this to the ID
+of a Discord server where you want commands registered instantly during
+development.
 
 ## How to start
 
