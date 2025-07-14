@@ -2,7 +2,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from derby.logic import calculate_odds, resolve_payouts, simulate_race
+from derby.logic import (
+    apply_temperament,
+    calculate_odds,
+    resolve_payouts,
+    simulate_race,
+)
 from derby.models import Base, Bet, Race, Racer, Wallet
 
 
@@ -31,6 +36,13 @@ def test_simulate_race():
         "Segment 1: Racer 3 takes the lead",
         "Segment 2: Racer 2 takes the lead",
     ]
+
+
+def test_apply_temperament() -> None:
+    stats = {"speed": 10, "cornering": 10, "stamina": 10}
+    result = apply_temperament(stats, "Agile", 0.1)
+    assert result["speed"] == 11
+    assert result["stamina"] == 9
 
 
 @pytest.mark.asyncio

@@ -25,7 +25,7 @@ async def test_racer_crud(session: AsyncSession):
         speed=5,
         cornering=6,
         stamina=7,
-        temperament=8,
+        temperament="Agile",
         mood=2,
         injuries="sprained ankle",
     )
@@ -36,7 +36,7 @@ async def test_racer_crud(session: AsyncSession):
     assert fetched.speed == 5
     assert fetched.cornering == 6
     assert fetched.stamina == 7
-    assert fetched.temperament == 8
+    assert fetched.temperament == "Agile"
     assert fetched.mood == 2
     assert fetched.injuries == "sprained ankle"
 
