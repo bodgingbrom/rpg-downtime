@@ -89,3 +89,24 @@ async def test_race_bet(tmp_path: Path) -> None:
 
     assert wallet.balance == 70
     assert bet.racer_id == racer2.id and bet.amount == 30
+
+
+@pytest.mark.asyncio
+async def test_admin_check_requires_role(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1, default_wallet=100, retirement_threshold=65
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+    ctx.guild = types.SimpleNamespace(id=1)
+    ctx.author = types.SimpleNamespace(
+        roles=[types.SimpleNamespace(name="Not Admin")],
+        guild_permissions=discord.Permissions(manage_guild=True),
+    )
+
+    with pytest.raises(commands.CheckFailure):
+        await cog.add_racer.can_run(ctx)  # type: ignore[arg-type]
