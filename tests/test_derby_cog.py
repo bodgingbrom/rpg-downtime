@@ -4,10 +4,12 @@ from pathlib import Path
 import discord
 import pytest
 from discord.ext import commands
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cogs import derby as derby_cog
 from config import Settings
+from derby import models
 from derby import repositories as repo
 
 
@@ -52,7 +54,8 @@ async def test_race_upcoming(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_race_info(tmp_path: Path) -> None:
+async def test_race_bet(tmp_path: Path) -> None:
+
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
@@ -62,22 +65,27 @@ async def test_race_info(tmp_path: Path) -> None:
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
+    ctx.author = types.SimpleNamespace(id=5)
 
     async with sessionmaker() as session:
-        racer = await repo.create_racer(
-            session,
-            name="Bolt",
-            owner_id=1,
-            speed=5,
-            cornering=4,
-            stamina=6,
-            temperament=7,
-            mood=3,
-            injuries="none",
-        )
+        race = await repo.create_race(session, guild_id=1)
+        racer1 = await repo.create_racer(session, name="A", owner_id=1)
+        racer2 = await repo.create_racer(session, name="B", owner_id=2)
 
-    await cog.race_info(ctx, racer.id)
+    await cog.race_bet(ctx, racer_id=racer1.id, amount=20)
 
-    assert ctx.sent
-    embed = ctx.sent[0]["embed"]
-    assert embed.title == "Bolt"
+    async with sessionmaker() as session:
+        wallet = await repo.get_wallet(session, ctx.author.id)
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+
+    assert wallet.balance == 80
+    assert bet.racer_id == racer1.id and bet.amount == 20
+
+    await cog.race_bet(ctx, racer_id=racer2.id, amount=30)
+
+    async with sessionmaker() as session:
+        wallet = await repo.get_wallet(session, ctx.author.id)
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+
+    assert wallet.balance == 70
+    assert bet.racer_id == racer2.id and bet.amount == 30

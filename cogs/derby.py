@@ -12,27 +12,6 @@ from derby import logic, models
 from derby import repositories as repo
 
 
-class BetSelect(discord.ui.Select):
-    def __init__(self, view: "BetView", racers: List[models.Racer]):
-        options = [discord.SelectOption(label=r.name, value=str(r.id)) for r in racers]
-        super().__init__(
-            placeholder="Pick a racer", min_values=1, max_values=1, options=options
-        )
-        self.view = view
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        self.view.value = int(self.values[0])
-        await interaction.response.defer()
-        self.view.stop()
-
-
-class BetView(discord.ui.View):
-    def __init__(self, racers: List[models.Racer]):
-        super().__init__(timeout=30)
-        self.value: int | None = None
-        self.add_item(BetSelect(self, racers))
-
-
 class WatchView(discord.ui.View):
     def __init__(self, log: List[str]):
         super().__init__(timeout=120)
@@ -111,8 +90,8 @@ class Derby(commands.Cog, name="derby"):
         await context.send(embed=embed)
 
     @race.command(name="bet", description="Bet on the next race")
-    @app_commands.describe(amount="Amount to bet")
-    async def race_bet(self, context: Context, amount: int) -> None:
+    @app_commands.describe(racer_id="Racer id", amount="Amount to bet")
+    async def race_bet(self, context: Context, racer_id: int, amount: int) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
             race_result = await session.execute(
                 select(models.Race)
@@ -127,12 +106,8 @@ class Derby(commands.Cog, name="derby"):
         if race is None or not racers:
             await context.send("No race available.", ephemeral=True)
             return
-        view = BetView(racers)
-        embed = discord.Embed(title="Place your bet", description="Select a racer")
-        await context.send(embed=embed, view=view)
-        await view.wait()
-        if view.value is None:
-            await context.send("Bet cancelled.", ephemeral=True)
+        if racer_id not in [r.id for r in racers]:
+            await context.send("Racer not found.", ephemeral=True)
             return
         async with self.bot.scheduler.sessionmaker() as session:
             wallet = await repo.get_wallet(session, context.author.id)
@@ -142,19 +117,33 @@ class Derby(commands.Cog, name="derby"):
                     user_id=context.author.id,
                     balance=self.bot.settings.default_wallet,
                 )
+            bet_result = await session.execute(
+                select(models.Bet)
+                .where(models.Bet.race_id == race.id)
+                .where(models.Bet.user_id == context.author.id)
+            )
+            existing_bet = bet_result.scalars().first()
+            if existing_bet is not None:
+                wallet.balance += existing_bet.amount
             if wallet.balance < amount:
+                await session.commit()
                 await context.send("Insufficient balance.", ephemeral=True)
                 return
             wallet.balance -= amount
             await session.commit()
-            await repo.create_bet(
-                session,
-                race_id=race.id,
-                user_id=context.author.id,
-                racer_id=view.value,
-                amount=amount,
-            )
-        await context.send(f"Bet placed on racer {view.value} for {amount} coins")
+            if existing_bet is None:
+                await repo.create_bet(
+                    session,
+                    race_id=race.id,
+                    user_id=context.author.id,
+                    racer_id=racer_id,
+                    amount=amount,
+                )
+            else:
+                await repo.update_bet(
+                    session, existing_bet.id, racer_id=racer_id, amount=amount
+                )
+        await context.send(f"Bet placed on racer {racer_id} for {amount} coins")
 
     @race.command(name="watch", description="Watch the next race")
     async def race_watch(self, context: Context) -> None:
