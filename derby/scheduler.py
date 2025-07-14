@@ -112,6 +112,9 @@ class DerbyScheduler:
 
         for race in races:
             participants = random.sample(racers, min(3, len(racers)))
+            await self._announce_race_start(race.guild_id, race.id, participants)
+            await asyncio.sleep(self.bot.settings.bet_window)
+            await self._countdown(race.guild_id)
             self.bot.logger.info(
                 "Race starting",
                 extra={"guild_id": race.guild_id, "race_id": race.id},
@@ -243,3 +246,46 @@ class DerbyScheduler:
                     name=f"{racer.name} II",
                     owner_id=racer.owner_id,
                 )
+
+    async def _announce_race_start(
+        self, guild_id: int, race_id: int, racers: list[models.Racer]
+    ) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        channel = guild.system_channel or (
+            guild.text_channels[0] if guild.text_channels else None
+        )
+        if channel is None:
+            return
+        odds = logic.calculate_odds(racers, [], 0.1)
+        minutes = self.bot.settings.bet_window // 60
+        embed = discord.Embed(
+            title="Race Starting Soon",
+            description=f"Race {race_id} begins in {minutes} minutes. Place your bets!",
+        )
+        for r in racers:
+            embed.add_field(
+                name=r.name, value=f"{odds.get(r.id, 0):.1f}x", inline=False
+            )
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            return
+
+    async def _countdown(self, guild_id: int) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        channel = guild.system_channel or (
+            guild.text_channels[0] if guild.text_channels else None
+        )
+        if channel is None:
+            return
+        delay = self.bot.settings.countdown_total / 3
+        for num in ("3", "2", "1"):
+            try:
+                await channel.send(num)
+            except (discord.Forbidden, discord.HTTPException):
+                return
+            await asyncio.sleep(delay)
