@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import random
-from typing import Iterable, Sequence, Tuple, Dict, List
+from typing import Dict, List, Sequence, Tuple
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import models
 
@@ -50,7 +50,9 @@ def simulate_race(
         racers = [r.id if hasattr(r, "id") else int(r) for r in race.get("racers", [])]
         segments = race.get("course_segments", [])
     else:
-        racers = [r.id if hasattr(r, "id") else int(r) for r in getattr(race, "racers", [])]
+        racers = [
+            r.id if hasattr(r, "id") else int(r) for r in getattr(race, "racers", [])
+        ]
         segments = getattr(race, "course_segments", [])
 
     placements = list(racers)
