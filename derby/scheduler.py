@@ -105,11 +105,21 @@ class DerbyScheduler:
             participants = random.sample(racers, min(3, len(racers)))
             placements, log = logic.simulate_race({"racers": participants}, race.id)
             await repo.update_race(session, race.id, finished=True)
+            bets = (
+                (
+                    await session.execute(
+                        select(models.Bet).where(models.Bet.race_id == race.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             await logic.resolve_payouts(session, race.id)
             await self._apply_retirements(session, participants)
             await session.commit()
             await self._stream_commentary(race.id, race.guild_id, log)
             await self._post_results(race.guild_id, placements)
+            await self._dm_payouts(bets, race.id)
 
     async def _post_results(self, guild_id: int, placements: list[int]) -> None:
         guild = self.bot.get_guild(guild_id)
@@ -120,8 +130,40 @@ class DerbyScheduler:
         )
         if channel is None:
             return
-        results = "\n".join(f"{i+1}. Racer {rid}" for i, rid in enumerate(placements))
-        await channel.send(f"Race Results:\n{results}")
+        async with self.sessionmaker() as session:
+            racers = (
+                (
+                    await session.execute(
+                        select(models.Racer).where(models.Racer.id.in_(placements))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        names = {r.id: r.name for r in racers}
+        embed = discord.Embed(title="Race Results")
+        for i, rid in enumerate(placements, start=1):
+            embed.add_field(
+                name=f"{i}.", value=names.get(rid, f"Racer {rid}"), inline=False
+            )
+        await channel.send(embed=embed)
+
+    async def _dm_payouts(self, bets: list[models.Bet], race_id: int) -> None:
+        if not bets:
+            return
+        winning = min(b.racer_id for b in bets)
+        for bet in bets:
+            user = self.bot.get_user(bet.user_id)
+            if user is None:
+                continue
+            if bet.racer_id == winning:
+                msg = f"You won {bet.amount * 2} coins on race {race_id}!"
+            else:
+                msg = f"You lost your bet of {bet.amount} coins on race {race_id}."
+            try:
+                await user.send(msg, ephemeral=True)
+            except (discord.Forbidden, discord.HTTPException):
+                continue
 
     async def _stream_commentary(
         self, race_id: int, guild_id: int, log: list[str], delay: float = 2.0
