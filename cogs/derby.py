@@ -27,6 +27,19 @@ def _stat_band(value: int) -> str:
     return "Perfect"
 
 
+MOOD_LABELS = {
+    1: "Awful",
+    2: "Bad",
+    3: "Normal",
+    4: "Good",
+    5: "Great",
+}
+
+
+def _mood_label(value: int) -> str:
+    return MOOD_LABELS.get(value, str(value))
+
+
 class WatchView(discord.ui.View):
     def __init__(self, log: List[str]):
         super().__init__(timeout=120)
@@ -233,7 +246,7 @@ class Derby(commands.Cog, name="derby"):
             name="Stamina", value=_stat_band(racer_obj.stamina), inline=True
         )
         embed.add_field(name="Temperament", value=racer_obj.temperament, inline=True)
-        embed.add_field(name="Mood", value=str(racer_obj.mood), inline=True)
+        embed.add_field(name="Mood", value=_mood_label(racer_obj.mood), inline=True)
         embed.add_field(
             name="Injuries", value=racer_obj.injuries or "None", inline=False
         )
