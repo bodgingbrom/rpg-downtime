@@ -203,3 +203,45 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
 
     assert len(user1.dms) == 1
     assert len(user2.dms) == 1
+
+
+@pytest.mark.asyncio
+async def test_race_uses_max_eight_racers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(1)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        await repo.create_race(session, guild_id=guild.id)
+        for i in range(10):
+            await repo.create_racer(session, name=f"R{i}", owner_id=i)
+
+    counts: list[int] = []
+
+    async def fake_announce(gid: int, rid: int, racers: list[Racer]) -> None:
+        counts.append(len(racers))
+
+    async def noop(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(scheduler, "_announce_race_start", fake_announce)
+    monkeypatch.setattr(scheduler, "_countdown", noop)
+    monkeypatch.setattr(scheduler, "_stream_commentary", noop)
+    monkeypatch.setattr(scheduler, "_post_results", noop)
+    monkeypatch.setattr(scheduler, "_dm_payouts", noop)
+
+    await scheduler.tick()
+
+    assert counts == [8]

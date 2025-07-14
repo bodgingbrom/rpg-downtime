@@ -111,7 +111,7 @@ class DerbyScheduler:
             return
 
         for race in races:
-            participants = random.sample(racers, min(3, len(racers)))
+            participants = random.sample(racers, min(8, len(racers)))
             await self._announce_race_start(race.guild_id, race.id, participants)
             await asyncio.sleep(self.bot.settings.bet_window)
             await self._countdown(race.guild_id)
