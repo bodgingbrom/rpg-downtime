@@ -416,3 +416,28 @@ async def test_race_info_bands(tmp_path: Path) -> None:
     embed = ctx.sent[-1]["embed"]
     values = [f.value for f in embed.fields[:4]]
     assert values == ["Perfect", "Fantastic", "Very Good", "Reckless"]
+
+
+@pytest.mark.asyncio
+async def test_race_info_mood_label(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(session, name="Moody", owner_id=1, mood=5)
+
+    await cog.race_info(ctx, racer=racer.id)
+
+    embed = ctx.sent[-1]["embed"]
+    assert embed.fields[4].value == "Great"
