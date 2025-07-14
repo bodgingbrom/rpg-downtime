@@ -68,7 +68,7 @@ async def test_race_bet(tmp_path: Path) -> None:
     ctx.author = types.SimpleNamespace(id=5)
 
     async with sessionmaker() as session:
-        race = await repo.create_race(session, guild_id=1)
+        await repo.create_race(session, guild_id=1)
         racer1 = await repo.create_racer(session, name="A", owner_id=1)
         racer2 = await repo.create_racer(session, name="B", owner_id=2)
 
