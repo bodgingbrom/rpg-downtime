@@ -61,6 +61,19 @@ class Derby(commands.Cog, name="derby"):
     def __init__(self, bot) -> None:
         self.bot = bot
 
+    @commands.hybrid_command(name="wallet", description="Show your wallet balance")
+    async def wallet(self, context: Context) -> None:
+        async with self.bot.scheduler.sessionmaker() as session:
+            wallet = await repo.get_wallet(session, context.author.id)
+            if wallet is None:
+                wallet = await repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    balance=self.bot.settings.default_wallet,
+                )
+            balance = wallet.balance
+        await context.send(f"Your balance is {balance} coins")
+
     @commands.hybrid_group(name="race", description="Race commands")
     async def race(
         self, context: Context
