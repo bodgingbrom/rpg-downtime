@@ -28,6 +28,17 @@ class DerbyScheduler:
         self.task = tasks.loop(hours=24)(self._run)
         self.commentaries: dict[int, tasks.Loop] = {}
 
+    def _get_channel(self, guild: discord.Guild) -> discord.abc.Messageable | None:
+        """Return the configured channel for the guild or a sensible default."""
+        name = self.bot.settings.channel_name
+        if name:
+            for channel in guild.text_channels:
+                if getattr(channel, "name", None) == name:
+                    return channel
+        return guild.system_channel or (
+            guild.text_channels[0] if guild.text_channels else None
+        )
+
     async def start(self) -> None:
         await self._init_db()
         self.task.start()
@@ -145,9 +156,7 @@ class DerbyScheduler:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return
-        channel = guild.system_channel or (
-            guild.text_channels[0] if guild.text_channels else None
-        )
+        channel = self._get_channel(guild)
         if channel is None:
             return
         async with self.sessionmaker() as session:
@@ -191,9 +200,7 @@ class DerbyScheduler:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return
-        channel = guild.system_channel or (
-            guild.text_channels[0] if guild.text_channels else None
-        )
+        channel = self._get_channel(guild)
         if channel is None:
             return
 
@@ -253,9 +260,7 @@ class DerbyScheduler:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return
-        channel = guild.system_channel or (
-            guild.text_channels[0] if guild.text_channels else None
-        )
+        channel = self._get_channel(guild)
         if channel is None:
             return
         odds = logic.calculate_odds(racers, [], 0.1)
@@ -277,9 +282,7 @@ class DerbyScheduler:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return
-        channel = guild.system_channel or (
-            guild.text_channels[0] if guild.text_channels else None
-        )
+        channel = self._get_channel(guild)
         if channel is None:
             return
         delay = self.bot.settings.countdown_total / 3
