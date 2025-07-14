@@ -55,6 +55,7 @@ async def test_race_upcoming(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_race_bet(tmp_path: Path) -> None:
+
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())

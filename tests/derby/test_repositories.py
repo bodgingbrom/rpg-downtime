@@ -1,8 +1,8 @@
 import pytest
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from derby.models import Base
 from derby import repositories as repo
+from derby.models import Base
 
 
 @pytest.fixture()
@@ -18,11 +18,27 @@ async def session():
 
 @pytest.mark.asyncio
 async def test_racer_crud(session: AsyncSession):
-    racer = await repo.create_racer(session, name="Speedy", owner_id=1)
+    racer = await repo.create_racer(
+        session,
+        name="Speedy",
+        owner_id=1,
+        speed=5,
+        cornering=6,
+        stamina=7,
+        temperament=8,
+        mood=2,
+        injuries="sprained ankle",
+    )
     assert racer.id is not None
 
     fetched = await repo.get_racer(session, racer.id)
     assert fetched.name == "Speedy"
+    assert fetched.speed == 5
+    assert fetched.cornering == 6
+    assert fetched.stamina == 7
+    assert fetched.temperament == 8
+    assert fetched.mood == 2
+    assert fetched.injuries == "sprained ankle"
 
     updated = await repo.update_racer(session, racer.id, name="Zoom")
     assert updated.name == "Zoom"

@@ -6,7 +6,7 @@ from datetime import datetime
 
 import discord
 from discord.ext import tasks
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from . import Base, logic, models
@@ -39,6 +39,25 @@ class DerbyScheduler:
             return
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            inspector = inspect(conn.sync_connection())
+            columns = {c["name"] for c in inspector.get_columns("racers")}
+            new_columns = {
+                "speed": "INTEGER",
+                "cornering": "INTEGER",
+                "stamina": "INTEGER",
+                "temperament": "INTEGER",
+                "mood": "INTEGER",
+                "injuries": "VARCHAR",
+            }
+            for name, col_type in new_columns.items():
+                if name not in columns:
+                    await conn.execute(
+                        text(
+                            f"ALTER TABLE racers ADD COLUMN {name} {col_type} DEFAULT 0"
+                            if col_type == "INTEGER"
+                            else f"ALTER TABLE racers ADD COLUMN {name} {col_type} DEFAULT ''"
+                        )
+                    )
         self._initialized = True
 
     async def _run(self) -> None:
