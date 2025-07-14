@@ -101,12 +101,20 @@ class DerbyScheduler:
 
         for race in races:
             participants = random.sample(racers, min(3, len(racers)))
+            bet_rows = await session.execute(
+                select(models.Bet).where(models.Bet.race_id == race.id)
+            )
+            bets = bet_rows.scalars().all()
+            winning_racer = min((b.racer_id for b in bets), default=None)
+
             placements, _log = logic.simulate_race({"racers": participants}, race.id)
             await repo.update_race(session, race.id, finished=True)
             await logic.resolve_payouts(session, race.id)
             await self._apply_retirements(session, participants)
             await session.commit()
             await self._post_results(race.guild_id, placements)
+            if bets and winning_racer is not None:
+                await self._dm_payouts(bets, winning_racer, race.id)
 
     async def _post_results(self, guild_id: int, placements: list[int]) -> None:
         guild = self.bot.get_guild(guild_id)
@@ -117,8 +125,31 @@ class DerbyScheduler:
         )
         if channel is None:
             return
-        results = "\n".join(f"{i+1}. Racer {rid}" for i, rid in enumerate(placements))
-        await channel.send(f"Race Results:\n{results}")
+        embed = discord.Embed(title="Race Results")
+        for i, rid in enumerate(placements, start=1):
+            embed.add_field(name=f"#{i}", value=f"Racer {rid}", inline=False)
+        await channel.send(embed=embed)
+
+    async def _dm_payouts(
+        self, bets: list[models.Bet], winning_racer: int, race_id: int
+    ) -> None:
+        for bet in bets:
+            user = self.bot.get_user(bet.user_id)
+            if user is None:
+                try:
+                    user = await self.bot.fetch_user(bet.user_id)
+                except Exception:
+                    continue
+            if user is None:
+                continue
+            if bet.racer_id == winning_racer:
+                msg = f"You won {bet.amount * 2} coins on race {race_id}!"
+            else:
+                msg = f"You lost {bet.amount} coins on race {race_id}."
+            try:
+                await user.send(msg)
+            except Exception:
+                continue
 
     async def _apply_retirements(
         self, session: AsyncSession, racers: list[models.Racer]
