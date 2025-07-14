@@ -128,3 +128,29 @@ async def test_guild_settings_crud(session: AsyncSession):
 
     await repo.delete_guild_settings(session, 1)
     assert await repo.get_guild_settings(session, 1) is None
+
+
+@pytest.mark.asyncio
+async def test_get_race_history(session: AsyncSession):
+    r1 = await repo.create_race(session, guild_id=1, finished=True)
+    r2 = await repo.create_race(session, guild_id=1, finished=True)
+    await repo.create_race(session, guild_id=1, finished=False)
+
+    racer1 = await repo.create_racer(session, name="A", owner_id=1)
+    racer2 = await repo.create_racer(session, name="B", owner_id=2)
+
+    await repo.create_bet(
+        session, race_id=r2.id, user_id=1, racer_id=racer1.id, amount=10
+    )
+    await repo.create_bet(
+        session, race_id=r2.id, user_id=2, racer_id=racer1.id, amount=5
+    )
+    await repo.create_bet(
+        session, race_id=r1.id, user_id=3, racer_id=racer2.id, amount=20
+    )
+
+    history = await repo.get_race_history(session, guild_id=1, limit=2)
+
+    assert [h[0].id for h in history] == [r2.id, r1.id]
+    assert history[0][1] == racer1.id and history[0][2] == 30
+    assert history[1][1] == racer2.id and history[1][2] == 40

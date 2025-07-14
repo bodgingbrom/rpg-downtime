@@ -112,6 +112,7 @@ async def test_admin_check_requires_role(tmp_path: Path) -> None:
     with pytest.raises(commands.CheckFailure):
         await cog.add_racer.can_run(ctx)  # type: ignore[arg-type]
 
+
 async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> None:
     ctx.author = types.SimpleNamespace(id=10)
 
@@ -122,6 +123,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
 
     assert wallet.balance == bot.settings.default_wallet
     assert ctx.sent and str(wallet.balance) in ctx.sent[0]["content"]
+
 
 @pytest.mark.asyncio
 async def test_racer_delete(tmp_path: Path) -> None:
@@ -201,3 +203,33 @@ async def test_debug_race(tmp_path: Path) -> None:
 
     assert ctx.sent and ctx.sent[-1].get("ephemeral") is True
     assert "race" in ctx.sent[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_race_history(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1, default_wallet=100, retirement_threshold=65
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+    ctx.guild = types.SimpleNamespace(id=1)
+
+    async with sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=1, finished=True)
+        racer = await repo.create_racer(session, name="A", owner_id=1)
+        await repo.create_bet(
+            session, race_id=race.id, user_id=5, racer_id=racer.id, amount=15
+        )
+
+    await cog.race_history(ctx, count=1)
+
+    assert ctx.sent
+    embed = ctx.sent[0]["embed"]
+    assert embed.title == "Recent Races"
+    field = embed.fields[0]
+    assert f"Race {race.id}" == field.name
+    assert "A" in field.value and "30" in field.value

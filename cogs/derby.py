@@ -174,6 +174,36 @@ class Derby(commands.Cog, name="derby"):
         results = "\n".join(f"{i+1}. Racer {rid}" for i, rid in enumerate(placements))
         await context.send(f"Race finished!\n{results}")
 
+    @race.command(name="history", description="Show recent race results")
+    @app_commands.describe(count="Number of races to display")
+    async def race_history(self, context: Context, count: int = 5) -> None:
+        async with self.bot.scheduler.sessionmaker() as session:
+            records = await repo.get_race_history(session, context.guild.id, count)
+            racer_names: dict[int, str] = {}
+            for _race, winner_id, _payout in records:
+                if winner_id is not None and winner_id not in racer_names:
+                    racer = await repo.get_racer(session, winner_id)
+                    racer_names[winner_id] = (
+                        racer.name if racer else f"Racer {winner_id}"
+                    )
+        if not records:
+            await context.send("No finished races.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="Recent Races")
+        for race_obj, winner_id, payout in records:
+            winner = (
+                racer_names.get(winner_id, f"Racer {winner_id}")
+                if winner_id is not None
+                else "N/A"
+            )
+            embed.add_field(
+                name=f"Race {race_obj.id}",
+                value=f"Winner: {winner}\nPayouts: {payout}",
+                inline=False,
+            )
+        await context.send(embed=embed)
+
     @race.command(name="info", description="Show racer info")
     @app_commands.describe(racer="Racer id")
     async def race_info(self, context: Context, racer: int) -> None:
