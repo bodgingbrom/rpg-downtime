@@ -4,10 +4,12 @@ from pathlib import Path
 import discord
 import pytest
 from discord.ext import commands
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cogs import derby as derby_cog
 from config import Settings
+from derby import models
 from derby import repositories as repo
 
 
@@ -49,3 +51,40 @@ async def test_race_upcoming(tmp_path: Path) -> None:
     assert ctx.sent and ctx.sent[0]["embed"].title == "Upcoming Race"
     fields = ctx.sent[0]["embed"].fields
     assert fields[0].name == "Race ID" and fields[0].value == str(race.id)
+
+
+@pytest.mark.asyncio
+async def test_race_bet(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1, default_wallet=100, retirement_threshold=65
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+    ctx.author = types.SimpleNamespace(id=5)
+
+    async with sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=1)
+        racer1 = await repo.create_racer(session, name="A", owner_id=1)
+        racer2 = await repo.create_racer(session, name="B", owner_id=2)
+
+    await cog.race_bet(ctx, racer_id=racer1.id, amount=20)
+
+    async with sessionmaker() as session:
+        wallet = await repo.get_wallet(session, ctx.author.id)
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+
+    assert wallet.balance == 80
+    assert bet.racer_id == racer1.id and bet.amount == 20
+
+    await cog.race_bet(ctx, racer_id=racer2.id, amount=30)
+
+    async with sessionmaker() as session:
+        wallet = await repo.get_wallet(session, ctx.author.id)
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+
+    assert wallet.balance == 70
+    assert bet.racer_id == racer2.id and bet.amount == 30
