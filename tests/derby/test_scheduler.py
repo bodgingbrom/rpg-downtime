@@ -12,7 +12,8 @@ from derby.scheduler import DerbyScheduler
 
 
 class DummyChannel:
-    def __init__(self) -> None:
+    def __init__(self, name: str = "general") -> None:
+        self.name = name
         self.messages: list[str] = []
 
     async def send(
@@ -245,3 +246,31 @@ async def test_race_uses_max_eight_racers(
     await scheduler.tick()
 
     assert counts == [8]
+
+
+@pytest.mark.asyncio
+async def test_config_channel_used(tmp_path: Path) -> None:
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        channel_name="special",
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(1)
+    special = DummyChannel("special")
+    guild.text_channels.append(special)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        await repo.create_race(session, guild_id=guild.id)
+
+    await scheduler._announce_race_start(guild.id, 1, [])
+
+    assert special.messages
+    assert not guild.system_channel.messages

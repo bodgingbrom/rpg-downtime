@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     retirement_threshold: int
     bet_window: int = 120
     countdown_total: int = 10
+    channel_name: str | None = None
 
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":
