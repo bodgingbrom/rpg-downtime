@@ -8,6 +8,7 @@ from discord.ext import commands
 from discord.ext.commands import Context
 from sqlalchemy import select
 
+import checks
 from derby import logic, models
 from derby import repositories as repo
 
@@ -213,6 +214,7 @@ class Derby(commands.Cog, name="derby"):
             await context.send("Specify a subcommand", ephemeral=True)
 
     @derby_group.command(name="add_racer", description="Add a new racer")
+    @checks.has_role("Race Admin")
     @app_commands.describe(name="Racer name", owner="Owner")
     async def add_racer(self, context: Context, name: str, owner: discord.User) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
@@ -220,6 +222,7 @@ class Derby(commands.Cog, name="derby"):
         await context.send(f"Racer {racer.name} added with id {racer.id}")
 
     @derby_group.command(name="edit_racer", description="Edit a racer name")
+    @checks.has_role("Race Admin")
     @app_commands.describe(racer_id="Racer id", name="New name")
     async def edit_racer(self, context: Context, racer_id: int, name: str) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
@@ -230,12 +233,14 @@ class Derby(commands.Cog, name="derby"):
             await context.send(f"Racer {racer.id} renamed to {racer.name}")
 
     @derby_group.command(name="start_race", description="Start a new race now")
+    @checks.has_role("Race Admin")
     async def start_race(self, context: Context) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
             race = await repo.create_race(session, guild_id=context.guild.id)
         await context.send(f"Race {race.id} created")
 
     @derby_group.command(name="cancel_race", description="Cancel the next race")
+    @checks.has_role("Race Admin")
     async def cancel_race(self, context: Context) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
             result = await session.execute(
