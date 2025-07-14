@@ -60,7 +60,13 @@ class DummyUser:
 @pytest.mark.asyncio
 async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
-    settings = Settings(race_frequency=1, default_wallet=100, retirement_threshold=101)
+    settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+    )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
     bot.guilds.append(guild)
@@ -79,7 +85,13 @@ async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_retirement(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
-    settings = Settings(race_frequency=1, default_wallet=100, retirement_threshold=0)
+    settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=0,
+        bet_window=0,
+        countdown_total=0,
+    )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
     bot.guilds.append(guild)
@@ -99,7 +111,13 @@ async def test_retirement(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_stream_commentary(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
-    settings = Settings(race_frequency=1, default_wallet=100, retirement_threshold=101)
+    settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+    )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
     bot.guilds.append(guild)
@@ -117,7 +135,13 @@ async def test_stream_commentary(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_commentary_stops_when_cancelled(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
-    settings = Settings(race_frequency=1, default_wallet=100, retirement_threshold=101)
+    settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+    )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
     bot.guilds.append(guild)
@@ -144,7 +168,13 @@ async def test_commentary_stops_when_cancelled(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_payout_dm_sent(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
-    settings = Settings(race_frequency=1, default_wallet=100, retirement_threshold=101)
+    settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+    )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
     bot.guilds.append(guild)

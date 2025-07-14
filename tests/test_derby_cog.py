@@ -36,7 +36,11 @@ async def test_race_upcoming(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1, default_wallet=100, retirement_threshold=65
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
@@ -61,7 +65,11 @@ async def test_race_bet(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1, default_wallet=100, retirement_threshold=65
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
@@ -99,7 +107,11 @@ async def test_admin_check_requires_role(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1, default_wallet=100, retirement_threshold=65
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
@@ -120,7 +132,11 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1, default_wallet=100, retirement_threshold=65
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
@@ -142,7 +158,11 @@ async def test_racer_delete(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1, default_wallet=100, retirement_threshold=65
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
@@ -165,7 +185,11 @@ async def test_race_force_start(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1, default_wallet=100, retirement_threshold=101
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
@@ -197,7 +221,11 @@ async def test_debug_race(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1, default_wallet=100, retirement_threshold=65
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
@@ -222,7 +250,11 @@ async def test_race_history(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1, default_wallet=100, retirement_threshold=65
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
