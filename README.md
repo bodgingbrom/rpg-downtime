@@ -119,8 +119,8 @@ Downtime Derby is a lightweight racing game bundled with this template. All comm
 
 ### Admin Guide
 
-- **Create racers** with `/derby add_racer <name> @owner`.
-- **Edit racers** using `/derby edit_racer <racer_id> <name>` or delete them with `/derby racer delete <racer_id>`.
+- **Create racers** with `/derby add_racer <name> @owner` and optional stats or `/derby add_racer <name> @owner random_stats:true` for random values.
+- **Edit racers** using `/derby edit_racer <racer_id>` to update the name or stats, or delete them with `/derby racer delete <racer_id>`.
 - **Start a race** immediately via `/derby start_race` or cancel the next one with `/derby cancel_race`.
 - **Force-run a pending race** using `/derby race force-start [race_id]`.
 - **Inspect races** for troubleshooting with `/derby debug race <race_id>`.
@@ -130,7 +130,7 @@ Downtime Derby is a lightweight racing game bundled with this template. All comm
 - Check the next event with `/race next` or view odds using `/race upcoming`.
 - Place a bet: `/race bet <racer_id> <amount>`.
 - Start and watch the race with `/race watch`.
-- Look up details on a racer using `/race info <racer_id>`.
+- Look up details on a racer using `/race info <racer_id>` to view stat quality.
 - Review past results via `/race history [count]`.
 - See your balance at any time with `/wallet`.
 
