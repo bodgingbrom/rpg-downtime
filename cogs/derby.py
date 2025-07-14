@@ -72,7 +72,7 @@ class Derby(commands.Cog, name="derby"):
                     balance=self.bot.settings.default_wallet,
                 )
             balance = wallet.balance
-        await context.send(f"Your balance is {balance} coins")
+        await context.send(f"Your balance is {balance} coins", ephemeral=True)
 
     @commands.hybrid_group(name="race", description="Race commands")
     async def race(

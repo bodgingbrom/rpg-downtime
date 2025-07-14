@@ -66,7 +66,11 @@ async def test_wallet_creates_and_shows_balance(tmp_path: Path) -> None:
 
     await cog.wallet(ctx)
 
-    assert ctx.sent and ctx.sent[0]["content"] == "Your balance is 50 coins"
+    assert (
+        ctx.sent
+        and ctx.sent[0]["content"] == "Your balance is 50 coins"
+        and ctx.sent[0]["ephemeral"] is True
+    )
     async with sessionmaker() as session:
         wallet = await repo.get_wallet(session, 42)
         assert wallet is not None and wallet.balance == 50
