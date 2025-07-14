@@ -59,16 +59,27 @@ class Moderation(commands.Cog, name="moderation"):
                     await member.send(
                         f"You were kicked by **{context.author}** from **{context.guild.name}**!\nReason: {reason}"
                     )
-                except:
+                except discord.Forbidden:
                     # Couldn't send a message in the private messages of the user
                     pass
+                except Exception as error:
+                    self.bot.logger.error(
+                        "Failed to DM user about kick",
+                        exc_info=error,
+                        extra={"guild_id": context.guild.id, "user_id": user.id},
+                    )
                 await member.kick(reason=reason)
-            except:
+            except (discord.Forbidden, discord.HTTPException) as error:
                 embed = discord.Embed(
                     description="An error occurred while trying to kick the user. Make sure my role is above the role of the user you want to kick.",
                     color=0xE02B2B,
                 )
                 await context.send(embed=embed)
+                self.bot.logger.error(
+                    "Failed to kick member",
+                    exc_info=error,
+                    extra={"guild_id": context.guild.id, "user_id": user.id},
+                )
 
     @commands.hybrid_command(
         name="nick",
@@ -100,12 +111,17 @@ class Moderation(commands.Cog, name="moderation"):
                 color=0xBEBEFE,
             )
             await context.send(embed=embed)
-        except:
+        except (discord.Forbidden, discord.HTTPException) as error:
             embed = discord.Embed(
                 description="An error occurred while trying to change the nickname of the user. Make sure my role is above the role of the user you want to change the nickname.",
                 color=0xE02B2B,
             )
             await context.send(embed=embed)
+            self.bot.logger.error(
+                "Failed to change nickname",
+                exc_info=error,
+                extra={"guild_id": context.guild.id, "user_id": user.id},
+            )
 
     @commands.hybrid_command(
         name="ban",
@@ -147,17 +163,28 @@ class Moderation(commands.Cog, name="moderation"):
                     await member.send(
                         f"You were banned by **{context.author}** from **{context.guild.name}**!\nReason: {reason}"
                     )
-                except:
+                except discord.Forbidden:
                     # Couldn't send a message in the private messages of the user
                     pass
+                except Exception as error:
+                    self.bot.logger.error(
+                        "Failed to DM user about ban",
+                        exc_info=error,
+                        extra={"guild_id": context.guild.id, "user_id": user.id},
+                    )
                 await member.ban(reason=reason)
-        except:
+        except (discord.Forbidden, discord.HTTPException) as error:
             embed = discord.Embed(
                 title="Error!",
                 description="An error occurred while trying to ban the user. Make sure my role is above the role of the user you want to ban.",
                 color=0xE02B2B,
             )
             await context.send(embed=embed)
+            self.bot.logger.error(
+                "Failed to ban member",
+                exc_info=error,
+                extra={"guild_id": context.guild.id, "user_id": user.id},
+            )
 
     @commands.hybrid_group(
         name="warning",
@@ -212,8 +239,17 @@ class Moderation(commands.Cog, name="moderation"):
             await member.send(
                 f"You were warned by **{context.author}** in **{context.guild.name}**!\nReason: {reason}"
             )
-        except:
+        except discord.Forbidden:
             # Couldn't send a message in the private messages of the user
+            await context.send(
+                f"{member.mention}, you were warned by **{context.author}**!\nReason: {reason}"
+            )
+        except Exception as error:
+            self.bot.logger.error(
+                "Failed to DM user about warn",
+                exc_info=error,
+                extra={"guild_id": context.guild.id, "user_id": user.id},
+            )
             await context.send(
                 f"{member.mention}, you were warned by **{context.author}**!\nReason: {reason}"
             )
