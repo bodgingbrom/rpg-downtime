@@ -7,6 +7,7 @@ from discord.ext import commands
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from bot import DiscordBot
 from cogs import derby as derby_cog
 from config import Settings
 from derby import models
@@ -243,3 +244,14 @@ async def test_race_history(tmp_path: Path) -> None:
     field = embed.fields[0]
     assert f"Race {race.id}" == field.name
     assert "A" in field.value and "30" in field.value
+
+
+@pytest.mark.asyncio
+async def test_on_command_error_check_failure() -> None:
+    bot = DiscordBot()
+    ctx = DummyContext(bot)
+
+    await bot.on_command_error(ctx, commands.CheckFailure())
+
+    assert ctx.sent
+    assert "permission" in ctx.sent[0]["embed"].description

@@ -278,6 +278,12 @@ class DiscordBot(commands.Bot):
                 color=0xE02B2B,
             )
             await context.send(embed=embed, ephemeral=True)
+        elif isinstance(error, commands.CheckFailure):
+            embed = discord.Embed(
+                description="You don't have permission to do that!",
+                color=0xE02B2B,
+            )
+            await context.send(embed=embed, ephemeral=True)
         elif isinstance(error, commands.MissingRequiredArgument):
             embed = discord.Embed(
                 title="Error!",
