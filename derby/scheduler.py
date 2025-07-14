@@ -41,7 +41,7 @@ class DerbyScheduler:
             return
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-            inspector = inspect(conn.sync_connection())
+            inspector = inspect(conn.sync_connection)
             columns = {c["name"] for c in inspector.get_columns("racers")}
             new_columns = {
                 "speed": "INTEGER",
