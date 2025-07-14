@@ -7,3 +7,4 @@ PyYAML
 SQLAlchemy>=2
 pytest
 pytest-asyncio
+sentry-sdk
