@@ -15,6 +15,18 @@ from derby import logic, models
 from derby import repositories as repo
 
 
+def _stat_band(value: int) -> str:
+    if value <= 15:
+        return "Decent"
+    if value <= 25:
+        return "Good"
+    if value <= 29:
+        return "Very Good"
+    if value == 30:
+        return "Fantastic"
+    return "Perfect"
+
+
 class WatchView(discord.ui.View):
     def __init__(self, log: List[str]):
         super().__init__(timeout=120)
@@ -213,11 +225,15 @@ class Derby(commands.Cog, name="derby"):
             await context.send("Racer not found", ephemeral=True)
             return
         embed = discord.Embed(title=racer_obj.name)
-        embed.add_field(name="Speed", value=str(racer_obj.speed), inline=True)
-        embed.add_field(name="Cornering", value=str(racer_obj.cornering), inline=True)
-        embed.add_field(name="Stamina", value=str(racer_obj.stamina), inline=True)
+        embed.add_field(name="Speed", value=_stat_band(racer_obj.speed), inline=True)
         embed.add_field(
-            name="Temperament", value=str(racer_obj.temperament), inline=True
+            name="Cornering", value=_stat_band(racer_obj.cornering), inline=True
+        )
+        embed.add_field(
+            name="Stamina", value=_stat_band(racer_obj.stamina), inline=True
+        )
+        embed.add_field(
+            name="Temperament", value=_stat_band(racer_obj.temperament), inline=True
         )
         embed.add_field(name="Mood", value=str(racer_obj.mood), inline=True)
         embed.add_field(
@@ -247,22 +263,86 @@ class Derby(commands.Cog, name="derby"):
 
     @derby_group.command(name="add_racer", description="Add a new racer")
     @checks.has_role("Race Admin")
-    @app_commands.describe(name="Racer name", owner="Owner")
-    async def add_racer(self, context: Context, name: str, owner: discord.User) -> None:
+    @app_commands.describe(
+        name="Racer name",
+        owner="Owner",
+        random_stats="Generate random stats",
+        speed="Speed stat",
+        cornering="Cornering stat",
+        stamina="Stamina stat",
+        temperament="Temperament stat",
+    )
+    async def add_racer(
+        self,
+        context: Context,
+        name: str,
+        owner: discord.User,
+        random_stats: bool = False,
+        speed: app_commands.Range[int, 0, 31] | None = None,
+        cornering: app_commands.Range[int, 0, 31] | None = None,
+        stamina: app_commands.Range[int, 0, 31] | None = None,
+        temperament: app_commands.Range[int, 0, 31] | None = None,
+    ) -> None:
+        if random_stats:
+            stats = {
+                "speed": random.randint(0, 31),
+                "cornering": random.randint(0, 31),
+                "stamina": random.randint(0, 31),
+                "temperament": random.randint(0, 31),
+            }
+        else:
+            stats = {
+                "speed": speed or 0,
+                "cornering": cornering or 0,
+                "stamina": stamina or 0,
+                "temperament": temperament or 0,
+            }
         async with self.bot.scheduler.sessionmaker() as session:
-            racer = await repo.create_racer(session, name=name, owner_id=owner.id)
+            racer = await repo.create_racer(
+                session, name=name, owner_id=owner.id, **stats
+            )
         await context.send(f"Racer {racer.name} added with id {racer.id}")
 
-    @derby_group.command(name="edit_racer", description="Edit a racer name")
+    @derby_group.command(name="edit_racer", description="Edit a racer")
     @checks.has_role("Race Admin")
-    @app_commands.describe(racer_id="Racer id", name="New name")
-    async def edit_racer(self, context: Context, racer_id: int, name: str) -> None:
+    @app_commands.describe(
+        racer_id="Racer id",
+        name="New name",
+        speed="Speed stat",
+        cornering="Cornering stat",
+        stamina="Stamina stat",
+        temperament="Temperament stat",
+    )
+    async def edit_racer(
+        self,
+        context: Context,
+        racer_id: int,
+        name: str | None = None,
+        speed: app_commands.Range[int, 0, 31] | None = None,
+        cornering: app_commands.Range[int, 0, 31] | None = None,
+        stamina: app_commands.Range[int, 0, 31] | None = None,
+        temperament: app_commands.Range[int, 0, 31] | None = None,
+    ) -> None:
+        updates: dict[str, int | str] = {}
+        if name is not None:
+            updates["name"] = name
+        if speed is not None:
+            updates["speed"] = speed
+        if cornering is not None:
+            updates["cornering"] = cornering
+        if stamina is not None:
+            updates["stamina"] = stamina
+        if temperament is not None:
+            updates["temperament"] = temperament
+        if not updates:
+            await context.send("No updates provided", ephemeral=True)
+            return
         async with self.bot.scheduler.sessionmaker() as session:
-            racer = await repo.update_racer(session, racer_id, name=name)
+            racer = await repo.update_racer(session, racer_id, **updates)
         if racer is None:
             await context.send("Racer not found", ephemeral=True)
         else:
-            await context.send(f"Racer {racer.id} renamed to {racer.name}")
+            await context.send(f"Racer {racer.id} updated")
 
     @derby_group.command(name="start_race", description="Start a new race now")
     @checks.has_role("Race Admin")

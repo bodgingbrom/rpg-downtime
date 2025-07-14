@@ -1,5 +1,6 @@
 import types
 from pathlib import Path
+from unittest.mock import patch
 
 import discord
 import pytest
@@ -287,3 +288,129 @@ async def test_on_command_error_check_failure() -> None:
 
     assert ctx.sent
     assert "permission" in ctx.sent[0]["embed"].description
+
+
+@pytest.mark.asyncio
+async def test_add_racer_with_stats(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+    owner = types.SimpleNamespace(id=42)
+
+    await cog.add_racer(
+        ctx,
+        name="Speedy",
+        owner=owner,
+        speed=20,
+        cornering=21,
+        stamina=22,
+        temperament=23,
+    )
+
+    async with sessionmaker() as session:
+        racer = (await session.execute(select(models.Racer))).scalars().first()
+
+    assert racer.speed == 20 and racer.cornering == 21
+    assert racer.stamina == 22 and racer.temperament == 23
+
+
+@pytest.mark.asyncio
+async def test_add_racer_random_stats(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+    owner = types.SimpleNamespace(id=99)
+
+    with patch("random.randint", side_effect=[1, 2, 3, 4]):
+        await cog.add_racer(ctx, name="Lucky", owner=owner, random_stats=True)
+
+    async with sessionmaker() as session:
+        racer = (await session.execute(select(models.Racer))).scalars().first()
+
+    assert [racer.speed, racer.cornering, racer.stamina, racer.temperament] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_edit_racer_stats(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(session, name="Edit", owner_id=1)
+
+    await cog.edit_racer(ctx, racer_id=racer.id, speed=15)
+
+    async with sessionmaker() as session:
+        updated = await repo.get_racer(session, racer.id)
+
+    assert updated.speed == 15
+
+
+@pytest.mark.asyncio
+async def test_race_info_bands(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session,
+            name="Info",
+            owner_id=1,
+            speed=31,
+            cornering=30,
+            stamina=27,
+            temperament=10,
+        )
+
+    await cog.race_info(ctx, racer=racer.id)
+
+    embed = ctx.sent[-1]["embed"]
+    values = [f.value for f in embed.fields[:4]]
+    assert values == ["Perfect", "Fantastic", "Very Good", "Decent"]
