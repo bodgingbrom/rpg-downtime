@@ -5,3 +5,5 @@ python-dotenv
 pydantic
 PyYAML
 SQLAlchemy>=2
+pytest
+pytest-asyncio
