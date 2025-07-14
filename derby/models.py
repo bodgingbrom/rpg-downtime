@@ -17,6 +17,12 @@ class Racer(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
     retired: Mapped[bool] = mapped_column(Boolean, default=False)
+    speed: Mapped[int] = mapped_column(Integer, default=0)
+    cornering: Mapped[int] = mapped_column(Integer, default=0)
+    stamina: Mapped[int] = mapped_column(Integer, default=0)
+    temperament: Mapped[int] = mapped_column(Integer, default=0)
+    mood: Mapped[int] = mapped_column(Integer, default=0)
+    injuries: Mapped[str] = mapped_column(String, default="")
 
 
 class Race(Base):

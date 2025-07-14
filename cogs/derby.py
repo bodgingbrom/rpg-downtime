@@ -182,6 +182,27 @@ class Derby(commands.Cog, name="derby"):
         results = "\n".join(f"{i+1}. Racer {rid}" for i, rid in enumerate(placements))
         await context.send(f"Race finished!\n{results}")
 
+    @race.command(name="info", description="Show racer info")
+    @app_commands.describe(racer="Racer id")
+    async def race_info(self, context: Context, racer: int) -> None:
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+        if racer_obj is None:
+            await context.send("Racer not found", ephemeral=True)
+            return
+        embed = discord.Embed(title=racer_obj.name)
+        embed.add_field(name="Speed", value=str(racer_obj.speed), inline=True)
+        embed.add_field(name="Cornering", value=str(racer_obj.cornering), inline=True)
+        embed.add_field(name="Stamina", value=str(racer_obj.stamina), inline=True)
+        embed.add_field(
+            name="Temperament", value=str(racer_obj.temperament), inline=True
+        )
+        embed.add_field(name="Mood", value=str(racer_obj.mood), inline=True)
+        embed.add_field(
+            name="Injuries", value=racer_obj.injuries or "None", inline=False
+        )
+        await context.send(embed=embed)
+
     @commands.hybrid_group(name="derby", description="Derby admin commands")
     @commands.has_guild_permissions(manage_guild=True)
     async def derby_group(
