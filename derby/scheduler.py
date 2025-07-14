@@ -225,7 +225,7 @@ class DerbyScheduler:
                 done.set()
                 return
 
-        commentary = tasks.Loop(send_next, seconds=delay)
+        commentary = tasks.loop(seconds=delay)(send_next)
         await send_next()
         if not done.is_set():
             self.commentaries[race_id] = commentary
