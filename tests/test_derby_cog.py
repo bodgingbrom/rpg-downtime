@@ -89,3 +89,25 @@ async def test_race_bet(tmp_path: Path) -> None:
 
     assert wallet.balance == 70
     assert bet.racer_id == racer2.id and bet.amount == 30
+
+
+@pytest.mark.asyncio
+async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1, default_wallet=100, retirement_threshold=65
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+    ctx.author = types.SimpleNamespace(id=10)
+
+    await cog.wallet(ctx)
+
+    async with sessionmaker() as session:
+        wallet = await repo.get_wallet(session, ctx.author.id)
+
+    assert wallet.balance == bot.settings.default_wallet
+    assert ctx.sent and str(wallet.balance) in ctx.sent[0]["content"]

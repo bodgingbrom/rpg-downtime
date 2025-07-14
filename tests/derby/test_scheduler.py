@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 
+import discord
 import pytest
 from sqlalchemy import select
 
@@ -12,10 +13,15 @@ from derby.scheduler import DerbyScheduler
 
 class DummyChannel:
     def __init__(self) -> None:
-        self.messages: list[dict[str, object]] = []
+        self.messages: list[str] = []
 
-    async def send(self, content: str | None = None, **kwargs) -> None:
-        self.messages.append({"content": content, **kwargs})
+    async def send(
+        self, content: str | None = None, *, embed: discord.Embed | None = None
+    ) -> None:
+        if embed is not None and embed.description is not None:
+            self.messages.append(embed.description)
+        elif content is not None:
+            self.messages.append(content)
 
 
 class DummyUser:
@@ -41,7 +47,7 @@ class DummyBot:
         self.loop = asyncio.get_event_loop()
         self.users: dict[int, DummyUser] = {}
 
-    def add_user(self, user: "DummyUser") -> None:
+    def add_user(self, user: DummyUser) -> None:
         self.users[user.id] = user
 
     def get_guild(self, gid: int) -> DummyGuild | None:
@@ -94,6 +100,51 @@ async def test_retirement(tmp_path: Path) -> None:
         racers = (await session.execute(select(Racer))).scalars().all()
         retired = [r for r in racers if r.retired]
         assert retired and len(racers) == 4
+
+
+@pytest.mark.asyncio
+async def test_stream_commentary(tmp_path: Path) -> None:
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(race_frequency=1, default_wallet=100, retirement_threshold=101)
+    bot = DummyBot(settings)
+    guild = DummyGuild(1)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=guild.id)
+
+    events = ["E1", "E2", "E3"]
+    await scheduler._stream_commentary(race.id, guild.id, events, delay=0)
+    assert guild.system_channel.messages == events
+
+
+@pytest.mark.asyncio
+async def test_commentary_stops_when_cancelled(tmp_path: Path) -> None:
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(race_frequency=1, default_wallet=100, retirement_threshold=101)
+    bot = DummyBot(settings)
+    guild = DummyGuild(1)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=guild.id)
+
+    events = ["A", "B", "C"]
+
+    async def cancel() -> None:
+        await asyncio.sleep(0.01)
+        async with scheduler.sessionmaker() as session:
+            await repo.delete_race(session, race.id)
+
+    cancel_task = asyncio.create_task(cancel())
+    await scheduler._stream_commentary(race.id, guild.id, events, delay=0.05)
+    await cancel_task
+
+    assert len(guild.system_channel.messages) == 1
 
 
 @pytest.mark.asyncio

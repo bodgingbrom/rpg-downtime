@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import random
 from datetime import datetime
@@ -24,6 +25,7 @@ class DerbyScheduler:
         self.sessionmaker = async_sessionmaker(self.engine, expire_on_commit=False)
         self._initialized = False
         self.task = tasks.loop(hours=24)(self._run)
+        self.commentaries: dict[int, tasks.Loop] = {}
 
     async def start(self) -> None:
         await self._init_db()
@@ -107,11 +109,12 @@ class DerbyScheduler:
             bets = bet_rows.scalars().all()
             winning_racer = min((b.racer_id for b in bets), default=None)
 
-            placements, _log = logic.simulate_race({"racers": participants}, race.id)
+            placements, log = logic.simulate_race({"racers": participants}, race.id)
             await repo.update_race(session, race.id, finished=True)
             await logic.resolve_payouts(session, race.id)
             await self._apply_retirements(session, participants)
             await session.commit()
+            await self._stream_commentary(race.id, race.guild_id, log)
             await self._post_results(race.guild_id, placements)
             if bets and winning_racer is not None:
                 await self._dm_payouts(bets, winning_racer, race.id)
@@ -150,6 +153,55 @@ class DerbyScheduler:
                 await user.send(msg)
             except Exception:
                 continue
+
+    async def _stream_commentary(
+        self, race_id: int, guild_id: int, log: list[str], delay: float = 2.0
+    ) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        channel = guild.system_channel or (
+            guild.text_channels[0] if guild.text_channels else None
+        )
+        if channel is None:
+            return
+
+        events = iter(log)
+        done = asyncio.Event()
+        commentary: tasks.Loop | None = None
+
+        async def send_next() -> None:
+            nonlocal commentary
+            async with self.sessionmaker() as session:
+                if await repo.get_race(session, race_id) is None:
+                    if commentary:
+                        commentary.cancel()
+                    done.set()
+                    return
+            try:
+                event = next(events)
+            except StopIteration:
+                if commentary:
+                    commentary.cancel()
+                done.set()
+                return
+            embed = discord.Embed(description=event)
+            try:
+                await channel.send(embed=embed)
+            except (discord.Forbidden, discord.HTTPException):
+                if commentary:
+                    commentary.cancel()
+                done.set()
+                return
+
+        commentary = tasks.Loop(send_next, seconds=delay)
+        await send_next()
+        if not done.is_set():
+            self.commentaries[race_id] = commentary
+            commentary.start()
+            await done.wait()
+            commentary.cancel()
+            self.commentaries.pop(race_id, None)
 
     async def _apply_retirements(
         self, session: AsyncSession, racers: list[models.Racer]
