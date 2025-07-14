@@ -82,6 +82,34 @@ class Derby(commands.Cog, name="derby"):
         else:
             await context.send(f"Next race ID: {race.id}")
 
+    @race.command(name="upcoming", description="Show upcoming race odds")
+    async def race_upcoming(self, context: Context) -> None:
+        async with self.bot.scheduler.sessionmaker() as session:
+            race_result = await session.execute(
+                select(models.Race)
+                .where(models.Race.finished.is_(False))
+                .order_by(models.Race.id)
+            )
+            race = race_result.scalars().first()
+            racers_result = await session.execute(
+                select(models.Racer).where(models.Racer.retired.is_(False))
+            )
+            racers = racers_result.scalars().all()
+        if race is None or not racers:
+            await context.send("No upcoming race.", ephemeral=True)
+            return
+
+        odds = logic.calculate_odds(racers, [], 0.1)
+        embed = discord.Embed(title="Upcoming Race")
+        embed.add_field(name="Race ID", value=str(race.id), inline=False)
+        for racer in racers:
+            embed.add_field(
+                name=racer.name,
+                value=f"{odds.get(racer.id, 0):.1f}x",
+                inline=False,
+            )
+        await context.send(embed=embed)
+
     @race.command(name="bet", description="Bet on the next race")
     @app_commands.describe(amount="Amount to bet")
     async def race_bet(self, context: Context, amount: int) -> None:
