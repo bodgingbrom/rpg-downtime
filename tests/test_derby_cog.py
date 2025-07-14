@@ -89,3 +89,83 @@ async def test_race_bet(tmp_path: Path) -> None:
 
     assert wallet.balance == 70
     assert bet.racer_id == racer2.id and bet.amount == 30
+
+
+@pytest.mark.asyncio
+async def test_racer_delete(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1, default_wallet=100, retirement_threshold=65
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(session, name="A", owner_id=1)
+
+    await cog.racer_delete(ctx, racer_id=racer.id)
+
+    async with sessionmaker() as session:
+        assert await repo.get_racer(session, racer.id) is None
+
+    assert ctx.sent and ctx.sent[-1]["content"] == f"Racer {racer.id} deleted"
+
+
+@pytest.mark.asyncio
+async def test_race_force_start(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1, default_wallet=100, retirement_threshold=101
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=1)
+        racer1 = await repo.create_racer(session, name="A", owner_id=1)
+        await repo.create_racer(session, name="B", owner_id=2)
+        await repo.create_wallet(session, user_id=5, balance=50)
+        await repo.create_bet(
+            session, race_id=race.id, user_id=5, racer_id=racer1.id, amount=10
+        )
+
+    await cog.race_force_start(ctx, race_id=race.id)
+
+    async with sessionmaker() as session:
+        finished = await repo.get_race(session, race.id)
+        wallet = await repo.get_wallet(session, 5)
+
+    assert finished.finished
+    assert wallet.balance == 70
+    assert ctx.sent and f"Race {race.id} finished" in ctx.sent[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_debug_race(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1, default_wallet=100, retirement_threshold=65
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=1)
+        racer = await repo.create_racer(session, name="A", owner_id=1)
+        await repo.create_bet(
+            session, race_id=race.id, user_id=5, racer_id=racer.id, amount=10
+        )
+
+    await cog.debug_race(ctx, race_id=race.id)
+
+    assert ctx.sent and ctx.sent[-1].get("ephemeral") is True
+    assert "race" in ctx.sent[-1]["content"]

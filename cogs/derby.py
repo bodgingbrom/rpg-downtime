@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import random
 from typing import List
 
 import discord
@@ -237,6 +239,124 @@ class Derby(commands.Cog, name="derby"):
                 return
             await repo.delete_race(session, race.id)
         await context.send(f"Race {race.id} cancelled")
+
+    @derby_group.group(name="racer", description="Racer admin commands")
+    async def racer_group(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await context.send("Specify a subcommand", ephemeral=True)
+
+    @racer_group.command(name="delete", description="Delete a racer")
+    @app_commands.describe(racer_id="Racer id")
+    async def racer_delete(self, context: Context, racer_id: int) -> None:
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer = await repo.get_racer(session, racer_id)
+            if racer is None:
+                await context.send("Racer not found", ephemeral=True)
+                return
+            await repo.delete_racer(session, racer_id)
+        await context.send(f"Racer {racer_id} deleted")
+
+    @derby_group.group(name="race", description="Race admin commands")
+    async def race_admin(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await context.send("Specify a subcommand", ephemeral=True)
+
+    @race_admin.command(
+        name="force-start", description="Simulate a pending race immediately"
+    )
+    @app_commands.describe(race_id="Race id (defaults to next pending)")
+    async def race_force_start(
+        self, context: Context, race_id: int | None = None
+    ) -> None:
+        async with self.bot.scheduler.sessionmaker() as session:
+            if race_id is None:
+                result = await session.execute(
+                    select(models.Race)
+                    .where(models.Race.finished.is_(False))
+                    .order_by(models.Race.id)
+                )
+                race = result.scalars().first()
+            else:
+                race = await repo.get_race(session, race_id)
+                if race is not None and race.finished:
+                    race = None
+            if race is None:
+                await context.send("No pending race found", ephemeral=True)
+                return
+            racers_result = await session.execute(
+                select(models.Racer).where(models.Racer.retired.is_(False))
+            )
+            racers = racers_result.scalars().all()
+            if not racers:
+                await context.send("No racers available", ephemeral=True)
+                return
+            participants = random.sample(racers, min(3, len(racers)))
+            placements, _log = logic.simulate_race(
+                {"racers": participants}, seed=race.id
+            )
+            await repo.update_race(session, race.id, finished=True)
+            await logic.resolve_payouts(session, race.id)
+            threshold = self.bot.settings.retirement_threshold
+            for r in participants:
+                if random.randint(1, 100) >= threshold:
+                    await repo.update_racer(session, r.id, retired=True)
+                    await repo.create_racer(
+                        session, name=f"{r.name} II", owner_id=r.owner_id
+                    )
+            await session.commit()
+        results = "\n".join(f"{i+1}. Racer {rid}" for i, rid in enumerate(placements))
+        await context.send(f"Race {race.id} finished!\n{results}")
+
+    @derby_group.group(name="debug", description="Debug commands")
+    async def debug_group(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await context.send("Specify a subcommand", ephemeral=True)
+
+    @debug_group.command(name="race", description="Dump race data")
+    @app_commands.describe(race_id="Race id")
+    async def debug_race(self, context: Context, race_id: int) -> None:
+        async with self.bot.scheduler.sessionmaker() as session:
+            race = await repo.get_race(session, race_id)
+            if race is None:
+                await context.send("Race not found", ephemeral=True)
+                return
+            bets = (
+                (
+                    await session.execute(
+                        select(models.Bet).where(models.Bet.race_id == race_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            racer_ids = {b.racer_id for b in bets}
+            if racer_ids:
+                racers = (
+                    (
+                        await session.execute(
+                            select(models.Racer).where(models.Racer.id.in_(racer_ids))
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            else:
+                racers = []
+            data = {
+                "race": {c.key: getattr(race, c.key) for c in race.__table__.columns},
+                "bets": [
+                    {c.key: getattr(b, c.key) for c in b.__table__.columns}
+                    for b in bets
+                ],
+                "participants": [
+                    {c.key: getattr(r, c.key) for c in r.__table__.columns}
+                    for r in racers
+                ],
+            }
+        await context.send(
+            f"```json\n{json.dumps(data, default=str, indent=2)}\n```",
+            ephemeral=True,
+        )
 
 
 async def setup(bot) -> None:
