@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Type, TypeVar
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Bet, CourseSegment, GuildSettings, Race, Racer, Wallet
@@ -176,3 +177,36 @@ async def update_guild_settings(
 
 async def delete_guild_settings(session: AsyncSession, guild_id: int) -> None:
     await _delete(session, GuildSettings, guild_id)
+
+
+# History
+async def get_race_history(
+    session: AsyncSession, guild_id: int, limit: int
+) -> list[tuple[Race, int | None, int]]:
+    """Return the last ``limit`` finished races for ``guild_id``.
+
+    Each entry is ``(Race, winning_racer_id | None, total_payout)`` where
+    ``total_payout`` is the sum paid to winning bets (double the bet amount).
+    ``winning_racer_id`` will be ``None`` if no bets exist for the race.
+    """
+
+    result = await session.execute(
+        select(Race)
+        .where(Race.guild_id == guild_id, Race.finished.is_(True))
+        .order_by(Race.id.desc())
+        .limit(limit)
+    )
+    races = result.scalars().all()
+
+    history: list[tuple[Race, int | None, int]] = []
+    for race in races:
+        bet_rows = await session.execute(select(Bet).where(Bet.race_id == race.id))
+        bets = bet_rows.scalars().all()
+        if bets:
+            winner = min(b.racer_id for b in bets)
+            payout = sum(b.amount * 2 for b in bets if b.racer_id == winner)
+        else:
+            winner = None
+            payout = 0
+        history.append((race, winner, payout))
+    return history
