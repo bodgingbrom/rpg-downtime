@@ -21,6 +21,9 @@ class DummyContext:
         self.sent: list[dict[str, object]] = []
         self.interaction = None
 
+    async def defer(self, **kwargs) -> None:
+        pass
+
     async def send(self, content: str | None = None, **kwargs) -> None:
         self.sent.append({"content": content, **kwargs})
 
