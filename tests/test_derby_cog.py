@@ -384,6 +384,70 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_add_racer_default_name(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+    owner = types.SimpleNamespace(id=42)
+
+    await cog.add_racer(ctx, owner=owner, random_stats=True)
+
+    async with sessionmaker() as session:
+        racer = (await session.execute(select(models.Racer))).scalars().first()
+
+    assert racer is not None
+    assert racer.name  # got a name from the pool
+    from derby.logic import _load_names
+    assert racer.name in _load_names()
+
+
+@pytest.mark.asyncio
+async def test_add_racer_default_name_avoids_taken(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_frequency=1,
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+    owner = types.SimpleNamespace(id=42)
+
+    # Create a racer with no name (gets a default)
+    await cog.add_racer(ctx, owner=owner, random_stats=True)
+    # Create another — should get a different name
+    ctx2 = DummyContext(bot)
+    await cog.add_racer(ctx2, owner=owner, random_stats=True)
+
+    async with sessionmaker() as session:
+        racers = (await session.execute(select(models.Racer))).scalars().all()
+
+    assert len(racers) == 2
+    assert racers[0].name != racers[1].name
+
+
+@pytest.mark.asyncio
 async def test_edit_racer_stats(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)

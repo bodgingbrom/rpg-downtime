@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import random
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Set, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,23 @@ MOOD_LABELS = {
     4: "Good",
     5: "Great",
 }
+
+
+_NAMES_FILE = os.path.join(os.path.dirname(__file__), "names.txt")
+
+
+def _load_names() -> list[str]:
+    with open(_NAMES_FILE, encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def pick_name(taken: Set[str]) -> str | None:
+    """Pick a random name from the pool that isn't already taken."""
+    taken_lower = {n.lower() for n in taken}
+    available = [n for n in _load_names() if n.lower() not in taken_lower]
+    if not available:
+        return None
+    return random.choice(available)
 
 
 def stat_band(value: int) -> str:
