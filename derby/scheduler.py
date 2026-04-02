@@ -169,34 +169,45 @@ class DerbyScheduler:
             )
             if winner_id is not None:
                 await logic.resolve_payouts(session, race_id, winner_id)
-            await self._apply_retirements(session, participants)
+            retirements = await self._apply_retirements(session, participants)
             await session.commit()
+        names = {r.id: r.name for r in participants}
         await self._stream_commentary(race_id, guild_id, log)
-        await self._post_results(guild_id, placements)
-        await self._dm_payouts(bets, race_id, winner_id)
+        await self._post_results(guild_id, placements, names)
+        await self._dm_payouts(bets, race_id, winner_id, names)
+        if retirements:
+            await self._announce_retirements(guild_id, retirements)
         self.bot.logger.info(
             "Race finished",
             extra={"guild_id": guild_id, "race_id": race_id},
         )
 
-    async def _post_results(self, guild_id: int, placements: list[int]) -> None:
+    async def _post_results(
+        self,
+        guild_id: int,
+        placements: list[int],
+        names: dict[int, str] | None = None,
+    ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return
         channel = self._get_channel(guild)
         if channel is None:
             return
-        async with self.sessionmaker() as session:
-            racers = (
-                (
-                    await session.execute(
-                        select(models.Racer).where(models.Racer.id.in_(placements))
+        if names is None:
+            async with self.sessionmaker() as session:
+                racers = (
+                    (
+                        await session.execute(
+                            select(models.Racer).where(
+                                models.Racer.id.in_(placements)
+                            )
+                        )
                     )
+                    .scalars()
+                    .all()
                 )
-                .scalars()
-                .all()
-            )
-        names = {r.id: r.name for r in racers}
+            names = {r.id: r.name for r in racers}
         embed = discord.Embed(title="Race Results")
         for i, rid in enumerate(placements, start=1):
             embed.add_field(
@@ -205,19 +216,30 @@ class DerbyScheduler:
         await channel.send(embed=embed)
 
     async def _dm_payouts(
-        self, bets: list[models.Bet], race_id: int, winner_id: int | None
+        self,
+        bets: list[models.Bet],
+        race_id: int,
+        winner_id: int | None,
+        names: dict[int, str] | None = None,
     ) -> None:
         if not bets or winner_id is None:
             return
-        winning = winner_id
+        names = names or {}
         for bet in bets:
             user = self.bot.get_user(bet.user_id)
             if user is None:
                 continue
-            if bet.racer_id == winning:
-                msg = f"You won {bet.amount * 2} coins on race {race_id}!"
+            racer_name = names.get(bet.racer_id, f"Racer {bet.racer_id}")
+            if bet.racer_id == winner_id:
+                msg = (
+                    f"You won {bet.amount * 2} coins betting on "
+                    f"**{racer_name}** in race {race_id}!"
+                )
             else:
-                msg = f"You lost your bet of {bet.amount} coins on race {race_id}."
+                msg = (
+                    f"You lost your bet of {bet.amount} coins on "
+                    f"**{racer_name}** in race {race_id}."
+                )
             try:
                 await user.send(msg)
             except (discord.Forbidden, discord.HTTPException):
@@ -272,12 +294,13 @@ class DerbyScheduler:
 
     async def _apply_retirements(
         self, session: AsyncSession, racers: list[models.Racer]
-    ) -> None:
+    ) -> list[tuple[models.Racer, models.Racer]]:
         threshold = self.bot.settings.retirement_threshold
+        retirements: list[tuple[models.Racer, models.Racer]] = []
         for racer in racers:
             if random.randint(1, 100) >= threshold:
                 await repo.update_racer(session, racer.id, retired=True)
-                await repo.create_racer(
+                successor = await repo.create_racer(
                     session,
                     name=f"{racer.name} II",
                     owner_id=racer.owner_id,
@@ -286,6 +309,8 @@ class DerbyScheduler:
                     stamina=int(racer.stamina * random.uniform(0.5, 0.75)),
                     temperament=racer.temperament,
                 )
+                retirements.append((racer, successor))
+        return retirements
 
     async def _announce_race_start(
         self, guild_id: int, race_id: int, racers: list[models.Racer]
@@ -303,13 +328,53 @@ class DerbyScheduler:
             description=f"Race {race_id} begins in {minutes} minutes. Place your bets!",
         )
         for r in racers:
+            mult = odds.get(r.id, 0)
             embed.add_field(
-                name=r.name, value=f"{odds.get(r.id, 0):.1f}x", inline=False
+                name=f"{r.name} (#{r.id})",
+                value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}",
+                inline=False,
             )
+        embed.set_footer(text="Use /race bet to place your bet!")
         try:
             await channel.send(embed=embed)
         except (discord.Forbidden, discord.HTTPException):
             return
+
+    async def _announce_retirements(
+        self,
+        guild_id: int,
+        retirements: list[tuple[models.Racer, models.Racer]],
+    ) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        channel = self._get_channel(guild)
+        if channel is None:
+            return
+        for old, new in retirements:
+            embed = discord.Embed(
+                title=f"Retirement: {old.name}",
+                description=(
+                    f"**{old.name}** has retired! "
+                    f"Their successor **{new.name}** joins the roster."
+                ),
+            )
+            embed.add_field(
+                name="Speed", value=logic.stat_band(new.speed), inline=True
+            )
+            embed.add_field(
+                name="Cornering", value=logic.stat_band(new.cornering), inline=True
+            )
+            embed.add_field(
+                name="Stamina", value=logic.stat_band(new.stamina), inline=True
+            )
+            embed.add_field(
+                name="Temperament", value=new.temperament, inline=True
+            )
+            try:
+                await channel.send(embed=embed)
+            except (discord.Forbidden, discord.HTTPException):
+                continue
 
     async def _countdown(self, guild_id: int) -> None:
         guild = self.bot.get_guild(guild_id)

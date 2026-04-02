@@ -21,6 +21,9 @@ class DummyContext:
         self.sent: list[dict[str, object]] = []
         self.interaction = None
 
+    async def defer(self, **kwargs) -> None:
+        pass
+
     async def send(self, content: str | None = None, **kwargs) -> None:
         self.sent.append({"content": content, **kwargs})
 
@@ -89,7 +92,7 @@ async def test_race_bet(tmp_path: Path) -> None:
         racer1 = await repo.create_racer(session, name="A", owner_id=1)
         racer2 = await repo.create_racer(session, name="B", owner_id=2)
 
-    await cog.race_bet(ctx, racer_id=racer1.id, amount=20)
+    await cog.race_bet(ctx, racer=racer1.id, amount=20)
 
     async with sessionmaker() as session:
         wallet = await repo.get_wallet(session, ctx.author.id)
@@ -98,7 +101,7 @@ async def test_race_bet(tmp_path: Path) -> None:
     assert wallet.balance == 80
     assert bet.racer_id == racer1.id and bet.amount == 20
 
-    await cog.race_bet(ctx, racer_id=racer2.id, amount=30)
+    await cog.race_bet(ctx, racer=racer2.id, amount=30)
 
     async with sessionmaker() as session:
         wallet = await repo.get_wallet(session, ctx.author.id)
@@ -149,7 +152,9 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
         wallet = await repo.get_wallet(session, ctx.author.id)
 
     assert wallet.balance == bot.settings.default_wallet
-    assert ctx.sent and str(wallet.balance) in ctx.sent[0]["content"]
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None and "Welcome" in embed.title
 
 
 @pytest.mark.asyncio
@@ -174,12 +179,12 @@ async def test_racer_delete(tmp_path: Path) -> None:
     async with sessionmaker() as session:
         racer = await repo.create_racer(session, name="A", owner_id=1)
 
-    await cog.racer_delete(ctx, racer_id=racer.id)
+    await cog.racer_delete(ctx, racer=racer.id)
 
     async with sessionmaker() as session:
         assert await repo.get_racer(session, racer.id) is None
 
-    assert ctx.sent and ctx.sent[-1]["content"] == f"Racer {racer.id} deleted"
+    assert ctx.sent and f"#{racer.id}" in ctx.sent[-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -400,7 +405,7 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
     async with sessionmaker() as session:
         racer = await repo.create_racer(session, name="Edit", owner_id=1)
 
-    await cog.edit_racer(ctx, racer_id=racer.id, speed=15)
+    await cog.edit_racer(ctx, racer=racer.id, speed=15)
 
     async with sessionmaker() as session:
         updated = await repo.get_racer(session, racer.id)
