@@ -293,13 +293,24 @@ class DiscordBot(commands.Bot):
             )
             await context.send(embed=embed, ephemeral=True)
         else:
+            # Suppress interaction-expired (10062) and already-acknowledged (40060)
+            # errors — these are harmless Discord API quirks with hybrid commands.
+            inner = getattr(error, "original", error)
+            if isinstance(inner, discord.HTTPException) and inner.code in (
+                10062,
+                40060,
+            ):
+                return
             self.logger.error(
                 "Unhandled command error",
                 exc_info=error,
                 extra={"guild_id": context.guild.id if context.guild else None},
             )
             sentry_sdk.capture_exception(error)
-            await context.send("An unexpected error occurred.", ephemeral=True)
+            try:
+                await context.send("An unexpected error occurred.", ephemeral=True)
+            except discord.HTTPException:
+                pass  # Interaction may have expired
 
 
 if __name__ == "__main__":

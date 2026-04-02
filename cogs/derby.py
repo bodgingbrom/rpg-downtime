@@ -385,6 +385,7 @@ class Derby(commands.Cog, name="derby"):
     @derby_group.command(name="start_race", description="Start a new race now")
     @checks.has_role("Race Admin")
     async def start_race(self, context: Context) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             race = await repo.create_race(session, guild_id=context.guild.id)
             racers_result = await session.execute(
