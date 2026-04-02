@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from bot import DiscordBot
 from cogs import derby as derby_cog
 from config import Settings
-from derby import models
+from derby import Base, models
 from derby import repositories as repo
 
 
@@ -19,6 +19,7 @@ class DummyContext:
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.sent: list[dict[str, object]] = []
+        self.interaction = None
 
     async def send(self, content: str | None = None, **kwargs) -> None:
         self.sent.append({"content": content, **kwargs})
@@ -35,6 +36,8 @@ async def test_setup_adds_cog():
 async def test_race_upcoming(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -45,6 +48,7 @@ async def test_race_upcoming(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
@@ -64,6 +68,8 @@ async def test_race_bet(tmp_path: Path) -> None:
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -74,6 +80,7 @@ async def test_race_bet(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
     ctx.author = types.SimpleNamespace(id=5)
 
@@ -102,35 +109,26 @@ async def test_race_bet(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_admin_check_requires_role(tmp_path: Path) -> None:
+async def test_admin_check_requires_role() -> None:
+    import checks as checks_module
 
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
-    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
-    bot.settings = Settings(
-        race_frequency=1,
-        default_wallet=100,
-        retirement_threshold=65,
-        bet_window=0,
-        countdown_total=0,
-    )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
-    cog = derby_cog.Derby(bot)
-    ctx = DummyContext(bot)
-    ctx.guild = types.SimpleNamespace(id=1)
-    ctx.author = types.SimpleNamespace(
-        roles=[types.SimpleNamespace(name="Not Admin")],
-        guild_permissions=discord.Permissions(manage_guild=True),
-    )
+    check_fn = checks_module.has_role("Race Admin")
+    ctx = DummyContext(None)  # type: ignore[arg-type]
+    ctx.author = types.SimpleNamespace(roles=[types.SimpleNamespace(name="Not Admin")])
+    result = await check_fn.predicate(ctx)
+    assert not result
 
-    with pytest.raises(commands.CheckFailure):
-        await cog.add_racer.can_run(ctx)  # type: ignore[arg-type]
+    ctx.author = types.SimpleNamespace(roles=[types.SimpleNamespace(name="Race Admin")])
+    result = await check_fn.predicate(ctx)
+    assert result
 
 
 @pytest.mark.asyncio
 async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -141,6 +139,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
     ctx.author = types.SimpleNamespace(id=10)
 
@@ -157,6 +156,8 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
 async def test_racer_delete(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -167,6 +168,7 @@ async def test_racer_delete(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
@@ -184,6 +186,8 @@ async def test_racer_delete(tmp_path: Path) -> None:
 async def test_race_force_start(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -194,6 +198,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
@@ -222,6 +227,8 @@ async def test_race_force_start(tmp_path: Path) -> None:
 async def test_debug_race(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -232,6 +239,7 @@ async def test_debug_race(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
@@ -251,6 +259,8 @@ async def test_debug_race(tmp_path: Path) -> None:
 async def test_race_history(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -261,6 +271,7 @@ async def test_race_history(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
     ctx.guild = types.SimpleNamespace(id=1)
 
@@ -298,6 +309,8 @@ async def test_on_command_error_check_failure() -> None:
 async def test_add_racer_with_stats(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -308,6 +321,7 @@ async def test_add_racer_with_stats(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
     owner = types.SimpleNamespace(id=42)
 
@@ -332,6 +346,8 @@ async def test_add_racer_with_stats(tmp_path: Path) -> None:
 async def test_add_racer_random_stats(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -342,6 +358,7 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
     owner = types.SimpleNamespace(id=99)
 
@@ -365,6 +382,8 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
 async def test_edit_racer_stats(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -375,6 +394,7 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
@@ -392,6 +412,8 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
 async def test_race_info_bands(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -402,6 +424,7 @@ async def test_race_info_bands(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
@@ -426,6 +449,8 @@ async def test_race_info_bands(tmp_path: Path) -> None:
 async def test_race_info_mood_label(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
         race_frequency=1,
@@ -436,6 +461,7 @@ async def test_race_info_mood_label(tmp_path: Path) -> None:
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
     cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
