@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import random
-from typing import List
 
 import discord
 from discord import app_commands
@@ -15,53 +14,32 @@ from derby import logic, models
 from derby import repositories as repo
 
 
-def _stat_band(value: int) -> str:
-    if value <= 15:
-        return "Decent"
-    if value <= 25:
-        return "Good"
-    if value <= 29:
-        return "Very Good"
-    if value == 30:
-        return "Fantastic"
-    return "Perfect"
+_stat_band = logic.stat_band
+_mood_label = logic.mood_label
+
+TEMPERAMENT_CHOICES = [
+    app_commands.Choice(name=t, value=t) for t in logic.TEMPERAMENTS
+]
 
 
-MOOD_LABELS = {
-    1: "Awful",
-    2: "Bad",
-    3: "Normal",
-    4: "Good",
-    5: "Great",
-}
-
-
-def _mood_label(value: int) -> str:
-    return MOOD_LABELS.get(value, str(value))
-
-
-class WatchView(discord.ui.View):
-    def __init__(self, log: List[str]):
-        super().__init__(timeout=120)
-        self.log = log
-        self.index = 0
-
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.blurple)
-    async def next(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        if self.index >= len(self.log):
-            button.disabled = True
-            await interaction.response.edit_message(view=self)
-            self.stop()
-            return
-        await interaction.response.send_message(self.log[self.index], ephemeral=True)
-        self.index += 1
-        if self.index >= len(self.log):
-            button.label = "Done"
-            button.style = discord.ButtonStyle.grey
-            await interaction.message.edit(view=self)
-            self.stop()
+async def racer_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[int]]:
+    """Autocomplete callback that suggests active racers by name."""
+    sessionmaker = interaction.client.scheduler.sessionmaker
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(models.Racer).where(models.Racer.retired.is_(False))
+        )
+        racers = result.scalars().all()
+    choices = []
+    current_lower = current.lower()
+    for r in racers:
+        if current_lower in r.name.lower():
+            choices.append(app_commands.Choice(name=f"{r.name} (#{r.id})", value=r.id))
+        if len(choices) >= 25:
+            break
+    return choices
 
 
 class Derby(commands.Cog, name="derby"):
@@ -74,20 +52,6 @@ class Derby(commands.Cog, name="derby"):
     ) -> None:  # pragma: no cover - command dispatch
         if context.invoked_subcommand is None:
             await context.send("Specify a subcommand", ephemeral=True)
-
-    @race.command(name="next", description="Show the next scheduled race")
-    async def race_next(self, context: Context) -> None:
-        async with self.bot.scheduler.sessionmaker() as session:
-            result = await session.execute(
-                select(models.Race)
-                .where(models.Race.finished.is_(False))
-                .order_by(models.Race.id)
-            )
-            race = result.scalars().first()
-        if race is None:
-            await context.send("No races scheduled.", ephemeral=True)
-        else:
-            await context.send(f"Next race ID: {race.id}")
 
     @race.command(name="upcoming", description="Show upcoming race odds")
     async def race_upcoming(self, context: Context) -> None:
@@ -109,17 +73,20 @@ class Derby(commands.Cog, name="derby"):
         odds = logic.calculate_odds(racers, [], 0.1)
         embed = discord.Embed(title="Upcoming Race")
         embed.add_field(name="Race ID", value=str(race.id), inline=False)
-        for racer in racers:
+        for r in racers:
+            mult = odds.get(r.id, 0)
             embed.add_field(
-                name=racer.name,
-                value=f"{odds.get(racer.id, 0):.1f}x",
+                name=f"{r.name} (#{r.id})",
+                value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}",
                 inline=False,
             )
+        embed.set_footer(text="Use /race bet to place your bet!")
         await context.send(embed=embed)
 
     @race.command(name="bet", description="Bet on the next race")
-    @app_commands.describe(racer_id="Racer id", amount="Amount to bet")
-    async def race_bet(self, context: Context, racer_id: int, amount: int) -> None:
+    @app_commands.describe(racer="Racer to bet on", amount="Amount to bet")
+    @app_commands.autocomplete(racer=racer_autocomplete)
+    async def race_bet(self, context: Context, racer: int, amount: int) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
             race_result = await session.execute(
                 select(models.Race)
@@ -134,9 +101,13 @@ class Derby(commands.Cog, name="derby"):
         if race is None or not racers:
             await context.send("No race available.", ephemeral=True)
             return
-        if racer_id not in [r.id for r in racers]:
+        if racer not in [r.id for r in racers]:
             await context.send("Racer not found.", ephemeral=True)
             return
+        racer_name = next((r.name for r in racers if r.id == racer), f"Racer {racer}")
+        odds = logic.calculate_odds(racers, [], 0.1)
+        multiplier = odds.get(racer, 0)
+        payout = int(amount * multiplier)
         async with self.bot.scheduler.sessionmaker() as session:
             wallet = await repo.get_wallet(session, context.author.id)
             if wallet is None:
@@ -151,7 +122,14 @@ class Derby(commands.Cog, name="derby"):
                 .where(models.Bet.user_id == context.author.id)
             )
             existing_bet = bet_result.scalars().first()
+            old_name = None
+            old_amount = 0
             if existing_bet is not None:
+                old_name = next(
+                    (r.name for r in racers if r.id == existing_bet.racer_id),
+                    f"Racer {existing_bet.racer_id}",
+                )
+                old_amount = existing_bet.amount
                 wallet.balance += existing_bet.amount
             if wallet.balance < amount:
                 await session.commit()
@@ -164,40 +142,24 @@ class Derby(commands.Cog, name="derby"):
                     session,
                     race_id=race.id,
                     user_id=context.author.id,
-                    racer_id=racer_id,
+                    racer_id=racer,
                     amount=amount,
                 )
             else:
                 await repo.update_bet(
-                    session, existing_bet.id, racer_id=racer_id, amount=amount
+                    session, existing_bet.id, racer_id=racer, amount=amount
                 )
-        await context.send(f"Bet placed on racer {racer_id} for {amount} coins")
-
-    @race.command(name="watch", description="Watch the next race")
-    async def race_watch(self, context: Context) -> None:
-        async with self.bot.scheduler.sessionmaker() as session:
-            race_result = await session.execute(
-                select(models.Race)
-                .where(models.Race.finished.is_(False))
-                .order_by(models.Race.id)
+        if old_name is not None:
+            await context.send(
+                f"Bet changed from **{old_name}** ({old_amount} coins refunded) "
+                f"to **{racer_name}** for {amount} coins "
+                f"({multiplier:.1f}x odds \u2014 win pays {payout})"
             )
-            race = race_result.scalars().first()
-            racers_result = await session.execute(
-                select(models.Racer).where(models.Racer.retired.is_(False))
+        else:
+            await context.send(
+                f"Bet placed on **{racer_name}** for {amount} coins "
+                f"({multiplier:.1f}x odds \u2014 win pays {payout})"
             )
-            racers = racers_result.scalars().all()
-        if race is None or not racers:
-            await context.send("No race to watch.", ephemeral=True)
-            return
-        placements, log = logic.simulate_race({"racers": racers}, seed=race.id)
-        view = WatchView(log)
-        embed = discord.Embed(
-            title="Race Commentary", description="Click next to see events"
-        )
-        await context.send(embed=embed, view=view)
-        await view.wait()
-        results = "\n".join(f"{i+1}. Racer {rid}" for i, rid in enumerate(placements))
-        await context.send(f"Race finished!\n{results}")
 
     @race.command(name="history", description="Show recent race results")
     @app_commands.describe(count="Number of races to display")
@@ -230,7 +192,8 @@ class Derby(commands.Cog, name="derby"):
         await context.send(embed=embed)
 
     @race.command(name="info", description="Show racer info")
-    @app_commands.describe(racer="Racer id")
+    @app_commands.describe(racer="Racer to inspect")
+    @app_commands.autocomplete(racer=racer_autocomplete)
     async def race_info(self, context: Context, racer: int) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
@@ -256,13 +219,24 @@ class Derby(commands.Cog, name="derby"):
     async def wallet(self, context: Context) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
             wallet = await repo.get_wallet(session, context.author.id)
+            was_new = wallet is None
             if wallet is None:
                 wallet = await repo.create_wallet(
                     session,
                     user_id=context.author.id,
                     balance=self.bot.settings.default_wallet,
                 )
-        await context.send(f"Your balance is {wallet.balance} coins")
+        if was_new:
+            embed = discord.Embed(
+                title="Welcome to Downtime Derby!",
+                description=(
+                    f"You've been given **{wallet.balance} coins** to start.\n"
+                    f"Use `/race upcoming` to see the next race and `/race bet` to wager!"
+                ),
+            )
+            await context.send(embed=embed)
+        else:
+            await context.send(f"Your balance is {wallet.balance} coins")
 
     @commands.hybrid_group(name="derby", description="Derby admin commands")
     @commands.has_guild_permissions(manage_guild=True)
@@ -283,6 +257,7 @@ class Derby(commands.Cog, name="derby"):
         stamina="Stamina stat",
         temperament="Temperament",
     )
+    @app_commands.choices(temperament=TEMPERAMENT_CHOICES)
     async def add_racer(
         self,
         context: Context,
@@ -312,22 +287,44 @@ class Derby(commands.Cog, name="derby"):
             racer = await repo.create_racer(
                 session, name=name, owner_id=owner.id, **stats
             )
-        await context.send(f"Racer {racer.name} added with id {racer.id}")
+        embed = discord.Embed(title=f"New Racer: {racer.name} (#{racer.id})")
+        embed.add_field(
+            name="Owner",
+            value=getattr(owner, "mention", str(owner.id)),
+            inline=False,
+        )
+        embed.add_field(
+            name="Speed", value=_stat_band(racer.speed), inline=True
+        )
+        embed.add_field(
+            name="Cornering", value=_stat_band(racer.cornering), inline=True
+        )
+        embed.add_field(
+            name="Stamina", value=_stat_band(racer.stamina), inline=True
+        )
+        embed.add_field(
+            name="Temperament", value=racer.temperament, inline=True
+        )
+        if random_stats:
+            embed.set_footer(text="Stats randomly generated")
+        await context.send(embed=embed)
 
     @derby_group.command(name="edit_racer", description="Edit a racer")
     @checks.has_role("Race Admin")
     @app_commands.describe(
-        racer_id="Racer id",
+        racer="Racer to edit",
         name="New name",
         speed="Speed stat",
         cornering="Cornering stat",
         stamina="Stamina stat",
         temperament="Temperament",
     )
+    @app_commands.autocomplete(racer=racer_autocomplete)
+    @app_commands.choices(temperament=TEMPERAMENT_CHOICES)
     async def edit_racer(
         self,
         context: Context,
-        racer_id: int,
+        racer: int,
         name: str | None = None,
         speed: app_commands.Range[int, 0, 31] | None = None,
         cornering: app_commands.Range[int, 0, 31] | None = None,
@@ -349,18 +346,52 @@ class Derby(commands.Cog, name="derby"):
             await context.send("No updates provided", ephemeral=True)
             return
         async with self.bot.scheduler.sessionmaker() as session:
-            racer = await repo.update_racer(session, racer_id, **updates)
-        if racer is None:
-            await context.send("Racer not found", ephemeral=True)
-        else:
-            await context.send(f"Racer {racer.id} updated")
+            old = await repo.get_racer(session, racer)
+            if old is None:
+                await context.send("Racer not found", ephemeral=True)
+                return
+            old_values = {k: getattr(old, k) for k in updates}
+            updated = await repo.update_racer(session, racer, **updates)
+        embed = discord.Embed(title=f"Racer Updated: {updated.name}")
+        for key, new_val in updates.items():
+            old_val = old_values[key]
+            if key in ("speed", "cornering", "stamina"):
+                embed.add_field(
+                    name=key.capitalize(),
+                    value=f"{_stat_band(old_val)} \u2192 {_stat_band(new_val)}",
+                    inline=True,
+                )
+            else:
+                embed.add_field(
+                    name=key.capitalize(),
+                    value=f"{old_val} \u2192 {new_val}",
+                    inline=True,
+                )
+        await context.send(embed=embed)
 
     @derby_group.command(name="start_race", description="Start a new race now")
     @checks.has_role("Race Admin")
     async def start_race(self, context: Context) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
             race = await repo.create_race(session, guild_id=context.guild.id)
-        await context.send(f"Race {race.id} created")
+            racers_result = await session.execute(
+                select(models.Racer).where(models.Racer.retired.is_(False))
+            )
+            racers = racers_result.scalars().all()
+        embed = discord.Embed(
+            title=f"Race {race.id} Created",
+            description=f"{len(racers)} active racers in the pool",
+        )
+        if racers:
+            odds = logic.calculate_odds(racers, [], 0.1)
+            for r in racers:
+                mult = odds.get(r.id, 0)
+                embed.add_field(
+                    name=f"{r.name} (#{r.id})",
+                    value=f"{mult:.1f}x",
+                    inline=True,
+                )
+        await context.send(embed=embed)
 
     @derby_group.command(name="cancel_race", description="Cancel the next race")
     @checks.has_role("Race Admin")
@@ -384,15 +415,16 @@ class Derby(commands.Cog, name="derby"):
             await context.send("Specify a subcommand", ephemeral=True)
 
     @racer_group.command(name="delete", description="Delete a racer")
-    @app_commands.describe(racer_id="Racer id")
-    async def racer_delete(self, context: Context, racer_id: int) -> None:
+    @app_commands.describe(racer="Racer to delete")
+    @app_commands.autocomplete(racer=racer_autocomplete)
+    async def racer_delete(self, context: Context, racer: int) -> None:
         async with self.bot.scheduler.sessionmaker() as session:
-            racer = await repo.get_racer(session, racer_id)
-            if racer is None:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None:
                 await context.send("Racer not found", ephemeral=True)
                 return
-            await repo.delete_racer(session, racer_id)
-        await context.send(f"Racer {racer_id} deleted")
+            await repo.delete_racer(session, racer)
+        await context.send(f"Racer **{racer_obj.name}** (#{racer}) deleted")
 
     @derby_group.group(name="race", description="Race admin commands")
     async def race_admin(self, context: Context) -> None:
@@ -452,7 +484,10 @@ class Derby(commands.Cog, name="derby"):
                         temperament=r.temperament,
                     )
             await session.commit()
-        results = "\n".join(f"{i+1}. Racer {rid}" for i, rid in enumerate(placements))
+        names = {r.id: r.name for r in participants}
+        results = "\n".join(
+            f"{i+1}. {names.get(rid, f'Racer {rid}')}" for i, rid in enumerate(placements)
+        )
         await context.send(f"Race {race.id} finished!\n{results}")
 
     @derby_group.group(name="debug", description="Debug commands")

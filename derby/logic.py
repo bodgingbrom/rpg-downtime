@@ -22,6 +22,32 @@ TEMPERAMENTS = {
 
 TEMPERAMENT_MODIFIER = 0.1
 
+MOOD_LABELS = {
+    1: "Awful",
+    2: "Bad",
+    3: "Normal",
+    4: "Good",
+    5: "Great",
+}
+
+
+def stat_band(value: int) -> str:
+    """Return a human-readable quality label for a stat value (0-31)."""
+    if value <= 15:
+        return "Decent"
+    if value <= 25:
+        return "Good"
+    if value <= 29:
+        return "Very Good"
+    if value == 30:
+        return "Fantastic"
+    return "Perfect"
+
+
+def mood_label(value: int) -> str:
+    """Return a human-readable label for a mood value (1-5)."""
+    return MOOD_LABELS.get(value, str(value))
+
 
 def apply_temperament(
     stats: Dict[str, int], temperament: str, modifier: float = TEMPERAMENT_MODIFIER
@@ -130,10 +156,16 @@ def simulate_race(
         ]
         rng.shuffle(placements)
 
+    # Build name lookup from racer objects when available
+    names: Dict[int, str] = {}
+    if has_stats:
+        names = {r.id: r.name for r in raw_racers}
+
     event_log: List[str] = []
     for idx, _ in enumerate(segments, start=1):
         leader = rng.choice(placements)
-        event_log.append(f"Segment {idx}: Racer {leader} takes the lead")
+        leader_name = names.get(leader, f"Racer {leader}")
+        event_log.append(f"Segment {idx}: {leader_name} takes the lead")
 
     return placements, event_log
 
