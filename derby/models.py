@@ -32,6 +32,7 @@ class Race(Base):
     guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished: Mapped[bool] = mapped_column(Boolean, default=False)
+    winner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 class Bet(Base):
@@ -66,7 +67,7 @@ class GuildSettings(Base):
     guild_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     race_frequency: Mapped[int] = mapped_column(Integer, default=1)
     default_wallet: Mapped[int] = mapped_column(Integer, default=100)
-    retirement_threshold: Mapped[int] = mapped_column(Integer, default=65)
+    retirement_threshold: Mapped[int] = mapped_column(Integer, default=96)
 
 
 __all__ = [

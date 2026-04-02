@@ -1,4 +1,5 @@
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -11,7 +12,7 @@ from derby.logic import (
 from derby.models import Base, Bet, Race, Racer, Wallet
 
 
-@pytest.fixture()
+@pytest_asyncio.fixture()
 async def session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -22,10 +23,21 @@ async def session():
     await engine.dispose()
 
 
-def test_calculate_odds():
-    racers = [Racer(id=1, name="A", owner_id=1), Racer(id=2, name="B", owner_id=2)]
+def test_calculate_odds_equal_stats():
+    racers = [
+        Racer(id=1, name="A", owner_id=1, speed=10, cornering=10, stamina=10),
+        Racer(id=2, name="B", owner_id=2, speed=10, cornering=10, stamina=10),
+    ]
     odds = calculate_odds(racers, [], 0.1)
-    assert odds == {1: 1.8, 2: 1.8}
+    assert odds[1] == odds[2]
+
+
+def test_calculate_odds_stat_weighted():
+    strong = Racer(id=1, name="A", owner_id=1, speed=30, cornering=30, stamina=30)
+    weak = Racer(id=2, name="B", owner_id=2, speed=0, cornering=0, stamina=0)
+    odds = calculate_odds([strong, weak], [], 0.1)
+    # Strong racer should have lower payout (more likely to win)
+    assert odds[1] < odds[2]
 
 
 def test_simulate_race():
@@ -68,7 +80,7 @@ async def test_resolve_payouts(session: AsyncSession):
     session.add(Wallet(user_id=1, balance=50))
     await session.commit()
 
-    await resolve_payouts(session, race.id)
+    await resolve_payouts(session, race.id, winner_id=r1.id)
 
     w1 = await session.get(Wallet, 1)
     w2 = await session.get(Wallet, 2)
@@ -77,3 +89,15 @@ async def test_resolve_payouts(session: AsyncSession):
 
     bets = (await session.execute(select(Bet))).scalars().all()
     assert bets == []
+
+
+def test_simulate_race_stat_influence():
+    strong = Racer(id=1, name="Strong", owner_id=1, speed=31, cornering=31, stamina=31)
+    weak = Racer(id=2, name="Weak", owner_id=2, speed=0, cornering=0, stamina=0)
+    wins = 0
+    for seed in range(100):
+        placements, _ = simulate_race({"racers": [strong, weak]}, seed=seed)
+        if placements[0] == 1:
+            wins += 1
+    # Strong racer should win the vast majority
+    assert wins > 80

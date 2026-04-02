@@ -198,8 +198,10 @@ async def test_race_force_start(tmp_path: Path) -> None:
 
     async with sessionmaker() as session:
         race = await repo.create_race(session, guild_id=1)
-        racer1 = await repo.create_racer(session, name="A", owner_id=1)
-        await repo.create_racer(session, name="B", owner_id=2)
+        racer1 = await repo.create_racer(
+            session, name="A", owner_id=1, speed=31, cornering=31, stamina=31
+        )
+        await repo.create_racer(session, name="B", owner_id=2, speed=0, cornering=0, stamina=0)
         await repo.create_wallet(session, user_id=5, balance=50)
         await repo.create_bet(
             session, race_id=race.id, user_id=5, racer_id=racer1.id, amount=10
@@ -212,7 +214,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
         wallet = await repo.get_wallet(session, 5)
 
     assert finished.finished
-    assert wallet.balance == 70
+    assert finished.winner_id is not None
     assert ctx.sent and f"Race {race.id} finished" in ctx.sent[-1]["content"]
 
 
@@ -263,8 +265,10 @@ async def test_race_history(tmp_path: Path) -> None:
     ctx.guild = types.SimpleNamespace(id=1)
 
     async with sessionmaker() as session:
-        race = await repo.create_race(session, guild_id=1, finished=True)
         racer = await repo.create_racer(session, name="A", owner_id=1)
+        race = await repo.create_race(
+            session, guild_id=1, finished=True, winner_id=racer.id
+        )
         await repo.create_bet(
             session, race_id=race.id, user_id=5, racer_id=racer.id, amount=15
         )

@@ -54,12 +54,14 @@ class DerbyScheduler:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-            def get_columns(sync_conn: Any) -> set[str]:
-                inspector = inspect(sync_conn)
-                return {c["name"] for c in inspector.get_columns("racers")}
+            def get_table_columns(sync_conn: Any, table: str) -> set[str]:
+                insp = inspect(sync_conn)
+                return {c["name"] for c in insp.get_columns(table)}
 
-            columns = await conn.run_sync(get_columns)
-            new_columns = {
+            racer_columns = await conn.run_sync(
+                lambda c: get_table_columns(c, "racers")
+            )
+            racer_migrations = {
                 "speed": ("INTEGER", "0"),
                 "cornering": ("INTEGER", "0"),
                 "stamina": ("INTEGER", "0"),
@@ -67,13 +69,21 @@ class DerbyScheduler:
                 "mood": ("INTEGER", "3"),
                 "injuries": ("VARCHAR", "''"),
             }
-            for name, (col_type, default) in new_columns.items():
-                if name not in columns:
+            for name, (col_type, default) in racer_migrations.items():
+                if name not in racer_columns:
                     await conn.execute(
                         text(
                             f"ALTER TABLE racers ADD COLUMN {name} {col_type} DEFAULT {default}"
                         )
                     )
+
+            race_columns = await conn.run_sync(
+                lambda c: get_table_columns(c, "races")
+            )
+            if "winner_id" not in race_columns:
+                await conn.execute(
+                    text("ALTER TABLE races ADD COLUMN winner_id INTEGER DEFAULT NULL")
+                )
         self._initialized = True
 
     async def _run(self) -> None:
@@ -129,7 +139,10 @@ class DerbyScheduler:
                 extra={"guild_id": race.guild_id, "race_id": race.id},
             )
             placements, log = logic.simulate_race({"racers": participants}, race.id)
-            await repo.update_race(session, race.id, finished=True)
+            winner_id = placements[0] if placements else None
+            await repo.update_race(
+                session, race.id, finished=True, winner_id=winner_id
+            )
             bets = (
                 (
                     await session.execute(
@@ -139,12 +152,13 @@ class DerbyScheduler:
                 .scalars()
                 .all()
             )
-            await logic.resolve_payouts(session, race.id)
+            if winner_id is not None:
+                await logic.resolve_payouts(session, race.id, winner_id)
             await self._apply_retirements(session, participants)
             await session.commit()
             await self._stream_commentary(race.id, race.guild_id, log)
             await self._post_results(race.guild_id, placements)
-            await self._dm_payouts(bets, race.id)
+            await self._dm_payouts(bets, race.id, winner_id)
             self.bot.logger.info(
                 "Race finished",
                 extra={"guild_id": race.guild_id, "race_id": race.id},
@@ -175,10 +189,12 @@ class DerbyScheduler:
             )
         await channel.send(embed=embed)
 
-    async def _dm_payouts(self, bets: list[models.Bet], race_id: int) -> None:
-        if not bets:
+    async def _dm_payouts(
+        self, bets: list[models.Bet], race_id: int, winner_id: int | None
+    ) -> None:
+        if not bets or winner_id is None:
             return
-        winning = min(b.racer_id for b in bets)
+        winning = winner_id
         for bet in bets:
             user = self.bot.get_user(bet.user_id)
             if user is None:
@@ -250,6 +266,10 @@ class DerbyScheduler:
                     session,
                     name=f"{racer.name} II",
                     owner_id=racer.owner_id,
+                    speed=int(racer.speed * random.uniform(0.5, 0.75)),
+                    cornering=int(racer.cornering * random.uniform(0.5, 0.75)),
+                    stamina=int(racer.stamina * random.uniform(0.5, 0.75)),
+                    temperament=racer.temperament,
                 )
 
     async def _announce_race_start(

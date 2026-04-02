@@ -200,13 +200,14 @@ async def get_race_history(
 
     history: list[tuple[Race, int | None, int]] = []
     for race in races:
-        bet_rows = await session.execute(select(Bet).where(Bet.race_id == race.id))
-        bets = bet_rows.scalars().all()
-        if bets:
-            winner = min(b.racer_id for b in bets)
-            payout = sum(b.amount * 2 for b in bets if b.racer_id == winner)
+        winner = race.winner_id
+        if winner is not None:
+            bet_rows = await session.execute(
+                select(Bet).where(Bet.race_id == race.id, Bet.racer_id == winner)
+            )
+            bets = bet_rows.scalars().all()
+            payout = sum(b.amount * 2 for b in bets)
         else:
-            winner = None
             payout = 0
         history.append((race, winner, payout))
     return history

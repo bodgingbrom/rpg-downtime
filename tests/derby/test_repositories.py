@@ -1,11 +1,12 @@
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from derby import repositories as repo
 from derby.models import Base
 
 
-@pytest.fixture()
+@pytest_asyncio.fixture()
 async def session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -132,12 +133,16 @@ async def test_guild_settings_crud(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_get_race_history(session: AsyncSession):
-    r1 = await repo.create_race(session, guild_id=1, finished=True)
-    r2 = await repo.create_race(session, guild_id=1, finished=True)
-    await repo.create_race(session, guild_id=1, finished=False)
-
     racer1 = await repo.create_racer(session, name="A", owner_id=1)
     racer2 = await repo.create_racer(session, name="B", owner_id=2)
+
+    r1 = await repo.create_race(
+        session, guild_id=1, finished=True, winner_id=racer2.id
+    )
+    r2 = await repo.create_race(
+        session, guild_id=1, finished=True, winner_id=racer1.id
+    )
+    await repo.create_race(session, guild_id=1, finished=False)
 
     await repo.create_bet(
         session, race_id=r2.id, user_id=1, racer_id=racer1.id, amount=10
