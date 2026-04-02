@@ -302,5 +302,6 @@ class DiscordBot(commands.Bot):
             await context.send("An unexpected error occurred.", ephemeral=True)
 
 
-bot = DiscordBot()
-bot.run(os.getenv("TOKEN"))
+if __name__ == "__main__":
+    bot = DiscordBot()
+    bot.run(os.getenv("TOKEN"))

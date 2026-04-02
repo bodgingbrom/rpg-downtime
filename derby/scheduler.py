@@ -93,7 +93,9 @@ class DerbyScheduler:
         await self._init_db()
         async with self.sessionmaker() as session:
             await self._create_daily_races(session)
-            await self._start_ready_races(session)
+        race_tasks = await self._start_ready_races()
+        if race_tasks:
+            await asyncio.gather(*race_tasks, return_exceptions=True)
 
     async def _create_daily_races(self, session: AsyncSession) -> None:
         now = datetime.utcnow()
@@ -114,55 +116,68 @@ class DerbyScheduler:
                     extra={"guild_id": guild.id, "race_id": race.id},
                 )
 
-    async def _start_ready_races(self, session: AsyncSession) -> None:
-        result = await session.execute(
-            select(models.Race).where(models.Race.finished.is_(False))
-        )
-        races = result.scalars().all()
-        if not races:
-            return
+    async def _start_ready_races(self) -> list[asyncio.Task]:
+        async with self.sessionmaker() as session:
+            result = await session.execute(
+                select(models.Race).where(models.Race.finished.is_(False))
+            )
+            races = result.scalars().all()
+            if not races:
+                return []
 
-        racers_result = await session.execute(
-            select(models.Racer).where(models.Racer.retired.is_(False))
-        )
-        racers = racers_result.scalars().all()
-        if not racers:
-            return
+            racers_result = await session.execute(
+                select(models.Racer).where(models.Racer.retired.is_(False))
+            )
+            racers = racers_result.scalars().all()
+            if not racers:
+                return []
 
+        race_tasks = []
         for race in races:
             participants = random.sample(racers, min(8, len(racers)))
-            await self._announce_race_start(race.guild_id, race.id, participants)
-            await asyncio.sleep(self.bot.settings.bet_window)
-            await self._countdown(race.guild_id)
-            self.bot.logger.info(
-                "Race starting",
-                extra={"guild_id": race.guild_id, "race_id": race.id},
+            t = asyncio.create_task(
+                self._run_race(race.id, race.guild_id, participants),
+                name=f"race-{race.id}",
             )
-            placements, log = logic.simulate_race({"racers": participants}, race.id)
-            winner_id = placements[0] if placements else None
+            race_tasks.append(t)
+        return race_tasks
+
+    async def _run_race(
+        self, race_id: int, guild_id: int, participants: list[models.Racer]
+    ) -> None:
+        await self._announce_race_start(guild_id, race_id, participants)
+        await asyncio.sleep(self.bot.settings.bet_window)
+        await self._countdown(guild_id)
+        self.bot.logger.info(
+            "Race starting",
+            extra={"guild_id": guild_id, "race_id": race_id},
+        )
+        placements, log = logic.simulate_race({"racers": participants}, race_id)
+        winner_id = placements[0] if placements else None
+        async with self.sessionmaker() as session:
             await repo.update_race(
-                session, race.id, finished=True, winner_id=winner_id
+                session, race_id, finished=True, winner_id=winner_id
             )
             bets = (
                 (
                     await session.execute(
-                        select(models.Bet).where(models.Bet.race_id == race.id)
+                        select(models.Bet).where(models.Bet.race_id == race_id)
                     )
                 )
                 .scalars()
                 .all()
             )
             if winner_id is not None:
-                await logic.resolve_payouts(session, race.id, winner_id)
+                await logic.resolve_payouts(session, race_id, winner_id)
             await self._apply_retirements(session, participants)
             await session.commit()
-            await self._stream_commentary(race.id, race.guild_id, log)
-            await self._post_results(race.guild_id, placements)
-            await self._dm_payouts(bets, race.id, winner_id)
-            self.bot.logger.info(
-                "Race finished",
-                extra={"guild_id": race.guild_id, "race_id": race.id},
-            )
+        await self._stream_commentary(race_id, guild_id, log)
+        await self._post_results(guild_id, placements)
+        await self._dm_payouts(bets, race_id, winner_id)
+        self.bot.logger.info(
+            "Race finished",
+            extra={"guild_id": guild_id, "race_id": race_id},
+        )
 
     async def _post_results(self, guild_id: int, placements: list[int]) -> None:
         guild = self.bot.get_guild(guild_id)
