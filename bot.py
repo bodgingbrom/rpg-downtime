@@ -292,6 +292,13 @@ class DiscordBot(commands.Bot):
                 color=0xE02B2B,
             )
             await context.send(embed=embed, ephemeral=True)
+        elif (
+            isinstance(error, commands.HybridCommandError)
+            and isinstance(error.original, discord.HTTPException)
+            and error.original.code == 40060
+        ):
+            # Interaction already acknowledged — harmless, suppress the noise
+            pass
         else:
             self.logger.error(
                 "Unhandled command error",
