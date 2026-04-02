@@ -254,7 +254,7 @@ class Derby(commands.Cog, name="derby"):
     @derby_group.command(name="add_racer", description="Add a new racer")
     @checks.has_role("Race Admin")
     @app_commands.describe(
-        name="Racer name",
+        name="Racer name (leave blank for a random name)",
         owner="Owner",
         random_stats="Generate random stats",
         speed="Speed stat",
@@ -266,8 +266,8 @@ class Derby(commands.Cog, name="derby"):
     async def add_racer(
         self,
         context: Context,
-        name: str,
         owner: discord.User,
+        name: str | None = None,
         random_stats: bool = False,
         speed: app_commands.Range[int, 0, 31] | None = None,
         cornering: app_commands.Range[int, 0, 31] | None = None,
@@ -275,6 +275,19 @@ class Derby(commands.Cog, name="derby"):
         temperament: str | None = None,
     ) -> None:
         await context.defer()
+        if name is None:
+            async with self.bot.scheduler.sessionmaker() as session:
+                result = await session.execute(
+                    select(models.Racer.name).where(models.Racer.retired.is_(False))
+                )
+                taken = {row[0] for row in result.all()}
+            name = logic.pick_name(taken)
+            if name is None:
+                await context.send(
+                    "All default names are taken! Please provide a name.",
+                    ephemeral=True,
+                )
+                return
         if random_stats:
             stats = {
                 "speed": random.randint(0, 31),
