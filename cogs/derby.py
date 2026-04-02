@@ -432,14 +432,24 @@ class Derby(commands.Cog, name="derby"):
             placements, _log = logic.simulate_race(
                 {"racers": participants}, seed=race.id
             )
-            await repo.update_race(session, race.id, finished=True)
-            await logic.resolve_payouts(session, race.id)
+            winner_id = placements[0] if placements else None
+            await repo.update_race(
+                session, race.id, finished=True, winner_id=winner_id
+            )
+            if winner_id is not None:
+                await logic.resolve_payouts(session, race.id, winner_id)
             threshold = self.bot.settings.retirement_threshold
             for r in participants:
                 if random.randint(1, 100) >= threshold:
                     await repo.update_racer(session, r.id, retired=True)
                     await repo.create_racer(
-                        session, name=f"{r.name} II", owner_id=r.owner_id
+                        session,
+                        name=f"{r.name} II",
+                        owner_id=r.owner_id,
+                        speed=int(r.speed * random.uniform(0.5, 0.75)),
+                        cornering=int(r.cornering * random.uniform(0.5, 0.75)),
+                        stamina=int(r.stamina * random.uniform(0.5, 0.75)),
+                        temperament=r.temperament,
                     )
             await session.commit()
         results = "\n".join(f"{i+1}. Racer {rid}" for i, rid in enumerate(placements))

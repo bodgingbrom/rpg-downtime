@@ -47,6 +47,15 @@ def apply_temperament(
     return result
 
 
+def _racer_power(racer: models.Racer) -> float:
+    """Return the effective power score for a racer after temperament."""
+    stats = apply_temperament(
+        {"speed": racer.speed, "cornering": racer.cornering, "stamina": racer.stamina},
+        racer.temperament,
+    )
+    return float(stats["speed"] + stats["cornering"] + stats["stamina"])
+
+
 def calculate_odds(
     racers: Sequence[models.Racer] | Sequence[int],
     course_segments: Sequence[models.CourseSegment] | None,
@@ -54,20 +63,31 @@ def calculate_odds(
 ) -> Dict[int, float]:
     """Return a payout multiplier for each racer.
 
-    The odds are currently calculated assuming every racer has an equal chance of
-    winning. The payout multiplier is adjusted by ``house_edge``.
+    Odds are weighted by each racer's power score (stats after temperament).
+    Stronger racers get lower payouts; weaker racers get higher payouts.
+    Falls back to equal odds for bare-int racer lists.
     """
     if not racers:
         return {}
 
-    num = len(racers)
-    base_prob = 1.0 / num
-    payout = (1.0 - house_edge) / base_prob
+    # Fall back to equal odds for bare ints (no stat attributes)
+    if not hasattr(racers[0], "speed"):
+        num = len(racers)
+        base_prob = 1.0 / num
+        payout = (1.0 - house_edge) / base_prob
+        return {(r.id if hasattr(r, "id") else int(r)): payout for r in racers}
 
-    result: Dict[int, float] = {}
+    # Stat-weighted odds: power + baseline noise expectation
+    NOISE_BASELINE = 20.0  # average of uniform(0, 40)
+    weights: List[float] = []
     for racer in racers:
-        racer_id = racer.id if hasattr(racer, "id") else int(racer)
-        result[racer_id] = payout
+        weights.append(_racer_power(racer) + NOISE_BASELINE)
+
+    total_weight = sum(weights)
+    result: Dict[int, float] = {}
+    for racer, weight in zip(racers, weights):
+        prob = weight / total_weight
+        result[racer.id] = round((1.0 - house_edge) / prob, 2)
     return result
 
 
@@ -78,23 +98,39 @@ def simulate_race(
 
     ``race`` must expose a list of racers under the ``racers`` attribute or key
     and may optionally expose ``course_segments``.
+
+    When racers have stat attributes (speed, cornering, stamina), placements are
+    determined by a weighted score: power (stats after temperament) plus random
+    noise.  For bare-int racer lists, falls back to a random shuffle.
     """
     rng = random.Random(seed)
 
-    racers: List[int] = []
     if isinstance(race, dict):
-        racers = [r.id if hasattr(r, "id") else int(r) for r in race.get("racers", [])]
+        raw_racers = race.get("racers", [])
         segments = race.get("course_segments", [])
     else:
-        racers = [
-            r.id if hasattr(r, "id") else int(r) for r in getattr(race, "racers", [])
-        ]
+        raw_racers = getattr(race, "racers", [])
         segments = getattr(race, "course_segments", [])
 
-    placements = list(racers)
-    rng.shuffle(placements)
+    has_stats = raw_racers and hasattr(raw_racers[0], "speed")
 
-    event_log = []
+    if has_stats:
+        # Stat-weighted placement: power + noise
+        scored: List[Tuple[int, float]] = []
+        for racer in raw_racers:
+            power = _racer_power(racer)
+            score = power + rng.uniform(0, 40)
+            scored.append((racer.id, score))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        placements = [rid for rid, _ in scored]
+    else:
+        # Bare-int fallback: pure random shuffle
+        placements = [
+            r.id if hasattr(r, "id") else int(r) for r in raw_racers
+        ]
+        rng.shuffle(placements)
+
+    event_log: List[str] = []
     for idx, _ in enumerate(segments, start=1):
         leader = rng.choice(placements)
         event_log.append(f"Segment {idx}: Racer {leader} takes the lead")
@@ -102,13 +138,13 @@ def simulate_race(
     return placements, event_log
 
 
-async def resolve_payouts(session: AsyncSession, race_id: int) -> None:
+async def resolve_payouts(
+    session: AsyncSession, race_id: int, winner_id: int
+) -> None:
     """Resolve all bets for ``race_id`` and update wallets.
 
-    The current implementation selects all bets associated with the race and pays
-    out double the bet amount to bets placed on the winning racer. The winning
-    racer is determined by the lowest racer id among the bets. All processed bets
-    are removed from the database.
+    Pays out double the bet amount to bets placed on ``winner_id``. All
+    processed bets are removed from the database.
     """
 
     bet_rows = await session.execute(
@@ -119,7 +155,7 @@ async def resolve_payouts(session: AsyncSession, race_id: int) -> None:
     if not bets:
         return
 
-    winning_racer = min(bet.racer_id for bet in bets)
+    winning_racer = winner_id
 
     for bet in bets:
         wallet = await session.get(models.Wallet, bet.user_id)

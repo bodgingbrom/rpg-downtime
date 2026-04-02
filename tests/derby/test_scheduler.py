@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 
 import discord
@@ -38,6 +39,7 @@ class DummyBot:
         self.guilds: list[DummyGuild] = []
         self.users: dict[int, DummyUser] = {}
         self.loop = asyncio.get_event_loop()
+        self.logger = logging.getLogger("test")
 
     def get_guild(self, gid: int) -> DummyGuild | None:
         for g in self.guilds:
@@ -98,6 +100,7 @@ async def test_retirement(tmp_path: Path) -> None:
     bot.guilds.append(guild)
 
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
     async with scheduler.sessionmaker() as session:
         await repo.create_racer(session, name="A", owner_id=1)
         await repo.create_racer(session, name="B", owner_id=2)
