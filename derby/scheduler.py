@@ -178,6 +178,31 @@ class DerbyScheduler:
             retirements = await self._apply_retirements(session, participants)
             await session.commit()
         names = result.racer_names
+
+        # Show a "getting ready" message while LLM generates commentary
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            channel = self._get_channel(guild)
+            if channel:
+                lineup = ", ".join(
+                    f"**{names.get(rid, f'Racer {rid}')}**"
+                    for rid in result.placements
+                )
+                track_info = f" on **{result.map_name}**" if result.map_name else ""
+                ready_embed = discord.Embed(
+                    title="\U0001f3c7 Racers Getting Ready!",
+                    description=(
+                        f"The racers line up{track_info}!\n\n"
+                        f"Lineup: {lineup}\n\n"
+                        f"*The race is about to begin...*"
+                    ),
+                    color=0xFFAA00,
+                )
+                try:
+                    await channel.send(embed=ready_embed)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
         log = await commentary.generate_commentary(result)
         if log is None:
             log = commentary.build_template_commentary(result)
@@ -190,6 +215,8 @@ class DerbyScheduler:
             "Race finished",
             extra={"guild_id": guild_id, "race_id": race_id},
         )
+
+    MEDAL_EMOJI = {1: "\U0001f947", 2: "\U0001f948", 3: "\U0001f949"}
 
     async def _post_results(
         self,
@@ -217,12 +244,28 @@ class DerbyScheduler:
                     .all()
                 )
             names = {r.id: r.name for r in racers}
-        embed = discord.Embed(title="Race Results")
+
+        results_lines: list[str] = []
         for i, rid in enumerate(placements, start=1):
-            embed.add_field(
-                name=f"{i}.", value=names.get(rid, f"Racer {rid}"), inline=False
-            )
-        await channel.send(embed=embed)
+            medal = self.MEDAL_EMOJI.get(i, f"**{i}.**")
+            racer_name = names.get(rid, f"Racer {rid}")
+            results_lines.append(f"{medal} {racer_name}")
+
+        winner_name = names.get(placements[0], "Unknown") if placements else "Unknown"
+        embed = discord.Embed(
+            title="\U0001f3c1 Race Complete!",
+            description="\n".join(results_lines),
+            color=0xF1C40F,
+        )
+        embed.add_field(
+            name="\U0001f3c6 Winner",
+            value=f"**{winner_name}**",
+            inline=False,
+        )
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            return
 
     async def _dm_payouts(
         self,
@@ -255,7 +298,7 @@ class DerbyScheduler:
                 continue
 
     async def _stream_commentary(
-        self, race_id: int, guild_id: int, log: list[str], delay: float = 2.0
+        self, race_id: int, guild_id: int, log: list[str], delay: float = 3.0
     ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -266,39 +309,47 @@ class DerbyScheduler:
 
         events = iter(log)
         done = asyncio.Event()
-        commentary: tasks.Loop | None = None
+        loop_task: tasks.Loop | None = None
+        counter = {"i": 0}
 
         async def send_next() -> None:
-            nonlocal commentary
+            nonlocal loop_task
             async with self.sessionmaker() as session:
                 if await repo.get_race(session, race_id) is None:
-                    if commentary:
-                        commentary.cancel()
+                    if loop_task:
+                        loop_task.cancel()
                     done.set()
                     return
             try:
                 event = next(events)
             except StopIteration:
-                if commentary:
-                    commentary.cancel()
-                done.set()
-                return
-            embed = discord.Embed(description=event)
-            try:
-                await channel.send(embed=embed)
-            except (discord.Forbidden, discord.HTTPException):
-                if commentary:
-                    commentary.cancel()
+                if loop_task:
+                    loop_task.cancel()
                 done.set()
                 return
 
-        commentary = tasks.loop(seconds=delay)(send_next)
+            embed = discord.Embed(
+                description=event,
+                color=0x2ECC71 if counter["i"] < len(log) - 1 else 0xF1C40F,
+            )
+            embed.set_footer(text=f"\U0001f3c7 Race {race_id}")
+            counter["i"] += 1
+
+            try:
+                await channel.send(embed=embed)
+            except (discord.Forbidden, discord.HTTPException):
+                if loop_task:
+                    loop_task.cancel()
+                done.set()
+                return
+
+        loop_task = tasks.loop(seconds=delay)(send_next)
         await send_next()
         if not done.is_set():
-            self.commentaries[race_id] = commentary
-            commentary.start()
+            self.commentaries[race_id] = loop_task
+            loop_task.start()
             await done.wait()
-            commentary.cancel()
+            loop_task.cancel()
             self.commentaries.pop(race_id, None)
 
     async def _apply_retirements(
