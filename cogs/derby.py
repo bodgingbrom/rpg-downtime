@@ -518,6 +518,12 @@ class Derby(commands.Cog, name="derby"):
             if race is None:
                 await context.send("No pending race found", ephemeral=True)
                 return
+            if race.id in self.bot.scheduler.active_races:
+                await context.send(
+                    f"Race {race.id} is already in progress!", ephemeral=True
+                )
+                return
+            self.bot.scheduler.active_races.add(race.id)
             racers_result = await session.execute(
                 select(models.Racer).where(models.Racer.retired.is_(False))
             )
@@ -583,14 +589,17 @@ class Derby(commands.Cog, name="derby"):
             log = commentary.build_template_commentary(result)
 
         # --- Stream commentary ---
-        await self.bot.scheduler._stream_commentary(
-            race.id, context.guild.id, log
-        )
+        try:
+            await self.bot.scheduler._stream_commentary(
+                race.id, context.guild.id, log
+            )
 
-        # --- Post results ---
-        await self.bot.scheduler._post_results(
-            context.guild.id, result.placements, names
-        )
+            # --- Post results ---
+            await self.bot.scheduler._post_results(
+                context.guild.id, result.placements, names
+            )
+        finally:
+            self.bot.scheduler.active_races.discard(race.id)
 
     @derby_group.group(name="debug", description="Debug commands")
     async def debug_group(self, context: Context) -> None:
