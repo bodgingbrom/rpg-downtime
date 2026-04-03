@@ -1,11 +1,10 @@
-from .models import Base, Bet, CourseSegment, GuildSettings, Race, Racer, Wallet
+from .models import Base, Bet, CourseSegment, GuildSettings, Race, Racer
 
 __all__ = [
     "Base",
     "Racer",
     "Race",
     "Bet",
-    "Wallet",
     "CourseSegment",
     "GuildSettings",
 ]

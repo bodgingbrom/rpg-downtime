@@ -10,6 +10,7 @@ from config import Settings
 from derby import repositories as repo
 from derby.models import Race, Racer
 from derby.scheduler import DerbyScheduler
+from economy import repositories as wallet_repo
 
 
 class DummyChannel:
@@ -194,8 +195,8 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
         race = await repo.create_race(session, guild_id=guild.id)
         r1 = await repo.create_racer(session, name="A", owner_id=1)
         r2 = await repo.create_racer(session, name="B", owner_id=2)
-        await repo.create_wallet(session, user_id=user1.id, balance=100)
-        await repo.create_wallet(session, user_id=user2.id, balance=100)
+        await wallet_repo.create_wallet(session, user_id=user1.id, balance=100)
+        await wallet_repo.create_wallet(session, user_id=user2.id, balance=100)
         await repo.create_bet(
             session, race_id=race.id, user_id=user1.id, racer_id=r1.id, amount=10
         )

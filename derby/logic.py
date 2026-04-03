@@ -9,6 +9,7 @@ from typing import Dict, List, Sequence, Set, Tuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from economy.models import Wallet
 from . import models
 
 TEMPERAMENTS = {
@@ -208,9 +209,9 @@ async def resolve_payouts(
     winning_racer = winner_id
 
     for bet in bets:
-        wallet = await session.get(models.Wallet, bet.user_id)
+        wallet = await session.get(Wallet, bet.user_id)
         if wallet is None:
-            wallet = models.Wallet(user_id=bet.user_id, balance=0)
+            wallet = Wallet(user_id=bet.user_id, balance=0)
             session.add(wallet)
             await session.commit()
             await session.refresh(wallet)

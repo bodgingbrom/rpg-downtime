@@ -3,11 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    """Base class for all ORM models."""
+from db_base import Base
 
 
 class Racer(Base):
@@ -45,13 +43,6 @@ class Bet(Base):
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
-class Wallet(Base):
-    __tablename__ = "wallets"
-
-    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    balance: Mapped[int] = mapped_column(Integer, default=0)
-
-
 class CourseSegment(Base):
     __tablename__ = "course_segments"
 
@@ -75,7 +66,6 @@ __all__ = [
     "Racer",
     "Race",
     "Bet",
-    "Wallet",
     "CourseSegment",
     "GuildSettings",
 ]

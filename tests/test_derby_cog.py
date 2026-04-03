@@ -10,9 +10,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot import DiscordBot
 from cogs import derby as derby_cog
+from cogs import economy as economy_cog
 from config import Settings
-from derby import Base, models
+from db_base import Base
+from derby import models
 from derby import repositories as repo
+from economy import repositories as wallet_repo
+import economy.models  # noqa: F401
 
 
 class DummyContext:
@@ -95,7 +99,7 @@ async def test_race_bet(tmp_path: Path) -> None:
     await cog.race_bet(ctx, racer=racer1.id, amount=20)
 
     async with sessionmaker() as session:
-        wallet = await repo.get_wallet(session, ctx.author.id)
+        wallet = await wallet_repo.get_wallet(session, ctx.author.id)
         bet = (await session.execute(select(models.Bet))).scalars().first()
 
     assert wallet.balance == 80
@@ -104,7 +108,7 @@ async def test_race_bet(tmp_path: Path) -> None:
     await cog.race_bet(ctx, racer=racer2.id, amount=30)
 
     async with sessionmaker() as session:
-        wallet = await repo.get_wallet(session, ctx.author.id)
+        wallet = await wallet_repo.get_wallet(session, ctx.author.id)
         bet = (await session.execute(select(models.Bet))).scalars().first()
 
     assert wallet.balance == 70
@@ -141,7 +145,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
         countdown_total=0,
     )
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
-    cog = derby_cog.Derby(bot)
+    cog = economy_cog.Economy(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
     ctx.author = types.SimpleNamespace(id=10)
@@ -149,7 +153,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
     await cog.wallet(ctx)
 
     async with sessionmaker() as session:
-        wallet = await repo.get_wallet(session, ctx.author.id)
+        wallet = await wallet_repo.get_wallet(session, ctx.author.id)
 
     assert wallet.balance == bot.settings.default_wallet
     assert ctx.sent
@@ -212,7 +216,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
             session, name="A", owner_id=1, speed=31, cornering=31, stamina=31
         )
         await repo.create_racer(session, name="B", owner_id=2, speed=0, cornering=0, stamina=0)
-        await repo.create_wallet(session, user_id=5, balance=50)
+        await wallet_repo.create_wallet(session, user_id=5, balance=50)
         await repo.create_bet(
             session, race_id=race.id, user_id=5, racer_id=racer1.id, amount=10
         )
@@ -221,7 +225,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
 
     async with sessionmaker() as session:
         finished = await repo.get_race(session, race.id)
-        wallet = await repo.get_wallet(session, 5)
+        wallet = await wallet_repo.get_wallet(session, 5)
 
     assert finished.finished
     assert finished.winner_id is not None

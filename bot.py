@@ -24,8 +24,12 @@ from sqlalchemy.engine import Engine
 
 from config import Settings
 from database import DatabaseManager
-from derby import Base
+from db_base import Base
 from derby.scheduler import DerbyScheduler
+
+# Ensure all models are imported so Base.metadata.create_all picks them up
+import derby.models  # noqa: F401
+import economy.models  # noqa: F401
 
 load_dotenv()
 sentry_sdk.init(os.getenv("SENTRY_DSN"))

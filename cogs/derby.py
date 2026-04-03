@@ -12,6 +12,7 @@ from sqlalchemy import select
 import checks
 from derby import logic, models
 from derby import repositories as repo
+from economy import repositories as wallet_repo
 
 
 _stat_band = logic.stat_band
@@ -109,9 +110,9 @@ class Derby(commands.Cog, name="derby"):
         multiplier = odds.get(racer, 0)
         payout = int(amount * multiplier)
         async with self.bot.scheduler.sessionmaker() as session:
-            wallet = await repo.get_wallet(session, context.author.id)
+            wallet = await wallet_repo.get_wallet(session, context.author.id)
             if wallet is None:
-                wallet = await repo.create_wallet(
+                wallet = await wallet_repo.create_wallet(
                     session,
                     user_id=context.author.id,
                     balance=self.bot.settings.default_wallet,
@@ -214,29 +215,6 @@ class Derby(commands.Cog, name="derby"):
             name="Injuries", value=racer_obj.injuries or "None", inline=False
         )
         await context.send(embed=embed)
-
-    @commands.hybrid_command(name="wallet", description="Show your wallet balance")
-    async def wallet(self, context: Context) -> None:
-        async with self.bot.scheduler.sessionmaker() as session:
-            wallet = await repo.get_wallet(session, context.author.id)
-            was_new = wallet is None
-            if wallet is None:
-                wallet = await repo.create_wallet(
-                    session,
-                    user_id=context.author.id,
-                    balance=self.bot.settings.default_wallet,
-                )
-        if was_new:
-            embed = discord.Embed(
-                title="Welcome to Downtime Derby!",
-                description=(
-                    f"You've been given **{wallet.balance} coins** to start.\n"
-                    f"Use `/race upcoming` to see the next race and `/race bet` to wager!"
-                ),
-            )
-            await context.send(embed=embed)
-        else:
-            await context.send(f"Your balance is {wallet.balance} coins")
 
     @commands.hybrid_group(name="derby", description="Derby admin commands")
     @commands.has_guild_permissions(manage_guild=True)
