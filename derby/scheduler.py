@@ -312,7 +312,7 @@ class DerbyScheduler:
                 continue
 
     async def _stream_commentary(
-        self, race_id: int, guild_id: int, log: list[str], delay: float = 3.0
+        self, race_id: int, guild_id: int, log: list[str], delay: float = 6.0
     ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
