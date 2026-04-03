@@ -516,10 +516,11 @@ class Derby(commands.Cog, name="derby"):
                 await context.send("No racers available", ephemeral=True)
                 return
             participants = random.sample(racers, min(8, len(racers)))
-            placements, _log = logic.simulate_race(
-                {"racers": participants}, seed=race.id
+            race_map = logic.pick_map()
+            result = logic.simulate_race(
+                {"racers": participants}, seed=race.id, race_map=race_map
             )
-            winner_id = placements[0] if placements else None
+            winner_id = result.placements[0] if result.placements else None
             await repo.update_race(
                 session, race.id, finished=True, winner_id=winner_id
             )
@@ -539,11 +540,15 @@ class Derby(commands.Cog, name="derby"):
                         temperament=r.temperament,
                     )
             await session.commit()
-        names = {r.id: r.name for r in participants}
-        results = "\n".join(
-            f"{i+1}. {names.get(rid, f'Racer {rid}')}" for i, rid in enumerate(placements)
+        names = result.racer_names
+        header = f"Race {race.id} finished!"
+        if result.map_name:
+            header += f" (Track: {result.map_name})"
+        results_str = "\n".join(
+            f"{i+1}. {names.get(rid, f'Racer {rid}')}"
+            for i, rid in enumerate(result.placements)
         )
-        await context.send(f"Race {race.id} finished!\n{results}")
+        await context.send(f"{header}\n{results_str}")
 
     @derby_group.group(name="debug", description="Debug commands")
     async def debug_group(self, context: Context) -> None:
