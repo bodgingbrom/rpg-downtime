@@ -70,7 +70,7 @@ async def test_race_upcoming(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -102,7 +102,7 @@ async def test_race_bet(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -161,7 +161,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = economy_cog.Economy(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -192,7 +192,7 @@ async def test_racer_delete(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -270,6 +270,19 @@ async def test_race_force_start(tmp_path: Path) -> None:
     assert streamed  # commentary was streamed
     assert posted  # results were posted
 
+    # Verify payout: racer1 (speed=31) should beat racer2 (speed=0)
+    # Wallet started at 50, bet was 10, winning payout is amount*2 = 20
+    # Expected: 50 + 20 = 70 (bet was placed directly, not via race_bet, so no deduction)
+    async with sessionmaker() as session:
+        wallet = await wallet_repo.get_wallet(session, 5)
+        bets = (
+            await session.execute(
+                select(models.Bet).where(models.Bet.race_id == race.id)
+            )
+        ).scalars().all()
+    assert wallet.balance == 70, f"Expected 70, got {wallet.balance}"
+    assert bets == [], "Bets should be deleted after resolve_payouts"
+
 
 @pytest.mark.asyncio
 async def test_debug_race(tmp_path: Path) -> None:
@@ -285,7 +298,7 @@ async def test_debug_race(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -317,7 +330,7 @@ async def test_race_history(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -367,7 +380,7 @@ async def test_add_racer_with_stats(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -404,7 +417,7 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -440,7 +453,7 @@ async def test_add_racer_default_name(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -471,7 +484,7 @@ async def test_add_racer_default_name_avoids_taken(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -504,7 +517,7 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -534,7 +547,7 @@ async def test_race_info_bands(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -571,7 +584,7 @@ async def test_race_info_mood_label(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
