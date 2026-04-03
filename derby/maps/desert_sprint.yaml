@@ -1,0 +1,22 @@
+name: Desert Sprint
+theme: desert
+description: A scorching desert track built for pure speed with wide open straights.
+segments:
+  - type: straight
+    distance: 3
+    description: The sunbaked highway
+  - type: corner
+    distance: 1
+    description: Sandy bend
+  - type: straight
+    distance: 2
+    description: Mirage mile
+  - type: hazard
+    distance: 1
+    description: Sandstorm crossing
+  - type: straight
+    distance: 3
+    description: The final dusty stretch
+  - type: corner
+    distance: 1
+    description: Oasis turn to the finish

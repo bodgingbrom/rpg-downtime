@@ -224,6 +224,69 @@ class Derby(commands.Cog, name="derby"):
         if context.invoked_subcommand is None:
             await context.send("Specify a subcommand", ephemeral=True)
 
+    # -- Map commands --------------------------------------------------
+
+    @derby_group.group(name="map", description="Race map commands")
+    async def map_group(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await context.send("Specify a subcommand", ephemeral=True)
+
+    @map_group.command(name="list", description="List available race maps")
+    async def map_list(self, context: Context) -> None:
+        maps = logic.load_all_maps()
+        if not maps:
+            await context.send("No maps available.", ephemeral=True)
+            return
+        embed = discord.Embed(title="Available Race Maps")
+        for m in maps:
+            embed.add_field(
+                name=f"{m.name} ({m.theme})",
+                value=f"{len(m.segments)} segments \u2014 {m.description}"
+                if m.description
+                else f"{len(m.segments)} segments",
+                inline=False,
+            )
+        await context.send(embed=embed)
+
+    @map_group.command(name="view", description="View a race map's segments")
+    @app_commands.describe(name="Map name")
+    async def map_view(self, context: Context, name: str) -> None:
+        maps = logic.load_all_maps()
+        race_map = next((m for m in maps if m.name.lower() == name.lower()), None)
+        if race_map is None:
+            await context.send("Map not found.", ephemeral=True)
+            return
+        layout = " \u2192 ".join(
+            f"[{s.type.capitalize()}]" for s in race_map.segments
+        )
+        embed = discord.Embed(
+            title=race_map.name,
+            description=f"**Theme:** {race_map.theme}\n{race_map.description}\n\n{layout}",
+        )
+        for i, s in enumerate(race_map.segments, 1):
+            embed.add_field(
+                name=f"{i}. {s.type.capitalize()} (distance {s.distance})",
+                value=s.description or "\u200b",
+                inline=False,
+            )
+        await context.send(embed=embed)
+
+    @map_view.autocomplete("name")
+    async def map_name_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        maps = logic.load_all_maps()
+        choices = []
+        current_lower = current.lower()
+        for m in maps:
+            if current_lower in m.name.lower():
+                choices.append(app_commands.Choice(name=m.name, value=m.name))
+            if len(choices) >= 25:
+                break
+        return choices
+
+    # -- Racer commands -------------------------------------------------
+
     @derby_group.command(name="add_racer", description="Add a new racer")
     @checks.has_role("Race Admin")
     @app_commands.describe(

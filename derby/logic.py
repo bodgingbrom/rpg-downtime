@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import random
+from dataclasses import dataclass, field
 from typing import Dict, List, Sequence, Set, Tuple
 
+import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +35,77 @@ MOOD_LABELS = {
     5: "Great",
 }
 
+
+# ---------------------------------------------------------------------------
+# Map data structures and loading
+# ---------------------------------------------------------------------------
+
+SEGMENT_TYPES = {
+    "straight": {"speed": 1.0, "cornering": 0.3, "stamina": 0.5},
+    "corner": {"speed": 0.3, "cornering": 1.0, "stamina": 0.5},
+    "climb": {"speed": 0.5, "cornering": 0.3, "stamina": 1.0},
+    "descent": {"speed": 0.8, "cornering": 0.7, "stamina": 0.3},
+    "hazard": {"speed": 0.4, "cornering": 0.6, "stamina": 0.8},
+}
+
+
+@dataclass
+class MapSegment:
+    type: str
+    distance: int = 2
+    description: str = ""
+
+
+@dataclass
+class RaceMap:
+    name: str
+    theme: str
+    description: str
+    segments: list[MapSegment] = field(default_factory=list)
+
+
+_MAPS_DIR = os.path.join(os.path.dirname(__file__), "maps")
+
+
+def load_map(path: str) -> RaceMap:
+    """Load a single map YAML file and return a RaceMap."""
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    segments = [
+        MapSegment(
+            type=s["type"],
+            distance=s.get("distance", 2),
+            description=s.get("description", ""),
+        )
+        for s in data.get("segments", [])
+    ]
+    return RaceMap(
+        name=data["name"],
+        theme=data.get("theme", "standard"),
+        description=data.get("description", ""),
+        segments=segments,
+    )
+
+
+def load_all_maps() -> list[RaceMap]:
+    """Load all .yaml map files from the maps directory."""
+    maps: list[RaceMap] = []
+    for path in sorted(glob.glob(os.path.join(_MAPS_DIR, "*.yaml"))):
+        maps.append(load_map(path))
+    return maps
+
+
+def pick_map() -> RaceMap | None:
+    """Pick a random map from the available maps."""
+    maps = load_all_maps()
+    if not maps:
+        return None
+    return random.choice(maps)
+
+
+# ---------------------------------------------------------------------------
+# Name pool
+# ---------------------------------------------------------------------------
 
 _NAMES_FILE = os.path.join(os.path.dirname(__file__), "names.txt")
 
