@@ -19,11 +19,28 @@ from economy import repositories as wallet_repo
 import economy.models  # noqa: F401
 
 
+class DummyChannel:
+    """Minimal channel stub that records sent messages."""
+
+    def __init__(self) -> None:
+        self.messages: list[dict[str, object]] = []
+
+    async def send(self, content: str | None = None, **kwargs) -> None:
+        self.messages.append({"content": content, **kwargs})
+
+
+class DummyGuild:
+    def __init__(self, id: int = 1) -> None:
+        self.id = id
+
+
 class DummyContext:
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.sent: list[dict[str, object]] = []
         self.interaction = None
+        self.channel = DummyChannel()
+        self.guild = DummyGuild()
 
     async def defer(self, **kwargs) -> None:
         pass
@@ -205,7 +222,20 @@ async def test_race_force_start(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    streamed: list[list[str]] = []
+    posted: list[list[int]] = []
+
+    async def fake_stream(race_id, guild_id, log, **kwargs):
+        streamed.append(log)
+
+    async def fake_post(guild_id, placements, names=None):
+        posted.append(placements)
+
+    bot.scheduler = types.SimpleNamespace(
+        sessionmaker=sessionmaker,
+        _stream_commentary=fake_stream,
+        _post_results=fake_post,
+    )
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -229,7 +259,15 @@ async def test_race_force_start(tmp_path: Path) -> None:
 
     assert finished.finished
     assert finished.winner_id is not None
-    assert ctx.sent and f"Race {race.id} finished" in ctx.sent[-1]["content"]
+    # force-start sends a "getting ready" embed then streams commentary
+    assert ctx.sent  # at least the "getting ready" embed
+    assert any(
+        hasattr(msg.get("embed"), "title") and "Getting Ready" in msg["embed"].title
+        for msg in ctx.sent
+        if msg.get("embed")
+    )
+    assert streamed  # commentary was streamed
+    assert posted  # results were posted
 
 
 @pytest.mark.asyncio

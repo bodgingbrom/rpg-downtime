@@ -10,7 +10,7 @@ from discord.ext.commands import Context
 from sqlalchemy import select
 
 import checks
-from derby import logic, models
+from derby import commentary, logic, models
 from derby import repositories as repo
 from economy import repositories as wallet_repo
 
@@ -493,6 +493,7 @@ class Derby(commands.Cog, name="derby"):
     async def race_force_start(
         self, context: Context, race_id: int | None = None
     ) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             if race_id is None:
                 result = await session.execute(
@@ -540,15 +541,47 @@ class Derby(commands.Cog, name="derby"):
                         temperament=r.temperament,
                     )
             await session.commit()
+
         names = result.racer_names
-        header = f"Race {race.id} finished!"
-        if result.map_name:
-            header += f" (Track: {result.map_name})"
-        results_str = "\n".join(
-            f"{i+1}. {names.get(rid, f'Racer {rid}')}"
-            for i, rid in enumerate(result.placements)
+        channel = context.channel
+
+        # --- Pre-race build-up while LLM generates commentary ---
+        lineup = ", ".join(
+            f"**{names.get(rid, f'Racer {rid}')}**" for rid in result.placements
         )
-        await context.send(f"{header}\n{results_str}")
+        track_info = f" on **{result.map_name}**" if result.map_name else ""
+        ready_embed = discord.Embed(
+            title=f"\U0001f3c7 Race {race.id} — Racers Getting Ready!",
+            description=(
+                f"The racers are lining up{track_info}!\n\n"
+                f"Lineup: {lineup}\n\n"
+                f"*The race is about to begin...*"
+            ),
+            color=0xFFAA00,
+        )
+        if race_map and race_map.segments:
+            layout = " \u2192 ".join(
+                f"[{s.type.capitalize()}]" for s in race_map.segments
+            )
+            ready_embed.add_field(
+                name="Track Layout", value=layout, inline=False
+            )
+        await context.send(embed=ready_embed)
+
+        # Generate LLM commentary (runs during the "getting ready" moment)
+        log = await commentary.generate_commentary(result)
+        if log is None:
+            log = commentary.build_template_commentary(result)
+
+        # --- Stream commentary ---
+        await self.bot.scheduler._stream_commentary(
+            race.id, context.guild.id, log
+        )
+
+        # --- Post results ---
+        await self.bot.scheduler._post_results(
+            context.guild.id, result.placements, names
+        )
 
     @derby_group.group(name="debug", description="Debug commands")
     async def debug_group(self, context: Context) -> None:
