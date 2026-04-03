@@ -11,7 +11,8 @@ from discord.ext import tasks
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from . import Base, logic, models
+from db_base import Base
+from . import logic, models
 from . import repositories as repo
 
 

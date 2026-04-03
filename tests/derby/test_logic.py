@@ -9,7 +9,9 @@ from derby.logic import (
     resolve_payouts,
     simulate_race,
 )
-from derby.models import Base, Bet, Race, Racer, Wallet
+from db_base import Base
+from derby.models import Bet, Race, Racer
+from economy.models import Wallet
 
 
 @pytest_asyncio.fixture()

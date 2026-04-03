@@ -5,9 +5,9 @@ from typing import Type, TypeVar
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Bet, CourseSegment, GuildSettings, Race, Racer, Wallet
+from .models import Bet, CourseSegment, GuildSettings, Race, Racer
 
-ModelT = TypeVar("ModelT", Racer, Race, Bet, Wallet, CourseSegment, GuildSettings)
+ModelT = TypeVar("ModelT", Racer, Race, Bet, CourseSegment, GuildSettings)
 
 
 async def _create(session: AsyncSession, model: Type[ModelT], **kwargs) -> ModelT:
@@ -118,23 +118,6 @@ async def update_bet(session: AsyncSession, bet_id: int, **kwargs) -> Bet | None
 
 async def delete_bet(session: AsyncSession, bet_id: int) -> None:
     await _delete(session, Bet, bet_id)
-
-
-# Wallet
-async def create_wallet(session: AsyncSession, **kwargs) -> Wallet:
-    return await _create(session, Wallet, **kwargs)
-
-
-async def get_wallet(session: AsyncSession, user_id: int) -> Wallet | None:
-    return await _get(session, Wallet, user_id)
-
-
-async def update_wallet(session: AsyncSession, user_id: int, **kwargs) -> Wallet | None:
-    return await _update(session, Wallet, user_id, **kwargs)
-
-
-async def delete_wallet(session: AsyncSession, user_id: int) -> None:
-    await _delete(session, Wallet, user_id)
 
 
 # CourseSegment
