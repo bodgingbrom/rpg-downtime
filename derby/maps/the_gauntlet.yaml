@@ -1,0 +1,25 @@
+name: The Gauntlet
+theme: urban
+description: A brutal mixed course through city streets that tests every skill.
+segments:
+  - type: straight
+    distance: 2
+    description: Main street charge
+  - type: corner
+    distance: 2
+    description: Market square chicane
+  - type: hazard
+    distance: 2
+    description: Construction zone
+  - type: climb
+    distance: 1
+    description: Bridge overpass
+  - type: descent
+    distance: 1
+    description: Tunnel descent
+  - type: corner
+    distance: 1
+    description: Alley shortcut
+  - type: straight
+    distance: 2
+    description: The home stretch

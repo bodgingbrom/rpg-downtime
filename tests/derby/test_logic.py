@@ -4,8 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from derby.logic import (
+    MapSegment,
+    RaceMap,
     apply_temperament,
     calculate_odds,
+    load_all_maps,
+    load_map,
+    pick_map,
     resolve_payouts,
     simulate_race,
 )
@@ -103,3 +108,47 @@ def test_simulate_race_stat_influence():
             wins += 1
     # Strong racer should win the vast majority
     assert wins > 80
+
+
+# ---------------------------------------------------------------------------
+# Map loading tests
+# ---------------------------------------------------------------------------
+
+
+def test_load_all_maps_returns_starter_maps():
+    maps = load_all_maps()
+    assert len(maps) >= 4
+    names = {m.name for m in maps}
+    assert "Frozen Circuit" in names
+    assert "Desert Sprint" in names
+    assert "Mountain Pass" in names
+    assert "The Gauntlet" in names
+
+
+def test_load_map_has_segments():
+    maps = load_all_maps()
+    for m in maps:
+        assert len(m.segments) >= 3
+        for seg in m.segments:
+            assert seg.type in ("straight", "corner", "climb", "descent", "hazard")
+            assert 1 <= seg.distance <= 3
+
+
+def test_pick_map_returns_a_map():
+    m = pick_map()
+    assert m is not None
+    assert isinstance(m, RaceMap)
+    assert len(m.segments) > 0
+
+
+def test_load_map_frozen_circuit(tmp_path):
+    """Test loading a specific map file."""
+    import os
+    maps_dir = os.path.join(os.path.dirname(__file__), "..", "..", "derby", "maps")
+    path = os.path.join(maps_dir, "frozen_circuit.yaml")
+    m = load_map(path)
+    assert m.name == "Frozen Circuit"
+    assert m.theme == "frozen"
+    assert len(m.segments) == 5
+    assert m.segments[0].type == "straight"
+    assert m.segments[1].type == "corner"

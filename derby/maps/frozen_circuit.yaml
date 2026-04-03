@@ -1,0 +1,19 @@
+name: Frozen Circuit
+theme: frozen
+description: A treacherous ice track with tight corners and a brutal climb.
+segments:
+  - type: straight
+    distance: 2
+    description: The frozen straightaway
+  - type: corner
+    distance: 1
+    description: Icy hairpin turn
+  - type: climb
+    distance: 3
+    description: The glacier ascent
+  - type: corner
+    distance: 2
+    description: Slippery switchback
+  - type: straight
+    distance: 1
+    description: Final sprint across the ice

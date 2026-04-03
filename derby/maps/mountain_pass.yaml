@@ -1,0 +1,22 @@
+name: Mountain Pass
+theme: mountain
+description: A grueling climb through rocky terrain that punishes the weak-willed.
+segments:
+  - type: climb
+    distance: 2
+    description: The foothills approach
+  - type: corner
+    distance: 2
+    description: Cliffside hairpin
+  - type: climb
+    distance: 3
+    description: The summit push
+  - type: descent
+    distance: 2
+    description: Rocky downhill
+  - type: hazard
+    distance: 1
+    description: Loose gravel stretch
+  - type: straight
+    distance: 1
+    description: Valley floor finish
