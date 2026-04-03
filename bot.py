@@ -299,7 +299,11 @@ class DiscordBot(commands.Bot):
         else:
             # Suppress interaction-expired (10062) and already-acknowledged (40060)
             # errors — these are harmless Discord API quirks with hybrid commands.
-            inner = getattr(error, "original", error)
+            # HybridCommandError wraps CommandInvokeError wraps the real exception,
+            # so we walk the full .original chain to find the root cause.
+            inner = error
+            while hasattr(inner, "original"):
+                inner = inner.original
             if isinstance(inner, discord.HTTPException) and inner.code in (
                 10062,
                 40060,

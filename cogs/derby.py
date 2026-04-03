@@ -56,6 +56,7 @@ class Derby(commands.Cog, name="derby"):
 
     @race.command(name="upcoming", description="Show upcoming race odds")
     async def race_upcoming(self, context: Context) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             race_result = await session.execute(
                 select(models.Race)
@@ -88,6 +89,7 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.describe(racer="Racer to bet on", amount="Amount to bet")
     @app_commands.autocomplete(racer=racer_autocomplete)
     async def race_bet(self, context: Context, racer: int, amount: int) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             race_result = await session.execute(
                 select(models.Race)
@@ -165,6 +167,7 @@ class Derby(commands.Cog, name="derby"):
     @race.command(name="history", description="Show recent race results")
     @app_commands.describe(count="Number of races to display")
     async def race_history(self, context: Context, count: int = 5) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             records = await repo.get_race_history(session, context.guild.id, count)
             racer_names: dict[int, str] = {}
@@ -196,6 +199,7 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.describe(racer="Racer to inspect")
     @app_commands.autocomplete(racer=racer_autocomplete)
     async def race_info(self, context: Context, racer: int) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
         if racer_obj is None:
@@ -233,6 +237,7 @@ class Derby(commands.Cog, name="derby"):
 
     @map_group.command(name="list", description="List available race maps")
     async def map_list(self, context: Context) -> None:
+        await context.defer()
         maps = logic.load_all_maps()
         if not maps:
             await context.send("No maps available.", ephemeral=True)
@@ -251,6 +256,7 @@ class Derby(commands.Cog, name="derby"):
     @map_group.command(name="view", description="View a race map's segments")
     @app_commands.describe(name="Map name")
     async def map_view(self, context: Context, name: str) -> None:
+        await context.defer()
         maps = logic.load_all_maps()
         race_map = next((m for m in maps if m.name.lower() == name.lower()), None)
         if race_map is None:
@@ -310,6 +316,7 @@ class Derby(commands.Cog, name="derby"):
         stamina: app_commands.Range[int, 0, 31] | None = None,
         temperament: str | None = None,
     ) -> None:
+        await context.defer()
         if name is None:
             async with self.bot.scheduler.sessionmaker() as session:
                 result = await session.execute(
@@ -451,6 +458,7 @@ class Derby(commands.Cog, name="derby"):
     @derby_group.command(name="cancel_race", description="Cancel the next race")
     @checks.has_role("Race Admin")
     async def cancel_race(self, context: Context) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             result = await session.execute(
                 select(models.Race)
@@ -473,6 +481,7 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.describe(racer="Racer to delete")
     @app_commands.autocomplete(racer=racer_autocomplete)
     async def racer_delete(self, context: Context, racer: int) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
             if racer_obj is None:
@@ -591,6 +600,7 @@ class Derby(commands.Cog, name="derby"):
     @debug_group.command(name="race", description="Dump race data")
     @app_commands.describe(race_id="Race id")
     async def debug_race(self, context: Context, race_id: int) -> None:
+        await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
             race = await repo.get_race(session, race_id)
             if race is None:
