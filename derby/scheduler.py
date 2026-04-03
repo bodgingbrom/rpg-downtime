@@ -12,7 +12,7 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db_base import Base
-from . import logic, models
+from . import commentary, logic, models
 from . import repositories as repo
 
 
@@ -178,7 +178,9 @@ class DerbyScheduler:
             retirements = await self._apply_retirements(session, participants)
             await session.commit()
         names = result.racer_names
-        log = self._build_commentary_log(result)
+        log = await commentary.generate_commentary(result)
+        if log is None:
+            log = commentary.build_template_commentary(result)
         await self._stream_commentary(race_id, guild_id, log)
         await self._post_results(guild_id, result.placements, names)
         await self._dm_payouts(bets, race_id, winner_id, names)
@@ -188,24 +190,6 @@ class DerbyScheduler:
             "Race finished",
             extra={"guild_id": guild_id, "race_id": race_id},
         )
-
-    @staticmethod
-    def _build_commentary_log(result: logic.RaceResult) -> list[str]:
-        """Build a flat list of commentary strings from a RaceResult."""
-        log: list[str] = []
-        for seg in result.segments:
-            header = f"**{seg.segment_description or seg.segment_type.capitalize()}**"
-            log.append(header)
-            for event in seg.events:
-                log.append(event)
-            # Show top 3 standings
-            top = seg.standings[:3]
-            standing_lines = ", ".join(
-                f"{result.racer_names.get(rid, f'Racer {rid}')}"
-                for rid, _, _ in top
-            )
-            log.append(f"Standings: {standing_lines}")
-        return log
 
     async def _post_results(
         self,
