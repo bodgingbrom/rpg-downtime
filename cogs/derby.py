@@ -63,7 +63,9 @@ class Derby(commands.Cog, name="derby"):
                 .where(models.Race.finished.is_(False))
                 .order_by(models.Race.id)
             )
-            race = race_result.scalars().first()
+            races = race_result.scalars().all()
+            active = self.bot.scheduler.active_races
+            race = next((r for r in races if r.id not in active), None)
             racers_result = await session.execute(
                 select(models.Racer).where(models.Racer.retired.is_(False))
             )
@@ -96,7 +98,11 @@ class Derby(commands.Cog, name="derby"):
                 .where(models.Race.finished.is_(False))
                 .order_by(models.Race.id)
             )
-            race = race_result.scalars().first()
+            races = race_result.scalars().all()
+            # Skip races already being run by the scheduler so the bet
+            # lands on the same race that force-start would pick.
+            active = self.bot.scheduler.active_races
+            race = next((r for r in races if r.id not in active), None)
             racers_result = await session.execute(
                 select(models.Racer).where(models.Racer.retired.is_(False))
             )
@@ -154,14 +160,14 @@ class Derby(commands.Cog, name="derby"):
                 )
         if old_name is not None:
             await context.send(
-                f"Bet changed from **{old_name}** ({old_amount} coins refunded) "
-                f"to **{racer_name}** for {amount} coins "
-                f"({multiplier:.1f}x odds \u2014 win pays {payout})"
+                f"**Race {race.id}** \u2014 Bet changed from **{old_name}** "
+                f"({old_amount} coins refunded) to **{racer_name}** for "
+                f"{amount} coins ({multiplier:.1f}x odds \u2014 win pays {payout})"
             )
         else:
             await context.send(
-                f"Bet placed on **{racer_name}** for {amount} coins "
-                f"({multiplier:.1f}x odds \u2014 win pays {payout})"
+                f"**Race {race.id}** \u2014 Bet placed on **{racer_name}** for "
+                f"{amount} coins ({multiplier:.1f}x odds \u2014 win pays {payout})"
             )
 
     @race.command(name="history", description="Show recent race results")
@@ -435,6 +441,22 @@ class Derby(commands.Cog, name="derby"):
     async def start_race(self, context: Context) -> None:
         await context.defer()
         async with self.bot.scheduler.sessionmaker() as session:
+            # Check for existing pending races to avoid confusion
+            existing = await session.execute(
+                select(models.Race).where(models.Race.finished.is_(False))
+            )
+            pending = [
+                r for r in existing.scalars().all()
+                if r.id not in self.bot.scheduler.active_races
+            ]
+            if pending:
+                await context.send(
+                    f"There's already a pending race (Race {pending[0].id}). "
+                    f"Use `/derby race force-start` to run it or "
+                    f"`/derby cancel_race` to cancel it first.",
+                    ephemeral=True,
+                )
+                return
             race = await repo.create_race(session, guild_id=context.guild.id)
             racers_result = await session.execute(
                 select(models.Racer).where(models.Racer.retired.is_(False))
