@@ -235,6 +235,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
         sessionmaker=sessionmaker,
         _stream_commentary=fake_stream,
         _post_results=fake_post,
+        active_races=set(),
     )
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)

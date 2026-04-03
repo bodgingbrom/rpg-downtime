@@ -28,6 +28,7 @@ class DerbyScheduler:
         self._initialized = False
         self.task = tasks.loop(hours=24)(self._run)
         self.commentaries: dict[int, tasks.Loop] = {}
+        self.active_races: set[int] = set()  # race IDs currently in progress
 
     def _get_channel(self, guild: discord.Guild) -> discord.abc.Messageable | None:
         """Return the configured channel for the guild or a sensible default."""
@@ -135,6 +136,8 @@ class DerbyScheduler:
 
         race_tasks = []
         for race in races:
+            if race.id in self.active_races:
+                continue  # already being run (e.g. by force-start)
             participants = random.sample(racers, min(8, len(racers)))
             t = asyncio.create_task(
                 self._run_race(race.id, race.guild_id, participants),
@@ -144,6 +147,17 @@ class DerbyScheduler:
         return race_tasks
 
     async def _run_race(
+        self, race_id: int, guild_id: int, participants: list[models.Racer]
+    ) -> None:
+        if race_id in self.active_races:
+            return  # another coroutine is already handling this race
+        self.active_races.add(race_id)
+        try:
+            await self._run_race_inner(race_id, guild_id, participants)
+        finally:
+            self.active_races.discard(race_id)
+
+    async def _run_race_inner(
         self, race_id: int, guild_id: int, participants: list[models.Racer]
     ) -> None:
         race_map = logic.pick_map()

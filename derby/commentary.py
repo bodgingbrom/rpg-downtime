@@ -36,7 +36,7 @@ def _get_client():
     return _client
 
 
-MODEL = "claude-haiku-4-20250414"
+MODEL = os.getenv("COMMENTARY_MODEL", "claude-haiku-4-5")
 MAX_TOKENS = 1024
 
 
