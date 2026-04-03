@@ -146,15 +146,20 @@ class DerbyScheduler:
     async def _run_race(
         self, race_id: int, guild_id: int, participants: list[models.Racer]
     ) -> None:
-        await self._announce_race_start(guild_id, race_id, participants)
+        race_map = logic.pick_map()
+        await self._announce_race_start(
+            guild_id, race_id, participants, race_map=race_map
+        )
         await asyncio.sleep(self.bot.settings.bet_window)
         await self._countdown(guild_id)
         self.bot.logger.info(
             "Race starting",
             extra={"guild_id": guild_id, "race_id": race_id},
         )
-        placements, log = logic.simulate_race({"racers": participants}, race_id)
-        winner_id = placements[0] if placements else None
+        result = logic.simulate_race(
+            {"racers": participants}, race_id, race_map=race_map
+        )
+        winner_id = result.placements[0] if result.placements else None
         async with self.sessionmaker() as session:
             await repo.update_race(
                 session, race_id, finished=True, winner_id=winner_id
@@ -172,9 +177,10 @@ class DerbyScheduler:
                 await logic.resolve_payouts(session, race_id, winner_id)
             retirements = await self._apply_retirements(session, participants)
             await session.commit()
-        names = {r.id: r.name for r in participants}
+        names = result.racer_names
+        log = self._build_commentary_log(result)
         await self._stream_commentary(race_id, guild_id, log)
-        await self._post_results(guild_id, placements, names)
+        await self._post_results(guild_id, result.placements, names)
         await self._dm_payouts(bets, race_id, winner_id, names)
         if retirements:
             await self._announce_retirements(guild_id, retirements)
@@ -182,6 +188,24 @@ class DerbyScheduler:
             "Race finished",
             extra={"guild_id": guild_id, "race_id": race_id},
         )
+
+    @staticmethod
+    def _build_commentary_log(result: logic.RaceResult) -> list[str]:
+        """Build a flat list of commentary strings from a RaceResult."""
+        log: list[str] = []
+        for seg in result.segments:
+            header = f"**{seg.segment_description or seg.segment_type.capitalize()}**"
+            log.append(header)
+            for event in seg.events:
+                log.append(event)
+            # Show top 3 standings
+            top = seg.standings[:3]
+            standing_lines = ", ".join(
+                f"{result.racer_names.get(rid, f'Racer {rid}')}"
+                for rid, _, _ in top
+            )
+            log.append(f"Standings: {standing_lines}")
+        return log
 
     async def _post_results(
         self,
@@ -314,7 +338,11 @@ class DerbyScheduler:
         return retirements
 
     async def _announce_race_start(
-        self, guild_id: int, race_id: int, racers: list[models.Racer]
+        self,
+        guild_id: int,
+        race_id: int,
+        racers: list[models.Racer],
+        race_map: logic.RaceMap | None = None,
     ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -322,11 +350,20 @@ class DerbyScheduler:
         channel = self._get_channel(guild)
         if channel is None:
             return
-        odds = logic.calculate_odds(racers, [], 0.1)
+        odds = logic.calculate_odds(racers, [], 0.1, race_map=race_map)
         minutes = self.bot.settings.bet_window // 60
+        desc = f"Race {race_id} begins in {minutes} minutes. Place your bets!"
+        if race_map:
+            layout = " \u2192 ".join(
+                f"[{s.type.capitalize()}]" for s in race_map.segments
+            )
+            desc = (
+                f"**Track: {race_map.name}** ({race_map.theme})\n"
+                f"{layout}\n\n{desc}"
+            )
         embed = discord.Embed(
             title="Race Starting Soon",
-            description=f"Race {race_id} begins in {minutes} minutes. Place your bets!",
+            description=desc,
         )
         for r in racers:
             mult = odds.get(r.id, 0)

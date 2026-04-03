@@ -235,7 +235,7 @@ async def test_race_uses_max_eight_racers(
 
     counts: list[int] = []
 
-    async def fake_announce(gid: int, rid: int, racers: list[Racer]) -> None:
+    async def fake_announce(gid: int, rid: int, racers: list[Racer], **kwargs) -> None:
         counts.append(len(racers))
 
     async def noop(*args, **kwargs) -> None:
