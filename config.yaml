@@ -1,4 +1,7 @@
-race_frequency: 1
+race_times:
+  - "09:00"
+  - "15:00"
+  - "21:00"
 default_wallet: 100
 retirement_threshold: 96
 bet_window: 120

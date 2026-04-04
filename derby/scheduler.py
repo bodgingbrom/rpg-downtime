@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-from datetime import datetime
+from datetime import datetime, time as dt_time
 from typing import Any
 
 import discord
@@ -16,8 +16,17 @@ from . import commentary, logic, models
 from . import repositories as repo
 
 
+def _parse_race_times(time_strings: list[str]) -> list[dt_time]:
+    """Parse 'HH:MM' strings into datetime.time objects (UTC)."""
+    times = []
+    for ts in time_strings:
+        h, m = ts.strip().split(":")
+        times.append(dt_time(hour=int(h), minute=int(m)))
+    return times
+
+
 class DerbyScheduler:
-    """Background task handling daily races."""
+    """Background task that runs races at configured times."""
 
     def __init__(self, bot: discord.Client, db_path: str | None = None) -> None:
         self.bot = bot
@@ -26,7 +35,7 @@ class DerbyScheduler:
         self.engine = create_async_engine(f"sqlite+aiosqlite:///{self.db_path}")
         self.sessionmaker = async_sessionmaker(self.engine, expire_on_commit=False)
         self._initialized = False
-        self.task = tasks.loop(hours=24)(self._run)
+        self.task: tasks.Loop | None = None
         self.commentaries: dict[int, tasks.Loop] = {}
         self.active_races: set[int] = set()  # race IDs currently in progress
 
@@ -43,10 +52,18 @@ class DerbyScheduler:
 
     async def start(self) -> None:
         await self._init_db()
+        race_times = _parse_race_times(
+            getattr(self.bot, "settings", None)
+            and self.bot.settings.race_times
+            or ["09:00", "15:00", "21:00"]
+        )
+        self.task = tasks.loop(time=race_times)(self._run)
         self.task.start()
+        # Run any pending races left from a prior restart
+        await self._also_start_pending_races()
 
     async def close(self) -> None:
-        if self.task.is_running():
+        if self.task and self.task.is_running():
             self.task.cancel()
         await self.engine.dispose()
 
@@ -103,40 +120,40 @@ class DerbyScheduler:
         await self.tick()
 
     async def tick(self) -> None:
+        """Create and run one race per guild at each scheduled time."""
         await self._init_db()
-        async with self.sessionmaker() as session:
-            await self._create_daily_races(session)
-        race_tasks = await self._start_ready_races()
-        if race_tasks:
-            await asyncio.gather(*race_tasks, return_exceptions=True)
 
-    async def _create_daily_races(self, session: AsyncSession) -> None:
-        now = datetime.utcnow()
-        start_of_day = datetime(now.year, now.month, now.day)
-        for guild in self.bot.guilds:
-            result = await session.execute(
-                select(func.count(models.Race.id)).where(
-                    models.Race.guild_id == guild.id,
-                    models.Race.started_at >= start_of_day,
+        # Get eligible racers once
+        async with self.sessionmaker() as session:
+            racers_result = await session.execute(
+                select(models.Racer).where(
+                    models.Racer.retired.is_(False),
+                    models.Racer.injury_races_remaining == 0,
                 )
             )
-            count = result.scalar_one()
-            needed = self.bot.settings.race_frequency - count
-            for _ in range(max(0, needed)):
-                race = await repo.create_race(session, guild_id=guild.id)
-                self.bot.logger.info(
-                    "Race scheduled",
-                    extra={"guild_id": guild.id, "race_id": race.id},
-                )
+            racers = racers_result.scalars().all()
+        if len(racers) < 2:
+            return  # need at least 2 racers to run a race
 
-    async def _start_ready_races(self) -> list[asyncio.Task]:
+        for guild in self.bot.guilds:
+            async with self.sessionmaker() as session:
+                race = await repo.create_race(session, guild_id=guild.id)
+            self.bot.logger.info(
+                "Race created",
+                extra={"guild_id": guild.id, "race_id": race.id},
+            )
+            participants = random.sample(racers, min(8, len(racers)))
+            await self._run_race(race.id, guild.id, participants)
+
+    async def _also_start_pending_races(self) -> None:
+        """Start any pending (unfinished) races from before, e.g. after a restart."""
         async with self.sessionmaker() as session:
             result = await session.execute(
                 select(models.Race).where(models.Race.finished.is_(False))
             )
             races = result.scalars().all()
             if not races:
-                return []
+                return
 
             racers_result = await session.execute(
                 select(models.Racer).where(
@@ -146,19 +163,13 @@ class DerbyScheduler:
             )
             racers = racers_result.scalars().all()
             if not racers:
-                return []
+                return
 
-        race_tasks = []
         for race in races:
             if race.id in self.active_races:
-                continue  # already being run (e.g. by force-start)
+                continue
             participants = random.sample(racers, min(8, len(racers)))
-            t = asyncio.create_task(
-                self._run_race(race.id, race.guild_id, participants),
-                name=f"race-{race.id}",
-            )
-            race_tasks.append(t)
-        return race_tasks
+            await self._run_race(race.id, race.guild_id, participants)
 
     async def _run_race(
         self, race_id: int, guild_id: int, participants: list[models.Racer]
@@ -240,7 +251,9 @@ class DerbyScheduler:
         log = await commentary.generate_commentary(result)
         if log is None:
             log = commentary.build_template_commentary(result)
-        await self._stream_commentary(race_id, guild_id, log)
+        await self._stream_commentary(
+            race_id, guild_id, log, delay=self.bot.settings.commentary_delay
+        )
         await self._post_results(guild_id, result.placements, names)
         await self._dm_payouts(bets, race_id, winner_id, names)
         if new_injuries:
@@ -347,50 +360,25 @@ class DerbyScheduler:
         if channel is None:
             return
 
-        events = iter(log)
-        done = asyncio.Event()
-        loop_task: tasks.Loop | None = None
-        counter = {"i": 0}
-
-        async def send_next() -> None:
-            nonlocal loop_task
+        for i, event in enumerate(log):
+            # Check if race was cancelled
             async with self.sessionmaker() as session:
                 if await repo.get_race(session, race_id) is None:
-                    if loop_task:
-                        loop_task.cancel()
-                    done.set()
                     return
-            try:
-                event = next(events)
-            except StopIteration:
-                if loop_task:
-                    loop_task.cancel()
-                done.set()
-                return
 
             embed = discord.Embed(
                 description=event,
-                color=0x2ECC71 if counter["i"] < len(log) - 1 else 0xF1C40F,
+                color=0x2ECC71 if i < len(log) - 1 else 0xF1C40F,
             )
             embed.set_footer(text=f"\U0001f3c7 Race {race_id}")
-            counter["i"] += 1
 
             try:
                 await channel.send(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
-                if loop_task:
-                    loop_task.cancel()
-                done.set()
                 return
 
-        loop_task = tasks.loop(seconds=delay)(send_next)
-        await send_next()
-        if not done.is_set():
-            self.commentaries[race_id] = loop_task
-            loop_task.start()
-            await done.wait()
-            loop_task.cancel()
-            self.commentaries.pop(race_id, None)
+            if i < len(log) - 1:
+                await asyncio.sleep(delay)
 
     async def _apply_retirements(
         self, session: AsyncSession, racers: list[models.Racer]
