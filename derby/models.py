@@ -45,6 +45,16 @@ class Bet(Base):
     payout_multiplier: Mapped[float] = mapped_column(Float, default=2.0)
 
 
+class RaceEntry(Base):
+    """Links a racer to a specific race as a participant."""
+
+    __tablename__ = "race_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    race_id: Mapped[int] = mapped_column(ForeignKey("races.id"), nullable=False)
+    racer_id: Mapped[int] = mapped_column(ForeignKey("racers.id"), nullable=False)
+
+
 class CourseSegment(Base):
     __tablename__ = "course_segments"
 
@@ -67,6 +77,7 @@ __all__ = [
     "Base",
     "Racer",
     "Race",
+    "RaceEntry",
     "Bet",
     "CourseSegment",
     "GuildSettings",

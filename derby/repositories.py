@@ -5,7 +5,7 @@ from typing import Type, TypeVar
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Bet, CourseSegment, GuildSettings, Race, Racer
+from .models import Bet, CourseSegment, GuildSettings, Race, RaceEntry, Racer
 
 ModelT = TypeVar("ModelT", Racer, Race, Bet, CourseSegment, GuildSettings)
 
@@ -118,6 +118,39 @@ async def update_bet(session: AsyncSession, bet_id: int, **kwargs) -> Bet | None
 
 async def delete_bet(session: AsyncSession, bet_id: int) -> None:
     await _delete(session, Bet, bet_id)
+
+
+# RaceEntry
+async def create_race_entries(
+    session: AsyncSession, race_id: int, racer_ids: list[int]
+) -> list[RaceEntry]:
+    """Bulk-create race entries linking racers to a race."""
+    entries = [RaceEntry(race_id=race_id, racer_id=rid) for rid in racer_ids]
+    session.add_all(entries)
+    await session.commit()
+    return entries
+
+
+async def get_race_entries(
+    session: AsyncSession, race_id: int
+) -> list[RaceEntry]:
+    """Return all entries for a given race."""
+    result = await session.execute(
+        select(RaceEntry).where(RaceEntry.race_id == race_id)
+    )
+    return result.scalars().all()
+
+
+async def get_race_participants(
+    session: AsyncSession, race_id: int
+) -> list[Racer]:
+    """Return the Racer objects assigned to a race via RaceEntry."""
+    result = await session.execute(
+        select(Racer).join(RaceEntry, RaceEntry.racer_id == Racer.id).where(
+            RaceEntry.race_id == race_id
+        )
+    )
+    return result.scalars().all()
 
 
 # CourseSegment

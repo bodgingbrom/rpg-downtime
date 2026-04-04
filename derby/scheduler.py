@@ -59,8 +59,8 @@ class DerbyScheduler:
         )
         self.task = tasks.loop(time=race_times)(self._run)
         self.task.start()
-        # Run any pending races left from a prior restart
-        await self._also_start_pending_races()
+        # Ensure each guild has a pending race with pre-picked participants
+        await self._ensure_pending_races()
 
     async def close(self) -> None:
         if self.task and self.task.is_running():
@@ -120,41 +120,38 @@ class DerbyScheduler:
         await self.tick()
 
     async def tick(self) -> None:
-        """Create and run one race per guild at each scheduled time."""
+        """Run the pending race for each guild, then create the next one."""
         await self._init_db()
 
-        # Get eligible racers once
-        async with self.sessionmaker() as session:
-            racers_result = await session.execute(
-                select(models.Racer).where(
-                    models.Racer.retired.is_(False),
-                    models.Racer.injury_races_remaining == 0,
-                )
-            )
-            racers = racers_result.scalars().all()
-        if len(racers) < 2:
-            return  # need at least 2 racers to run a race
-
         for guild in self.bot.guilds:
+            # Find the pending race (created after the last race finished)
             async with self.sessionmaker() as session:
-                race = await repo.create_race(session, guild_id=guild.id)
-            self.bot.logger.info(
-                "Race created",
-                extra={"guild_id": guild.id, "race_id": race.id},
-            )
-            participants = random.sample(racers, min(self.bot.settings.max_racers_per_race, len(racers)))
+                result = await session.execute(
+                    select(models.Race).where(
+                        models.Race.guild_id == guild.id,
+                        models.Race.finished.is_(False),
+                    ).order_by(models.Race.id)
+                )
+                race = result.scalars().first()
+
+            if race is None or race.id in self.active_races:
+                continue
+
+            # Load stored participants
+            async with self.sessionmaker() as session:
+                participants = await repo.get_race_participants(session, race.id)
+
+            if len(participants) < 2:
+                continue
+
             await self._run_race(race.id, guild.id, participants)
 
-    async def _also_start_pending_races(self) -> None:
-        """Start any pending (unfinished) races from before, e.g. after a restart."""
-        async with self.sessionmaker() as session:
-            result = await session.execute(
-                select(models.Race).where(models.Race.finished.is_(False))
-            )
-            races = result.scalars().all()
-            if not races:
-                return
+            # Create the next race with pre-picked participants
+            await self._create_next_race(guild.id)
 
+    async def _create_next_race(self, guild_id: int) -> models.Race | None:
+        """Create a pending race for a guild and pre-pick its participants."""
+        async with self.sessionmaker() as session:
             racers_result = await session.execute(
                 select(models.Racer).where(
                     models.Racer.retired.is_(False),
@@ -162,14 +159,69 @@ class DerbyScheduler:
                 )
             )
             racers = racers_result.scalars().all()
-            if not racers:
-                return
 
-        for race in races:
-            if race.id in self.active_races:
+        if len(racers) < 2:
+            return None
+
+        async with self.sessionmaker() as session:
+            race = await repo.create_race(session, guild_id=guild_id)
+            participants = random.sample(
+                racers, min(self.bot.settings.max_racers_per_race, len(racers))
+            )
+            await repo.create_race_entries(
+                session, race.id, [r.id for r in participants]
+            )
+
+        self.bot.logger.info(
+            "Next race created with %d participants",
+            len(participants),
+            extra={"guild_id": guild_id, "race_id": race.id},
+        )
+        return race
+
+    async def _ensure_pending_races(self) -> None:
+        """Ensure each guild has a pending race with participants.
+
+        Called on startup so there's always something for /race upcoming.
+        """
+        for guild in self.bot.guilds:
+            async with self.sessionmaker() as session:
+                result = await session.execute(
+                    select(models.Race).where(
+                        models.Race.guild_id == guild.id,
+                        models.Race.finished.is_(False),
+                    )
+                )
+                pending = result.scalars().first()
+
+            if pending is not None:
+                # Check if it has participants; backfill if not (legacy race)
+                async with self.sessionmaker() as session:
+                    entries = await repo.get_race_entries(session, pending.id)
+                if not entries:
+                    await self._backfill_race_entries(pending)
                 continue
-            participants = random.sample(racers, min(self.bot.settings.max_racers_per_race, len(racers)))
-            await self._run_race(race.id, race.guild_id, participants)
+
+            await self._create_next_race(guild.id)
+
+    async def _backfill_race_entries(self, race: models.Race) -> None:
+        """Add participants to a legacy pending race that has none."""
+        async with self.sessionmaker() as session:
+            racers_result = await session.execute(
+                select(models.Racer).where(
+                    models.Racer.retired.is_(False),
+                    models.Racer.injury_races_remaining == 0,
+                )
+            )
+            racers = racers_result.scalars().all()
+            if len(racers) < 2:
+                return
+            participants = random.sample(
+                racers, min(self.bot.settings.max_racers_per_race, len(racers))
+            )
+            await repo.create_race_entries(
+                session, race.id, [r.id for r in participants]
+            )
 
     async def _run_race(
         self, race_id: int, guild_id: int, participants: list[models.Racer]

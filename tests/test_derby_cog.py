@@ -77,8 +77,9 @@ async def test_race_upcoming(tmp_path: Path) -> None:
 
     async with sessionmaker() as session:
         race = await repo.create_race(session, guild_id=1)
-        await repo.create_racer(session, name="A", owner_id=1)
-        await repo.create_racer(session, name="B", owner_id=2)
+        r1 = await repo.create_racer(session, name="A", owner_id=1)
+        r2 = await repo.create_racer(session, name="B", owner_id=2)
+        await repo.create_race_entries(session, race.id, [r1.id, r2.id])
 
     await cog.race_upcoming(ctx)
 
@@ -109,9 +110,10 @@ async def test_race_bet(tmp_path: Path) -> None:
     ctx.author = types.SimpleNamespace(id=5)
 
     async with sessionmaker() as session:
-        await repo.create_race(session, guild_id=1)
+        race = await repo.create_race(session, guild_id=1)
         racer1 = await repo.create_racer(session, name="A", owner_id=1)
         racer2 = await repo.create_racer(session, name="B", owner_id=2)
+        await repo.create_race_entries(session, race.id, [racer1.id, racer2.id])
 
     await cog.race_bet(ctx, racer=racer1.id, amount=20)
 
@@ -246,7 +248,8 @@ async def test_race_force_start(tmp_path: Path) -> None:
         racer1 = await repo.create_racer(
             session, name="A", owner_id=1, speed=31, cornering=31, stamina=31
         )
-        await repo.create_racer(session, name="B", owner_id=2, speed=0, cornering=0, stamina=0)
+        racer2 = await repo.create_racer(session, name="B", owner_id=2, speed=0, cornering=0, stamina=0)
+        await repo.create_race_entries(session, race.id, [racer1.id, racer2.id])
         await wallet_repo.create_wallet(session, user_id=5, balance=50)
         await repo.create_bet(
             session, race_id=race.id, user_id=5, racer_id=racer1.id, amount=10,
