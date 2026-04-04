@@ -443,3 +443,77 @@ async def test_guild_isolation(tmp_path: Path) -> None:
                 participant_guilds.add(racer.guild_id)
             # All participants belong to the race's guild
             assert participant_guilds == {race.guild_id}
+
+
+@pytest.mark.asyncio
+async def test_guild_settings_channel_override(tmp_path: Path) -> None:
+    """Guild-specific channel_name should be used when set."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        channel_name=None,  # global default: use system_channel
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    arena = DummyChannel("arena")
+    guild.text_channels.append(arena)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    # Without override: should use system_channel
+    channel = scheduler._get_channel(guild)
+    assert channel is guild.system_channel
+
+    # Set per-guild override
+    async with scheduler.sessionmaker() as session:
+        await repo.create_guild_settings(
+            session, guild_id=GUILD_ID, channel_name="arena"
+        )
+    gs = await scheduler._load_guild_settings(GUILD_ID)
+    channel = scheduler._get_channel(guild, gs)
+    assert channel is arena
+
+
+@pytest.mark.asyncio
+async def test_guild_settings_max_racers_override(tmp_path: Path) -> None:
+    """Per-guild max_racers_per_race should limit participants."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        max_racers_per_race=6,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        for i in range(10):
+            await repo.create_racer(
+                session, name=f"R{i}", owner_id=i, guild_id=GUILD_ID
+            )
+        # Set guild override: max 3 racers per race
+        await repo.create_guild_settings(
+            session, guild_id=GUILD_ID, max_racers_per_race=3
+        )
+
+    await scheduler._ensure_pending_races()
+
+    async with scheduler.sessionmaker() as session:
+        races = (await session.execute(select(Race))).scalars().all()
+        assert len(races) == 1
+        entries = await repo.get_race_entries(session, races[0].id)
+        assert len(entries) == 3  # guild override, not global 6

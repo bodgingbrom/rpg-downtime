@@ -69,12 +69,19 @@ class CourseSegment(Base):
 
 
 class GuildSettings(Base):
+    """Per-guild setting overrides.  Nullable columns mean 'use the global
+    default from config.yaml'."""
+
     __tablename__ = "guild_settings"
 
     guild_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    race_frequency: Mapped[int] = mapped_column(Integer, default=1)
-    default_wallet: Mapped[int] = mapped_column(Integer, default=100)
-    retirement_threshold: Mapped[int] = mapped_column(Integer, default=96)
+    default_wallet: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    retirement_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    bet_window: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    countdown_total: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    max_racers_per_race: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    commentary_delay: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    channel_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 __all__ = [
