@@ -210,6 +210,27 @@ def generate_pool_racer(guild_id: int, taken_names: Set[str]) -> dict:
     }
 
 
+MAX_STAT = 31
+TRAINABLE_STATS = {"speed", "cornering", "stamina"}
+
+
+def calculate_training_cost(current_stat: int, base: int, multiplier: int) -> int:
+    """Return the coin cost to train a stat from *current_stat* to *current_stat + 1*."""
+    return base + current_stat * multiplier
+
+
+def training_failure_chance(mood: int, injured: bool) -> float:
+    """Return probability (0.0-1.0) that a training session fails.
+
+    Mood penalty: Awful (1) = 50%, Bad (2) = 25%, Normal+ = 0%.
+    Injury penalty: 25% if injured (injury_races_remaining > 0).
+    Combined multiplicatively: P(fail) = 1 - (1 - mood_fail) * (1 - injury_fail).
+    """
+    mood_fail = {1: 0.50, 2: 0.25}.get(mood, 0.0)
+    injury_fail = 0.25 if injured else 0.0
+    return 1.0 - (1.0 - mood_fail) * (1.0 - injury_fail)
+
+
 def stat_band(value: int) -> str:
     """Return a human-readable quality label for a stat value (0-31)."""
     if value <= 15:
