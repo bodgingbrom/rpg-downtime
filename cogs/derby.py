@@ -67,7 +67,10 @@ class Derby(commands.Cog, name="derby"):
             active = self.bot.scheduler.active_races
             race = next((r for r in races if r.id not in active), None)
             racers_result = await session.execute(
-                select(models.Racer).where(models.Racer.retired.is_(False))
+                select(models.Racer).where(
+                    models.Racer.retired.is_(False),
+                    models.Racer.injury_races_remaining == 0,
+                )
             )
             racers = racers_result.scalars().all()
         if race is None or not racers:
@@ -104,7 +107,10 @@ class Derby(commands.Cog, name="derby"):
             active = self.bot.scheduler.active_races
             race = next((r for r in races if r.id not in active), None)
             racers_result = await session.execute(
-                select(models.Racer).where(models.Racer.retired.is_(False))
+                select(models.Racer).where(
+                    models.Racer.retired.is_(False),
+                    models.Racer.injury_races_remaining == 0,
+                )
             )
             racers = racers_result.scalars().all()
         if race is None or not racers:
@@ -226,9 +232,10 @@ class Derby(commands.Cog, name="derby"):
         )
         embed.add_field(name="Temperament", value=racer_obj.temperament, inline=True)
         embed.add_field(name="Mood", value=_mood_label(racer_obj.mood), inline=True)
-        embed.add_field(
-            name="Injuries", value=racer_obj.injuries or "None", inline=False
-        )
+        injury_text = "None"
+        if racer_obj.injuries:
+            injury_text = f"{racer_obj.injuries} ({racer_obj.injury_races_remaining} races remaining)"
+        embed.add_field(name="Injuries", value=injury_text, inline=False)
         await context.send(embed=embed)
 
     @commands.hybrid_group(name="derby", description="Derby admin commands")
@@ -517,6 +524,57 @@ class Derby(commands.Cog, name="derby"):
             await repo.delete_racer(session, racer)
         await context.send(f"Racer **{racer_obj.name}** (#{racer}) deleted")
 
+    @racer_group.command(name="injure", description="Injure a racer (2d4 races recovery)")
+    @app_commands.describe(racer="Racer to injure", description="Injury description")
+    @app_commands.autocomplete(racer=racer_autocomplete)
+    async def racer_injure(
+        self, context: Context, racer: int, description: str = "Injured"
+    ) -> None:
+        await context.defer()
+        recovery = random.randint(1, 4) + random.randint(1, 4)  # 2d4
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None:
+                await context.send("Racer not found", ephemeral=True)
+                return
+            await repo.update_racer(
+                session,
+                racer,
+                injuries=description,
+                injury_races_remaining=recovery,
+            )
+        embed = discord.Embed(
+            title=f"\U0001f915 {racer_obj.name} Injured!",
+            description=f"**{description}**\nOut for **{recovery} races** (2d4)",
+            color=0xE02B2B,
+        )
+        await context.send(embed=embed)
+
+    @racer_group.command(name="heal", description="Heal a racer immediately")
+    @app_commands.describe(racer="Racer to heal")
+    @app_commands.autocomplete(racer=racer_autocomplete)
+    async def racer_heal(self, context: Context, racer: int) -> None:
+        await context.defer()
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None:
+                await context.send("Racer not found", ephemeral=True)
+                return
+            if not racer_obj.injuries:
+                await context.send(
+                    f"**{racer_obj.name}** is not injured.", ephemeral=True
+                )
+                return
+            await repo.update_racer(
+                session, racer, injuries="", injury_races_remaining=0
+            )
+        embed = discord.Embed(
+            title=f"\U0001f489 {racer_obj.name} Healed!",
+            description=f"**{racer_obj.name}** has been healed and is ready to race!",
+            color=0x2ECC71,
+        )
+        await context.send(embed=embed)
+
     @derby_group.group(name="race", description="Race admin commands")
     async def race_admin(self, context: Context) -> None:
         if context.invoked_subcommand is None:
@@ -552,7 +610,10 @@ class Derby(commands.Cog, name="derby"):
                 return
             self.bot.scheduler.active_races.add(race.id)
             racers_result = await session.execute(
-                select(models.Racer).where(models.Racer.retired.is_(False))
+                select(models.Racer).where(
+                    models.Racer.retired.is_(False),
+                    models.Racer.injury_races_remaining == 0,
+                )
             )
             racers = racers_result.scalars().all()
             if not racers:
