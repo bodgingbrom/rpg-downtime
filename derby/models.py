@@ -21,6 +21,7 @@ class Racer(Base):
     temperament: Mapped[str] = mapped_column(String, default="Quirky")
     mood: Mapped[int] = mapped_column(Integer, default=3)
     injuries: Mapped[str] = mapped_column(String, default="")
+    injury_races_remaining: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Race(Base):

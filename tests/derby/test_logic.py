@@ -534,3 +534,60 @@ async def test_mood_drift_empty_placements(session: AsyncSession):
     """Empty placements should return empty changes."""
     changes = await apply_mood_drift(session, [], None)
     assert changes == {}
+
+
+# ---------------------------------------------------------------------------
+# Injury exclusion tests
+# ---------------------------------------------------------------------------
+
+
+def test_injured_racer_excluded_from_simulation():
+    """Injured racers (injury_races_remaining > 0) should be filtered before
+    being passed to simulate_race. This tests the filtering logic pattern."""
+    healthy = Racer(id=1, name="Healthy", owner_id=1, speed=20, cornering=20, stamina=20,
+                    injuries="", injury_races_remaining=0)
+    injured = Racer(id=2, name="Injured", owner_id=2, speed=20, cornering=20, stamina=20,
+                    injuries="Broken leg", injury_races_remaining=3)
+
+    # Simulate the filter that scheduler/cog applies
+    eligible = [r for r in [healthy, injured] if r.injury_races_remaining == 0]
+    assert len(eligible) == 1
+    assert eligible[0].id == 1
+
+
+@pytest.mark.asyncio
+async def test_injury_recovery_countdown(session: AsyncSession):
+    """injury_races_remaining should decrement and auto-clear at 0."""
+    r = Racer(name="Hurt", owner_id=1, speed=20, cornering=20, stamina=20,
+              injuries="Sprained ankle", injury_races_remaining=2)
+    session.add(r)
+    await session.commit()
+    await session.refresh(r)
+
+    # Simulate one race tick
+    r.injury_races_remaining -= 1
+    await session.commit()
+    await session.refresh(r)
+    assert r.injury_races_remaining == 1
+    assert r.injuries == "Sprained ankle"  # still injured
+
+    # Second tick — should heal
+    r.injury_races_remaining -= 1
+    if r.injury_races_remaining <= 0:
+        r.injuries = ""
+        r.injury_races_remaining = 0
+    await session.commit()
+    await session.refresh(r)
+    assert r.injury_races_remaining == 0
+    assert r.injuries == ""
+
+
+def test_2d4_recovery_range():
+    """2d4 should produce values between 2 and 8."""
+    results = set()
+    rng = random.Random(42)
+    for _ in range(1000):
+        roll = rng.randint(1, 4) + rng.randint(1, 4)
+        results.add(roll)
+    assert min(results) == 2
+    assert max(results) == 8

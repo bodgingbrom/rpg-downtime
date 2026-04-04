@@ -70,6 +70,7 @@ class DerbyScheduler:
                 "temperament": ("VARCHAR", "'Quirky'"),
                 "mood": ("INTEGER", "3"),
                 "injuries": ("VARCHAR", "''"),
+                "injury_races_remaining": ("INTEGER", "0"),
             }
             for name, (col_type, default) in racer_migrations.items():
                 if name not in racer_columns:
@@ -138,7 +139,10 @@ class DerbyScheduler:
                 return []
 
             racers_result = await session.execute(
-                select(models.Racer).where(models.Racer.retired.is_(False))
+                select(models.Racer).where(
+                    models.Racer.retired.is_(False),
+                    models.Racer.injury_races_remaining == 0,
+                )
             )
             racers = racers_result.scalars().all()
             if not racers:
@@ -202,6 +206,7 @@ class DerbyScheduler:
             mood_changes = await logic.apply_mood_drift(
                 session, result.placements, participants
             )
+            healed = await self._tick_injury_recovery(session, guild_id)
             retirements = await self._apply_retirements(session, participants)
             await session.commit()
         names = result.racer_names
@@ -238,6 +243,8 @@ class DerbyScheduler:
         await self._dm_payouts(bets, race_id, winner_id, names)
         if retirements:
             await self._announce_retirements(guild_id, retirements)
+        if healed:
+            await self._announce_healed(guild_id, healed)
         self.bot.logger.info(
             "Race finished",
             extra={"guild_id": guild_id, "race_id": race_id},
@@ -477,6 +484,46 @@ class DerbyScheduler:
                 await channel.send(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
                 continue
+
+    async def _tick_injury_recovery(
+        self, session: AsyncSession, guild_id: int
+    ) -> list[models.Racer]:
+        """Decrement injury counters for all injured racers and auto-heal at 0."""
+        result = await session.execute(
+            select(models.Racer).where(
+                models.Racer.retired.is_(False),
+                models.Racer.injury_races_remaining > 0,
+            )
+        )
+        injured = result.scalars().all()
+        healed: list[models.Racer] = []
+        for racer in injured:
+            racer.injury_races_remaining -= 1
+            if racer.injury_races_remaining <= 0:
+                racer.injuries = ""
+                racer.injury_races_remaining = 0
+                healed.append(racer)
+        return healed
+
+    async def _announce_healed(
+        self, guild_id: int, healed: list[models.Racer]
+    ) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        channel = self._get_channel(guild)
+        if channel is None:
+            return
+        names = ", ".join(f"**{r.name}**" for r in healed)
+        embed = discord.Embed(
+            title="\U0001f489 Racers Recovered!",
+            description=f"{names} {'has' if len(healed) == 1 else 'have'} recovered from injuries and rejoined the roster!",
+            color=0x2ECC71,
+        )
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            return
 
     async def _countdown(self, guild_id: int) -> None:
         guild = self.bot.get_guild(guild_id)
