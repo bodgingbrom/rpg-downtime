@@ -249,7 +249,8 @@ async def test_race_force_start(tmp_path: Path) -> None:
         await repo.create_racer(session, name="B", owner_id=2, speed=0, cornering=0, stamina=0)
         await wallet_repo.create_wallet(session, user_id=5, balance=50)
         await repo.create_bet(
-            session, race_id=race.id, user_id=5, racer_id=racer1.id, amount=10
+            session, race_id=race.id, user_id=5, racer_id=racer1.id, amount=10,
+            payout_multiplier=3.5,
         )
 
     await cog.race_force_start(ctx, race_id=race.id)
@@ -271,8 +272,8 @@ async def test_race_force_start(tmp_path: Path) -> None:
     assert posted  # results were posted
 
     # Verify payout: racer1 (speed=31) should beat racer2 (speed=0)
-    # Wallet started at 50, bet was 10, winning payout is amount*2 = 20
-    # Expected: 50 + 20 = 70 (bet was placed directly, not via race_bet, so no deduction)
+    # Wallet started at 50, bet was 10 at 3.5x = 35 payout
+    # Expected: 50 + 35 = 85 (bet was placed directly, not via race_bet, so no deduction)
     async with sessionmaker() as session:
         wallet = await wallet_repo.get_wallet(session, 5)
         bets = (
@@ -280,7 +281,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
                 select(models.Bet).where(models.Bet.race_id == race.id)
             )
         ).scalars().all()
-    assert wallet.balance == 70, f"Expected 70, got {wallet.balance}"
+    assert wallet.balance == 85, f"Expected 85, got {wallet.balance}"
     assert bets == [], "Bets should be deleted after resolve_payouts"
 
 

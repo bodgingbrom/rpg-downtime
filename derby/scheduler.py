@@ -86,6 +86,16 @@ class DerbyScheduler:
                 await conn.execute(
                     text("ALTER TABLE races ADD COLUMN winner_id INTEGER DEFAULT NULL")
                 )
+
+            bet_columns = await conn.run_sync(
+                lambda c: get_table_columns(c, "bets")
+            )
+            if "payout_multiplier" not in bet_columns:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE bets ADD COLUMN payout_multiplier FLOAT DEFAULT 2.0"
+                    )
+                )
         self._initialized = True
 
     async def _run(self) -> None:
@@ -297,9 +307,11 @@ class DerbyScheduler:
                 continue
             racer_name = names.get(bet.racer_id, f"Racer {bet.racer_id}")
             if bet.racer_id == winner_id:
+                payout = int(bet.amount * bet.payout_multiplier)
                 msg = (
-                    f"You won {bet.amount * 2} coins betting on "
-                    f"**{racer_name}** in race {race_id}!"
+                    f"You won {payout} coins betting on "
+                    f"**{racer_name}** in race {race_id}! "
+                    f"({bet.payout_multiplier:.1f}x odds)"
                 )
             else:
                 msg = (

@@ -153,10 +153,15 @@ class Derby(commands.Cog, name="derby"):
                     user_id=context.author.id,
                     racer_id=racer,
                     amount=amount,
+                    payout_multiplier=multiplier,
                 )
             else:
                 await repo.update_bet(
-                    session, existing_bet.id, racer_id=racer, amount=amount
+                    session,
+                    existing_bet.id,
+                    racer_id=racer,
+                    amount=amount,
+                    payout_multiplier=multiplier,
                 )
         if old_name is not None:
             await context.send(

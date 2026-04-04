@@ -189,7 +189,7 @@ async def get_race_history(
                 select(Bet).where(Bet.race_id == race.id, Bet.racer_id == winner)
             )
             bets = bet_rows.scalars().all()
-            payout = sum(b.amount * 2 for b in bets)
+            payout = sum(int(b.amount * b.payout_multiplier) for b in bets)
         else:
             payout = 0
         history.append((race, winner, payout))

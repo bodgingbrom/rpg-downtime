@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db_base import Base
@@ -41,6 +41,7 @@ class Bet(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     racer_id: Mapped[int] = mapped_column(ForeignKey("racers.id"), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    payout_multiplier: Mapped[float] = mapped_column(Float, default=2.0)
 
 
 class CourseSegment(Base):

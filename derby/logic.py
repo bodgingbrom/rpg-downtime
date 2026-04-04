@@ -426,8 +426,9 @@ async def resolve_payouts(
 ) -> None:
     """Resolve all bets for ``race_id`` and update wallets.
 
-    Pays out double the bet amount to bets placed on ``winner_id``. All
-    processed bets are removed from the database.
+    Winning bets pay ``amount * payout_multiplier`` (the multiplier stored
+    at bet time based on the racer's odds). All processed bets are removed
+    from the database.
     """
 
     bet_rows = await session.execute(
@@ -438,8 +439,6 @@ async def resolve_payouts(
     if not bets:
         return
 
-    winning_racer = winner_id
-
     for bet in bets:
         wallet = await session.get(Wallet, bet.user_id)
         if wallet is None:
@@ -448,8 +447,9 @@ async def resolve_payouts(
             await session.commit()
             await session.refresh(wallet)
 
-        if bet.racer_id == winning_racer:
-            wallet.balance += bet.amount * 2
+        if bet.racer_id == winner_id:
+            payout = int(bet.amount * bet.payout_multiplier)
+            wallet.balance += payout
         await session.delete(bet)
 
     await session.commit()
