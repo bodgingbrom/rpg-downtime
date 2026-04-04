@@ -51,6 +51,7 @@ async def create_racer(
     *,
     name: str,
     owner_id: int,
+    guild_id: int = 0,
     retired: bool = False,
     speed: int = 0,
     cornering: int = 0,
@@ -66,6 +67,7 @@ async def create_racer(
         Racer,
         name=name,
         owner_id=owner_id,
+        guild_id=guild_id,
         retired=retired,
         speed=speed,
         cornering=cornering,
@@ -88,6 +90,24 @@ async def update_racer(session: AsyncSession, racer_id: int, **kwargs) -> Racer 
 
 async def delete_racer(session: AsyncSession, racer_id: int) -> None:
     await _delete(session, Racer, racer_id)
+
+
+async def get_guild_racers(
+    session: AsyncSession, guild_id: int, *, eligible_only: bool = True
+) -> list[Racer]:
+    """Return racers belonging to a guild.
+
+    When ``eligible_only`` is True (default), only non-retired racers
+    with no active injuries are returned.
+    """
+    stmt = select(Racer).where(Racer.guild_id == guild_id)
+    if eligible_only:
+        stmt = stmt.where(
+            Racer.retired.is_(False),
+            Racer.injury_races_remaining == 0,
+        )
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
 
 # Race

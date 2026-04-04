@@ -95,13 +95,21 @@ async def test_resolve_payouts(session: AsyncSession):
             Bet(race_id=race.id, user_id=2, racer_id=r2.id, amount=20),
         ]
     )
-    session.add(Wallet(user_id=1, balance=50))
+    session.add(Wallet(user_id=1, guild_id=1, balance=50))
     await session.commit()
 
-    await resolve_payouts(session, race.id, winner_id=r1.id)
+    await resolve_payouts(session, race.id, winner_id=r1.id, guild_id=1)
 
-    w1 = await session.get(Wallet, 1)
-    w2 = await session.get(Wallet, 2)
+    w1 = (
+        await session.execute(
+            select(Wallet).where(Wallet.user_id == 1, Wallet.guild_id == 1)
+        )
+    ).scalars().first()
+    w2 = (
+        await session.execute(
+            select(Wallet).where(Wallet.user_id == 2, Wallet.guild_id == 1)
+        )
+    ).scalars().first()
     assert w1.balance == 70
     assert w2.balance == 0
 

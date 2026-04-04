@@ -13,6 +13,9 @@ from derby.scheduler import DerbyScheduler
 from economy import repositories as wallet_repo
 
 
+GUILD_ID = 1
+
+
 class DummyChannel:
     def __init__(self, name: str = "general") -> None:
         self.name = name
@@ -73,7 +76,7 @@ async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
         commentary_delay=0,
     )
     bot = DummyBot(settings)
-    guild = DummyGuild(1)
+    guild = DummyGuild(GUILD_ID)
     bot.guilds.append(guild)
 
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
@@ -87,8 +90,12 @@ async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
 
     # Add racers and create a pending race with entries
     async with scheduler.sessionmaker() as session:
-        r1 = await repo.create_racer(session, name="A", owner_id=1)
-        r2 = await repo.create_racer(session, name="B", owner_id=2)
+        r1 = await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID
+        )
+        r2 = await repo.create_racer(
+            session, name="B", owner_id=2, guild_id=GUILD_ID
+        )
         race = await repo.create_race(session, guild_id=guild.id)
         await repo.create_race_entries(session, race.id, [r1.id, r2.id])
 
@@ -118,7 +125,7 @@ async def test_retirement(tmp_path: Path) -> None:
         commentary_delay=0,
     )
     bot = DummyBot(settings)
-    guild = DummyGuild(1)
+    guild = DummyGuild(GUILD_ID)
     bot.guilds.append(guild)
 
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
@@ -126,10 +133,12 @@ async def test_retirement(tmp_path: Path) -> None:
     async with scheduler.sessionmaker() as session:
         # Both racers are at the end of their career — one more race retires them
         r1 = await repo.create_racer(
-            session, name="A", owner_id=1, career_length=5, peak_end=3
+            session, name="A", owner_id=1, guild_id=GUILD_ID,
+            career_length=5, peak_end=3,
         )
         r2 = await repo.create_racer(
-            session, name="B", owner_id=2, career_length=5, peak_end=3
+            session, name="B", owner_id=2, guild_id=GUILD_ID,
+            career_length=5, peak_end=3,
         )
         await repo.update_racer(session, r1.id, races_completed=4)
         await repo.update_racer(session, r2.id, races_completed=4)
@@ -139,7 +148,11 @@ async def test_retirement(tmp_path: Path) -> None:
     await scheduler.tick()
 
     async with scheduler.sessionmaker() as session:
-        racers = (await session.execute(select(Racer))).scalars().all()
+        racers = (
+            await session.execute(
+                select(Racer).where(Racer.guild_id == GUILD_ID)
+            )
+        ).scalars().all()
         retired = [r for r in racers if r.retired]
         active = [r for r in racers if not r.retired]
         assert len(retired) == 2  # both original racers retired
@@ -158,7 +171,7 @@ async def test_stream_commentary(tmp_path: Path) -> None:
         commentary_delay=0,
     )
     bot = DummyBot(settings)
-    guild = DummyGuild(1)
+    guild = DummyGuild(GUILD_ID)
     bot.guilds.append(guild)
 
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
@@ -183,7 +196,7 @@ async def test_commentary_stops_when_cancelled(tmp_path: Path) -> None:
         commentary_delay=0,
     )
     bot = DummyBot(settings)
-    guild = DummyGuild(1)
+    guild = DummyGuild(GUILD_ID)
     bot.guilds.append(guild)
 
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
@@ -217,7 +230,7 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
         commentary_delay=0,
     )
     bot = DummyBot(settings)
-    guild = DummyGuild(1)
+    guild = DummyGuild(GUILD_ID)
     bot.guilds.append(guild)
 
     user1 = DummyUser(10)
@@ -229,11 +242,19 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
     await scheduler._init_db()
     async with scheduler.sessionmaker() as session:
         race = await repo.create_race(session, guild_id=guild.id)
-        r1 = await repo.create_racer(session, name="A", owner_id=1)
-        r2 = await repo.create_racer(session, name="B", owner_id=2)
+        r1 = await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID
+        )
+        r2 = await repo.create_racer(
+            session, name="B", owner_id=2, guild_id=GUILD_ID
+        )
         await repo.create_race_entries(session, race.id, [r1.id, r2.id])
-        await wallet_repo.create_wallet(session, user_id=user1.id, balance=100)
-        await wallet_repo.create_wallet(session, user_id=user2.id, balance=100)
+        await wallet_repo.create_wallet(
+            session, user_id=user1.id, guild_id=GUILD_ID, balance=100
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=user2.id, guild_id=GUILD_ID, balance=100
+        )
         await repo.create_bet(
             session, race_id=race.id, user_id=user1.id, racer_id=r1.id, amount=10
         )
@@ -262,7 +283,7 @@ async def test_race_uses_max_six_racers(
         commentary_delay=0,
     )
     bot = DummyBot(settings)
-    guild = DummyGuild(1)
+    guild = DummyGuild(GUILD_ID)
     bot.guilds.append(guild)
 
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
@@ -270,7 +291,9 @@ async def test_race_uses_max_six_racers(
     async with scheduler.sessionmaker() as session:
         racer_ids = []
         for i in range(10):
-            r = await repo.create_racer(session, name=f"R{i}", owner_id=i)
+            r = await repo.create_racer(
+                session, name=f"R{i}", owner_id=i, guild_id=GUILD_ID
+            )
             racer_ids.append(r.id)
         race = await repo.create_race(session, guild_id=guild.id)
         # Assign all 10 to the race so we can check the cap on _create_next_race
@@ -318,7 +341,7 @@ async def test_config_channel_used(tmp_path: Path) -> None:
         channel_name="special",
     )
     bot = DummyBot(settings)
-    guild = DummyGuild(1)
+    guild = DummyGuild(GUILD_ID)
     special = DummyChannel("special")
     guild.text_channels.append(special)
     bot.guilds.append(guild)
@@ -347,14 +370,18 @@ async def test_ensure_pending_races_creates_race(tmp_path: Path) -> None:
         commentary_delay=0,
     )
     bot = DummyBot(settings)
-    guild = DummyGuild(1)
+    guild = DummyGuild(GUILD_ID)
     bot.guilds.append(guild)
 
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
     await scheduler._init_db()
     async with scheduler.sessionmaker() as session:
-        await repo.create_racer(session, name="A", owner_id=1)
-        await repo.create_racer(session, name="B", owner_id=2)
+        await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID
+        )
+        await repo.create_racer(
+            session, name="B", owner_id=2, guild_id=GUILD_ID
+        )
 
     await scheduler._ensure_pending_races()
 
@@ -364,3 +391,55 @@ async def test_ensure_pending_races_creates_race(tmp_path: Path) -> None:
         assert not races[0].finished
         entries = await repo.get_race_entries(session, races[0].id)
         assert len(entries) == 2
+
+
+@pytest.mark.asyncio
+async def test_guild_isolation(tmp_path: Path) -> None:
+    """Racers from one guild should not appear in another guild's races."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+    )
+    bot = DummyBot(settings)
+    guild_a = DummyGuild(100)
+    guild_b = DummyGuild(200)
+    bot.guilds.extend([guild_a, guild_b])
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        # Create racers in guild A only
+        await repo.create_racer(
+            session, name="A1", owner_id=1, guild_id=100
+        )
+        await repo.create_racer(
+            session, name="A2", owner_id=2, guild_id=100
+        )
+        # Create racers in guild B only
+        await repo.create_racer(
+            session, name="B1", owner_id=3, guild_id=200
+        )
+        await repo.create_racer(
+            session, name="B2", owner_id=4, guild_id=200
+        )
+
+    await scheduler._ensure_pending_races()
+
+    async with scheduler.sessionmaker() as session:
+        # Each guild should have its own pending race
+        races = (await session.execute(select(Race))).scalars().all()
+        assert len(races) == 2
+
+        for race in races:
+            participants = await repo.get_race_participants(session, race.id)
+            participant_guilds = set()
+            for p in participants:
+                racer = await repo.get_racer(session, p.id)
+                participant_guilds.add(racer.guild_id)
+            # All participants belong to the race's guild
+            assert participant_guilds == {race.guild_id}

@@ -635,7 +635,7 @@ async def apply_mood_drift(
 
 
 async def resolve_payouts(
-    session: AsyncSession, race_id: int, winner_id: int
+    session: AsyncSession, race_id: int, winner_id: int, guild_id: int = 0
 ) -> None:
     """Resolve all bets for ``race_id`` and update wallets.
 
@@ -653,9 +653,16 @@ async def resolve_payouts(
         return
 
     for bet in bets:
-        wallet = await session.get(Wallet, bet.user_id)
+        wallet = (
+            await session.execute(
+                select(Wallet).where(
+                    Wallet.user_id == bet.user_id,
+                    Wallet.guild_id == guild_id,
+                )
+            )
+        ).scalars().first()
         if wallet is None:
-            wallet = Wallet(user_id=bet.user_id, balance=0)
+            wallet = Wallet(user_id=bet.user_id, guild_id=guild_id, balance=0)
             session.add(wallet)
             await session.commit()
             await session.refresh(wallet)

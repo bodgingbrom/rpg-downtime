@@ -29,10 +29,14 @@ async def racer_autocomplete(
     """Autocomplete callback that suggests racers in the next race."""
     sessionmaker = interaction.client.scheduler.sessionmaker
     active = interaction.client.scheduler.active_races
+    guild_id = interaction.guild_id or 0
     async with sessionmaker() as session:
         race_result = await session.execute(
             select(models.Race)
-            .where(models.Race.finished.is_(False))
+            .where(
+                models.Race.guild_id == guild_id,
+                models.Race.finished.is_(False),
+            )
             .order_by(models.Race.id)
         )
         races = race_result.scalars().all()
@@ -64,10 +68,14 @@ class Derby(commands.Cog, name="derby"):
     @race.command(name="upcoming", description="Show upcoming race odds")
     async def race_upcoming(self, context: Context) -> None:
         await context.defer()
+        guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             race_result = await session.execute(
                 select(models.Race)
-                .where(models.Race.finished.is_(False))
+                .where(
+                    models.Race.guild_id == guild_id,
+                    models.Race.finished.is_(False),
+                )
                 .order_by(models.Race.id)
             )
             races = race_result.scalars().all()
@@ -111,10 +119,14 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.autocomplete(racer=racer_autocomplete)
     async def race_bet(self, context: Context, racer: int, amount: int) -> None:
         await context.defer()
+        guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             race_result = await session.execute(
                 select(models.Race)
-                .where(models.Race.finished.is_(False))
+                .where(
+                    models.Race.guild_id == guild_id,
+                    models.Race.finished.is_(False),
+                )
                 .order_by(models.Race.id)
             )
             races = race_result.scalars().all()
@@ -139,11 +151,14 @@ class Derby(commands.Cog, name="derby"):
         multiplier = odds.get(racer, 0)
         payout = int(amount * multiplier)
         async with self.bot.scheduler.sessionmaker() as session:
-            wallet = await wallet_repo.get_wallet(session, context.author.id)
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
             if wallet is None:
                 wallet = await wallet_repo.create_wallet(
                     session,
                     user_id=context.author.id,
+                    guild_id=guild_id,
                     balance=self.bot.settings.default_wallet,
                 )
             bet_result = await session.execute(
@@ -357,10 +372,14 @@ class Derby(commands.Cog, name="derby"):
         temperament: str | None = None,
     ) -> None:
         await context.defer()
+        guild_id = context.guild.id if context.guild else 0
         if name is None:
             async with self.bot.scheduler.sessionmaker() as session:
                 result = await session.execute(
-                    select(models.Racer.name).where(models.Racer.retired.is_(False))
+                    select(models.Racer.name).where(
+                        models.Racer.guild_id == guild_id,
+                        models.Racer.retired.is_(False),
+                    )
                 )
                 taken = {row[0] for row in result.all()}
             name = logic.pick_name(taken)
@@ -390,6 +409,7 @@ class Derby(commands.Cog, name="derby"):
                 session,
                 name=name,
                 owner_id=owner.id,
+                guild_id=guild_id,
                 career_length=career_length,
                 peak_end=int(career_length * 0.6),
                 **stats,
@@ -510,10 +530,14 @@ class Derby(commands.Cog, name="derby"):
     @checks.has_role("Race Admin")
     async def cancel_race(self, context: Context) -> None:
         await context.defer()
+        guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             result = await session.execute(
                 select(models.Race)
-                .where(models.Race.finished.is_(False))
+                .where(
+                    models.Race.guild_id == guild_id,
+                    models.Race.finished.is_(False),
+                )
                 .order_by(models.Race.id)
             )
             race = result.scalars().first()
@@ -605,11 +629,15 @@ class Derby(commands.Cog, name="derby"):
         self, context: Context, race_id: int | None = None
     ) -> None:
         await context.defer()
+        guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             if race_id is None:
                 result = await session.execute(
                     select(models.Race)
-                    .where(models.Race.finished.is_(False))
+                    .where(
+                        models.Race.guild_id == guild_id,
+                        models.Race.finished.is_(False),
+                    )
                     .order_by(models.Race.id)
                 )
                 race = result.scalars().first()
@@ -628,14 +656,8 @@ class Derby(commands.Cog, name="derby"):
             self.bot.scheduler.active_races.add(race.id)
             participants = await repo.get_race_participants(session, race.id)
             if not participants:
-                # Legacy race without entries — fall back to random pick
-                racers_result = await session.execute(
-                    select(models.Racer).where(
-                        models.Racer.retired.is_(False),
-                        models.Racer.injury_races_remaining == 0,
-                    )
-                )
-                participants = racers_result.scalars().all()
+                # Legacy race without entries — fall back to guild racers
+                participants = await repo.get_guild_racers(session, guild_id)
             if len(participants) < 2:
                 self.bot.scheduler.active_races.discard(race.id)
                 await context.send("Not enough racers available", ephemeral=True)
@@ -649,7 +671,9 @@ class Derby(commands.Cog, name="derby"):
                 session, race.id, finished=True, winner_id=winner_id
             )
             if winner_id is not None:
-                await logic.resolve_payouts(session, race.id, winner_id)
+                await logic.resolve_payouts(
+                    session, race.id, winner_id, guild_id=guild_id
+                )
             await logic.apply_mood_drift(
                 session, result.placements, participants
             )
@@ -664,6 +688,7 @@ class Derby(commands.Cog, name="derby"):
                         session,
                         name=f"{r.name} II",
                         owner_id=r.owner_id,
+                        guild_id=guild_id,
                         speed=random.randint(0, 31),
                         cornering=random.randint(0, 31),
                         stamina=random.randint(0, 31),

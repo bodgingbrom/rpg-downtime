@@ -19,6 +19,9 @@ from economy import repositories as wallet_repo
 import economy.models  # noqa: F401
 
 
+GUILD_ID = 1
+
+
 class DummyChannel:
     """Minimal channel stub that records sent messages."""
 
@@ -30,7 +33,7 @@ class DummyChannel:
 
 
 class DummyGuild:
-    def __init__(self, id: int = 1) -> None:
+    def __init__(self, id: int = GUILD_ID) -> None:
         self.id = id
 
 
@@ -76,9 +79,13 @@ async def test_race_upcoming(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
-        race = await repo.create_race(session, guild_id=1)
-        r1 = await repo.create_racer(session, name="A", owner_id=1)
-        r2 = await repo.create_racer(session, name="B", owner_id=2)
+        race = await repo.create_race(session, guild_id=GUILD_ID)
+        r1 = await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID
+        )
+        r2 = await repo.create_racer(
+            session, name="B", owner_id=2, guild_id=GUILD_ID
+        )
         await repo.create_race_entries(session, race.id, [r1.id, r2.id])
 
     await cog.race_upcoming(ctx)
@@ -110,15 +117,19 @@ async def test_race_bet(tmp_path: Path) -> None:
     ctx.author = types.SimpleNamespace(id=5)
 
     async with sessionmaker() as session:
-        race = await repo.create_race(session, guild_id=1)
-        racer1 = await repo.create_racer(session, name="A", owner_id=1)
-        racer2 = await repo.create_racer(session, name="B", owner_id=2)
+        race = await repo.create_race(session, guild_id=GUILD_ID)
+        racer1 = await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID
+        )
+        racer2 = await repo.create_racer(
+            session, name="B", owner_id=2, guild_id=GUILD_ID
+        )
         await repo.create_race_entries(session, race.id, [racer1.id, racer2.id])
 
     await cog.race_bet(ctx, racer=racer1.id, amount=20)
 
     async with sessionmaker() as session:
-        wallet = await wallet_repo.get_wallet(session, ctx.author.id)
+        wallet = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
         bet = (await session.execute(select(models.Bet))).scalars().first()
 
     assert wallet.balance == 80
@@ -127,7 +138,7 @@ async def test_race_bet(tmp_path: Path) -> None:
     await cog.race_bet(ctx, racer=racer2.id, amount=30)
 
     async with sessionmaker() as session:
-        wallet = await wallet_repo.get_wallet(session, ctx.author.id)
+        wallet = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
         bet = (await session.execute(select(models.Bet))).scalars().first()
 
     assert wallet.balance == 70
@@ -172,7 +183,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
     await cog.wallet(ctx)
 
     async with sessionmaker() as session:
-        wallet = await wallet_repo.get_wallet(session, ctx.author.id)
+        wallet = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
 
     assert wallet.balance == bot.settings.default_wallet
     assert ctx.sent
@@ -200,7 +211,9 @@ async def test_racer_delete(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
-        racer = await repo.create_racer(session, name="A", owner_id=1)
+        racer = await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID
+        )
 
     await cog.racer_delete(ctx, racer=racer.id)
 
@@ -244,13 +257,19 @@ async def test_race_force_start(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
-        race = await repo.create_race(session, guild_id=1)
+        race = await repo.create_race(session, guild_id=GUILD_ID)
         racer1 = await repo.create_racer(
-            session, name="A", owner_id=1, speed=31, cornering=31, stamina=31
+            session, name="A", owner_id=1, guild_id=GUILD_ID,
+            speed=31, cornering=31, stamina=31,
         )
-        racer2 = await repo.create_racer(session, name="B", owner_id=2, speed=0, cornering=0, stamina=0)
+        racer2 = await repo.create_racer(
+            session, name="B", owner_id=2, guild_id=GUILD_ID,
+            speed=0, cornering=0, stamina=0,
+        )
         await repo.create_race_entries(session, race.id, [racer1.id, racer2.id])
-        await wallet_repo.create_wallet(session, user_id=5, balance=50)
+        await wallet_repo.create_wallet(
+            session, user_id=5, guild_id=GUILD_ID, balance=50
+        )
         await repo.create_bet(
             session, race_id=race.id, user_id=5, racer_id=racer1.id, amount=10,
             payout_multiplier=3.5,
@@ -260,7 +279,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
 
     async with sessionmaker() as session:
         finished = await repo.get_race(session, race.id)
-        wallet = await wallet_repo.get_wallet(session, 5)
+        wallet = await wallet_repo.get_wallet(session, 5, GUILD_ID)
 
     assert finished.finished
     assert finished.winner_id is not None
@@ -278,7 +297,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
     # Wallet started at 50, bet was 10 at 3.5x = 35 payout
     # Expected: 50 + 35 = 85 (bet was placed directly, not via race_bet, so no deduction)
     async with sessionmaker() as session:
-        wallet = await wallet_repo.get_wallet(session, 5)
+        wallet = await wallet_repo.get_wallet(session, 5, GUILD_ID)
         bets = (
             await session.execute(
                 select(models.Bet).where(models.Bet.race_id == race.id)
@@ -308,8 +327,10 @@ async def test_debug_race(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
-        race = await repo.create_race(session, guild_id=1)
-        racer = await repo.create_racer(session, name="A", owner_id=1)
+        race = await repo.create_race(session, guild_id=GUILD_ID)
+        racer = await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID
+        )
         await repo.create_bet(
             session, race_id=race.id, user_id=5, racer_id=racer.id, amount=10
         )
@@ -338,12 +359,14 @@ async def test_race_history(tmp_path: Path) -> None:
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
-    ctx.guild = types.SimpleNamespace(id=1)
+    ctx.guild = types.SimpleNamespace(id=GUILD_ID)
 
     async with sessionmaker() as session:
-        racer = await repo.create_racer(session, name="A", owner_id=1)
+        racer = await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID
+        )
         race = await repo.create_race(
-            session, guild_id=1, finished=True, winner_id=racer.id
+            session, guild_id=GUILD_ID, finished=True, winner_id=racer.id
         )
         await repo.create_bet(
             session, race_id=race.id, user_id=5, racer_id=racer.id, amount=15
@@ -405,6 +428,7 @@ async def test_add_racer_with_stats(tmp_path: Path) -> None:
 
     assert racer.speed == 20 and racer.cornering == 21
     assert racer.stamina == 22 and racer.temperament == "Agile"
+    assert racer.guild_id == GUILD_ID
 
 
 @pytest.mark.asyncio
@@ -444,6 +468,7 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
     ]
     assert racer.career_length == 30
     assert racer.peak_end == 18  # int(30 * 0.6)
+    assert racer.guild_id == GUILD_ID
 
 
 @pytest.mark.asyncio
@@ -530,7 +555,9 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
-        racer = await repo.create_racer(session, name="Edit", owner_id=1)
+        racer = await repo.create_racer(
+            session, name="Edit", owner_id=1, guild_id=GUILD_ID
+        )
 
     await cog.edit_racer(ctx, racer=racer.id, speed=15)
 
@@ -564,6 +591,7 @@ async def test_race_info_bands(tmp_path: Path) -> None:
             session,
             name="Info",
             owner_id=1,
+            guild_id=GUILD_ID,
             speed=31,
             cornering=30,
             stamina=27,
@@ -597,7 +625,9 @@ async def test_race_info_mood_label(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
-        racer = await repo.create_racer(session, name="Moody", owner_id=1, mood=5)
+        racer = await repo.create_racer(
+            session, name="Moody", owner_id=1, guild_id=GUILD_ID, mood=5
+        )
 
     await cog.race_info(ctx, racer=racer.id)
 
