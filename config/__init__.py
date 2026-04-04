@@ -25,4 +25,21 @@ class Settings(BaseSettings):
         return cls(**data)
 
 
-__all__ = ["Settings"]
+def resolve_guild_setting(
+    guild_settings: Any | None,
+    global_settings: Settings,
+    key: str,
+) -> Any:
+    """Return a per-guild override if set, otherwise the global default.
+
+    ``guild_settings`` is a :class:`GuildSettings` row (or ``None``).
+    Nullable columns that are ``None`` mean "use the global default".
+    """
+    if guild_settings is not None:
+        val = getattr(guild_settings, key, None)
+        if val is not None:
+            return val
+    return getattr(global_settings, key)
+
+
+__all__ = ["Settings", "resolve_guild_setting"]

@@ -11,6 +11,7 @@ from discord.ext import tasks
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from config import resolve_guild_setting
 from db_base import Base
 from . import commentary, logic, models
 from . import repositories as repo
@@ -39,9 +40,27 @@ class DerbyScheduler:
         self.commentaries: dict[int, tasks.Loop] = {}
         self.active_races: set[int] = set()  # race IDs currently in progress
 
-    def _get_channel(self, guild: discord.Guild) -> discord.abc.Messageable | None:
+    def _resolve(
+        self,
+        key: str,
+        guild_settings: models.GuildSettings | None = None,
+    ) -> Any:
+        """Return a guild override for *key* if set, else the global default."""
+        return resolve_guild_setting(guild_settings, self.bot.settings, key)
+
+    async def _load_guild_settings(
+        self, guild_id: int
+    ) -> models.GuildSettings | None:
+        async with self.sessionmaker() as session:
+            return await repo.get_guild_settings(session, guild_id)
+
+    def _get_channel(
+        self,
+        guild: discord.Guild,
+        guild_settings: models.GuildSettings | None = None,
+    ) -> discord.abc.Messageable | None:
         """Return the configured channel for the guild or a sensible default."""
-        name = self.bot.settings.channel_name
+        name = self._resolve("channel_name", guild_settings)
         if name:
             for channel in guild.text_channels:
                 if getattr(channel, "name", None) == name:
@@ -100,6 +119,18 @@ class DerbyScheduler:
                 has_guild = await conn.run_sync(_wallet_has_guild_id)
                 if not has_guild:
                     await conn.execute(text("DROP TABLE wallets"))
+
+            # Rebuild guild_settings if it has the old schema (race_frequency
+            # column from the unused initial model).
+            if "guild_settings" in tables:
+
+                def _gs_has_channel_name(sync_conn: Any) -> bool:
+                    insp = inspect(sync_conn)
+                    cols = {c["name"] for c in insp.get_columns("guild_settings")}
+                    return "channel_name" in cols
+
+                if not await conn.run_sync(_gs_has_channel_name):
+                    await conn.execute(text("DROP TABLE guild_settings"))
 
             await conn.run_sync(Base.metadata.create_all)
 
@@ -258,10 +289,12 @@ class DerbyScheduler:
         if len(racers) < 2:
             return None
 
+        gs = await self._load_guild_settings(guild_id)
+        max_racers = self._resolve("max_racers_per_race", gs)
         async with self.sessionmaker() as session:
             race = await repo.create_race(session, guild_id=guild_id)
             participants = random.sample(
-                racers, min(self.bot.settings.max_racers_per_race, len(racers))
+                racers, min(max_racers, len(racers))
             )
             await repo.create_race_entries(
                 session, race.id, [r.id for r in participants]
@@ -301,12 +334,14 @@ class DerbyScheduler:
 
     async def _backfill_race_entries(self, race: models.Race) -> None:
         """Add participants to a legacy pending race that has none."""
+        gs = await self._load_guild_settings(race.guild_id)
+        max_racers = self._resolve("max_racers_per_race", gs)
         async with self.sessionmaker() as session:
             racers = await repo.get_guild_racers(session, race.guild_id)
             if len(racers) < 2:
                 return
             participants = random.sample(
-                racers, min(self.bot.settings.max_racers_per_race, len(racers))
+                racers, min(max_racers, len(racers))
             )
             await repo.create_race_entries(
                 session, race.id, [r.id for r in participants]
@@ -326,12 +361,14 @@ class DerbyScheduler:
     async def _run_race_inner(
         self, race_id: int, guild_id: int, participants: list[models.Racer]
     ) -> None:
+        gs = await self._load_guild_settings(guild_id)
         race_map = logic.pick_map()
         await self._announce_race_start(
-            guild_id, race_id, participants, race_map=race_map
+            guild_id, race_id, participants, race_map=race_map,
+            guild_settings=gs,
         )
-        await asyncio.sleep(self.bot.settings.bet_window)
-        await self._countdown(guild_id)
+        await asyncio.sleep(self._resolve("bet_window", gs))
+        await self._countdown(guild_id, guild_settings=gs)
         self.bot.logger.info(
             "Race starting",
             extra={"guild_id": guild_id, "race_id": race_id},
@@ -373,7 +410,7 @@ class DerbyScheduler:
         # Show a "getting ready" message while LLM generates commentary
         guild = self.bot.get_guild(guild_id)
         if guild:
-            channel = self._get_channel(guild)
+            channel = self._get_channel(guild, gs)
             if channel:
                 lineup = ", ".join(
                     f"**{names.get(rid, f'Racer {rid}')}**"
@@ -398,7 +435,8 @@ class DerbyScheduler:
         if log is None:
             log = commentary.build_template_commentary(result)
         await self._stream_commentary(
-            race_id, guild_id, log, delay=self.bot.settings.commentary_delay
+            race_id, guild_id, log,
+            delay=self._resolve("commentary_delay", gs),
         )
         await self._post_results(guild_id, result.placements, names)
         await self._dm_payouts(bets, race_id, winner_id, names)
@@ -570,15 +608,16 @@ class DerbyScheduler:
         race_id: int,
         racers: list[models.Racer],
         race_map: logic.RaceMap | None = None,
+        guild_settings: models.GuildSettings | None = None,
     ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return
-        channel = self._get_channel(guild)
+        channel = self._get_channel(guild, guild_settings)
         if channel is None:
             return
         odds = logic.calculate_odds(racers, [], 0.1, race_map=race_map)
-        minutes = self.bot.settings.bet_window // 60
+        minutes = self._resolve("bet_window", guild_settings) // 60
         desc = f"Race {race_id} begins in {minutes} minutes. Place your bets!"
         if race_map:
             layout = " \u2192 ".join(
@@ -708,14 +747,18 @@ class DerbyScheduler:
         except (discord.Forbidden, discord.HTTPException):
             return
 
-    async def _countdown(self, guild_id: int) -> None:
+    async def _countdown(
+        self,
+        guild_id: int,
+        guild_settings: models.GuildSettings | None = None,
+    ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
             return
-        channel = self._get_channel(guild)
+        channel = self._get_channel(guild, guild_settings)
         if channel is None:
             return
-        delay = self.bot.settings.countdown_total / 3
+        delay = self._resolve("countdown_total", guild_settings) / 3
         for num in ("3", "2", "1"):
             try:
                 await channel.send(num)

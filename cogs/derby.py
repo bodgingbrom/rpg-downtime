@@ -10,6 +10,7 @@ from discord.ext.commands import Context
 from sqlalchemy import select
 
 import checks
+from config import resolve_guild_setting
 from derby import commentary, logic, models
 from derby import repositories as repo
 from economy import repositories as wallet_repo
@@ -155,11 +156,15 @@ class Derby(commands.Cog, name="derby"):
                 session, context.author.id, guild_id
             )
             if wallet is None:
+                gs = await repo.get_guild_settings(session, guild_id)
+                default_bal = resolve_guild_setting(
+                    gs, self.bot.settings, "default_wallet"
+                )
                 wallet = await wallet_repo.create_wallet(
                     session,
                     user_id=context.author.id,
                     guild_id=guild_id,
-                    balance=self.bot.settings.default_wallet,
+                    balance=default_bal,
                 )
             bet_result = await session.execute(
                 select(models.Bet)
@@ -799,6 +804,110 @@ class Derby(commands.Cog, name="derby"):
             f"```json\n{json.dumps(data, default=str, indent=2)}\n```",
             ephemeral=True,
         )
+
+
+    # -- Guild settings commands --------------------------------------------
+
+    SETTING_KEYS = [
+        "default_wallet",
+        "retirement_threshold",
+        "bet_window",
+        "countdown_total",
+        "max_racers_per_race",
+        "commentary_delay",
+        "channel_name",
+    ]
+
+    @derby_group.group(name="settings", description="Per-guild setting overrides")
+    async def settings_group(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await self._show_settings(context)
+
+    async def _show_settings(self, context: Context) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+        embed = discord.Embed(title="Guild Settings")
+        for key in self.SETTING_KEYS:
+            guild_val = getattr(gs, key, None) if gs else None
+            global_val = getattr(self.bot.settings, key)
+            if guild_val is not None:
+                embed.add_field(
+                    name=key,
+                    value=f"**{guild_val}** (override)",
+                    inline=False,
+                )
+            else:
+                embed.add_field(
+                    name=key,
+                    value=f"{global_val} (default)",
+                    inline=False,
+                )
+        await context.send(embed=embed, ephemeral=True)
+
+    @settings_group.command(name="set", description="Override a setting for this server")
+    @checks.has_role("Race Admin")
+    @app_commands.describe(key="Setting name", value="New value (use 'reset' to clear)")
+    async def settings_set(self, context: Context, key: str, value: str) -> None:
+        await context.defer()
+        if key not in self.SETTING_KEYS:
+            await context.send(
+                f"Unknown setting `{key}`. Valid: {', '.join(self.SETTING_KEYS)}",
+                ephemeral=True,
+            )
+            return
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+            if gs is None:
+                gs = await repo.create_guild_settings(
+                    session, guild_id=guild_id
+                )
+
+            if value.lower() == "reset":
+                await repo.update_guild_settings(
+                    session, guild_id, **{key: None}
+                )
+                global_val = getattr(self.bot.settings, key)
+                await context.send(
+                    f"`{key}` reset to global default: **{global_val}**",
+                    ephemeral=True,
+                )
+                return
+
+            # Parse value to the correct type
+            try:
+                if key == "channel_name":
+                    parsed: str | int | float = value
+                elif key == "commentary_delay":
+                    parsed = float(value)
+                else:
+                    parsed = int(value)
+            except ValueError:
+                await context.send(
+                    f"Invalid value for `{key}`: expected a number.",
+                    ephemeral=True,
+                )
+                return
+
+            await repo.update_guild_settings(
+                session, guild_id, **{key: parsed}
+            )
+        await context.send(
+            f"`{key}` set to **{parsed}** for this server.", ephemeral=True
+        )
+
+    @settings_set.autocomplete("key")
+    async def settings_key_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        current_lower = current.lower()
+        return [
+            app_commands.Choice(name=k, value=k)
+            for k in self.SETTING_KEYS
+            if current_lower in k.lower()
+        ][:25]
 
 
 async def setup(bot) -> None:

@@ -246,10 +246,14 @@ async def test_race_force_start(tmp_path: Path) -> None:
     async def fake_post(guild_id, placements, names=None):
         posted.append(placements)
 
+    async def noop(*args, **kwargs):
+        pass
+
     bot.scheduler = types.SimpleNamespace(
         sessionmaker=sessionmaker,
         _stream_commentary=fake_stream,
         _post_results=fake_post,
+        _announce_injuries=noop,
         active_races=set(),
     )
     cog = derby_cog.Derby(bot)
@@ -633,3 +637,68 @@ async def test_race_info_mood_label(tmp_path: Path) -> None:
 
     embed = ctx.sent[-1]["embed"]
     assert embed.fields[4].value == "Great"
+
+
+@pytest.mark.asyncio
+async def test_guild_settings_override_default_wallet(tmp_path: Path) -> None:
+    """Per-guild default_wallet override should apply when creating wallets."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = economy_cog.Economy(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+    ctx.author = types.SimpleNamespace(id=42)
+
+    # Set a per-guild override for default_wallet
+    async with sessionmaker() as session:
+        await repo.create_guild_settings(
+            session, guild_id=GUILD_ID, default_wallet=500
+        )
+
+    await cog.wallet(ctx)
+
+    async with sessionmaker() as session:
+        wallet = await wallet_repo.get_wallet(session, 42, GUILD_ID)
+
+    assert wallet.balance == 500  # guild override, not global 100
+
+
+@pytest.mark.asyncio
+async def test_settings_show(tmp_path: Path) -> None:
+    """The settings group should display current values."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+
+    await cog._show_settings(ctx)
+
+    assert ctx.sent
+    embed = ctx.sent[0]["embed"]
+    assert embed.title == "Guild Settings"
+    field_names = [f.name for f in embed.fields]
+    assert "default_wallet" in field_names
+    assert "channel_name" in field_names

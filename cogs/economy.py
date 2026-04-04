@@ -4,6 +4,8 @@ import discord
 from discord.ext import commands
 from discord.ext.commands import Context
 
+from config import resolve_guild_setting
+from derby import repositories as repo
 from economy import repositories as wallet_repo
 
 
@@ -21,11 +23,15 @@ class Economy(commands.Cog, name="economy"):
             )
             was_new = wallet is None
             if wallet is None:
+                gs = await repo.get_guild_settings(session, guild_id)
+                default_bal = resolve_guild_setting(
+                    gs, self.bot.settings, "default_wallet"
+                )
                 wallet = await wallet_repo.create_wallet(
                     session,
                     user_id=context.author.id,
                     guild_id=guild_id,
-                    balance=self.bot.settings.default_wallet,
+                    balance=default_bal,
                 )
         if was_new:
             embed = discord.Embed(

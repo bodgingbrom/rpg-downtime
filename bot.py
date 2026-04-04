@@ -210,6 +210,30 @@ class DiscordBot(commands.Bot):
         self.scheduler = DerbyScheduler(self)
         await self.scheduler.start()
 
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """Initialize guild settings when the bot joins a new server."""
+        self.logger.info(
+            f"Joined guild {guild.name} (ID: {guild.id})",
+            extra={"guild_id": guild.id},
+        )
+        if self.scheduler:
+            from derby import repositories as repo
+
+            async with self.scheduler.sessionmaker() as session:
+                existing = await repo.get_guild_settings(session, guild.id)
+                if existing is None:
+                    await repo.create_guild_settings(
+                        session, guild_id=guild.id
+                    )
+
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """Log when the bot is removed from a server.  Data is kept intact
+        in case the bot is re-invited later."""
+        self.logger.info(
+            f"Removed from guild {guild.name} (ID: {guild.id})",
+            extra={"guild_id": guild.id},
+        )
+
     async def on_message(self, message: discord.Message) -> None:
         """
         The code in this event is executed every time someone sends a message, with or without the prefix
