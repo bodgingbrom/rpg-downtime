@@ -142,7 +142,7 @@ class DerbyScheduler:
                 "Race created",
                 extra={"guild_id": guild.id, "race_id": race.id},
             )
-            participants = random.sample(racers, min(8, len(racers)))
+            participants = random.sample(racers, min(self.bot.settings.max_racers_per_race, len(racers)))
             await self._run_race(race.id, guild.id, participants)
 
     async def _also_start_pending_races(self) -> None:
@@ -168,7 +168,7 @@ class DerbyScheduler:
         for race in races:
             if race.id in self.active_races:
                 continue
-            participants = random.sample(racers, min(8, len(racers)))
+            participants = random.sample(racers, min(self.bot.settings.max_racers_per_race, len(racers)))
             await self._run_race(race.id, race.guild_id, participants)
 
     async def _run_race(
