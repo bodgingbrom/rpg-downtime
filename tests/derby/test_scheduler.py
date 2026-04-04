@@ -595,3 +595,53 @@ async def test_replenish_pool_disabled(tmp_path: Path) -> None:
 
     created = await scheduler._replenish_pool(GUILD_ID)
     assert created == 0
+
+
+@pytest.mark.asyncio
+async def test_placement_prizes_credited(tmp_path: Path) -> None:
+    """After a race, owned racers' owners receive placement prizes."""
+    from economy import repositories as wallet_repo
+
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+        placement_prizes="50,30,20",
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    async with scheduler.sessionmaker() as session:
+        r1 = await repo.create_racer(
+            session, name="Owned1", owner_id=100, guild_id=GUILD_ID,
+            speed=30, cornering=30, stamina=30,
+        )
+        r2 = await repo.create_racer(
+            session, name="Owned2", owner_id=200, guild_id=GUILD_ID,
+            speed=1, cornering=1, stamina=1,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=100, guild_id=GUILD_ID, balance=0,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=200, guild_id=GUILD_ID, balance=0,
+        )
+        race = await repo.create_race(session, guild_id=GUILD_ID)
+        await repo.create_race_entries(session, race.id, [r1.id, r2.id])
+
+    await scheduler.tick()
+
+    async with scheduler.sessionmaker() as session:
+        w1 = await wallet_repo.get_wallet(session, 100, GUILD_ID)
+        w2 = await wallet_repo.get_wallet(session, 200, GUILD_ID)
+        # One got 1st (50), other got 2nd (30) — total 80
+        assert w1.balance + w2.balance == 80

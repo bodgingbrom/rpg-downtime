@@ -728,6 +728,14 @@ class Derby(commands.Cog, name="derby"):
                 await logic.resolve_payouts(
                     session, race.id, winner_id, guild_id=guild_id
                 )
+            gs = await repo.get_guild_settings(session, guild_id)
+            prize_list = logic.parse_placement_prizes(
+                resolve_guild_setting(gs, self.bot.settings, "placement_prizes")
+            )
+            placement_awards = await logic.resolve_placement_prizes(
+                session, result.placements, participants,
+                guild_id=guild_id, prize_list=prize_list,
+            )
             await logic.apply_mood_drift(
                 session, result.placements, participants
             )
@@ -870,6 +878,7 @@ class Derby(commands.Cog, name="derby"):
         "racer_sell_fraction",
         "max_racers_per_owner",
         "min_pool_size",
+        "placement_prizes",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -932,7 +941,7 @@ class Derby(commands.Cog, name="derby"):
 
             # Parse value to the correct type
             try:
-                if key == "channel_name":
+                if key in ("channel_name", "placement_prizes"):
                     parsed: str | int | float = value
                 elif key in ("commentary_delay", "racer_sell_fraction"):
                     parsed = float(value)

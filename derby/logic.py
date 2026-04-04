@@ -671,6 +671,59 @@ async def apply_mood_drift(
     return changes
 
 
+def parse_placement_prizes(prize_string: str) -> list[int]:
+    """Parse a comma-separated prize string like ``"50,30,20"`` into a list of ints."""
+    if not prize_string or not prize_string.strip():
+        return []
+    return [int(v.strip()) for v in prize_string.split(",") if v.strip()]
+
+
+async def resolve_placement_prizes(
+    session: AsyncSession,
+    placements: list[int],
+    participants: list[models.Racer],
+    guild_id: int,
+    prize_list: list[int],
+) -> list[tuple[int, int, int]]:
+    """Credit owner wallets for placement finishes.
+
+    Returns ``[(owner_id, racer_id, prize)]`` for each prize awarded.
+    Unowned racers (owner_id == 0) and positions beyond the prize list
+    are skipped.
+    """
+    racer_map = {r.id: r for r in participants}
+    awarded: list[tuple[int, int, int]] = []
+
+    for position, racer_id in enumerate(placements):
+        if position >= len(prize_list):
+            break
+        prize = prize_list[position]
+        if prize <= 0:
+            continue
+        racer = racer_map.get(racer_id)
+        if racer is None or racer.owner_id == 0:
+            continue
+
+        wallet = (
+            await session.execute(
+                select(Wallet).where(
+                    Wallet.user_id == racer.owner_id,
+                    Wallet.guild_id == guild_id,
+                )
+            )
+        ).scalars().first()
+        if wallet is None:
+            wallet = Wallet(user_id=racer.owner_id, guild_id=guild_id, balance=0)
+            session.add(wallet)
+            await session.commit()
+            await session.refresh(wallet)
+
+        wallet.balance += prize
+        awarded.append((racer.owner_id, racer_id, prize))
+
+    return awarded
+
+
 async def resolve_payouts(
     session: AsyncSession, race_id: int, winner_id: int, guild_id: int = 0
 ) -> None:

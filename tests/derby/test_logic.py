@@ -25,8 +25,10 @@ from derby.logic import (
     generate_pool_racer,
     load_all_maps,
     load_map,
+    parse_placement_prizes,
     pick_map,
     resolve_payouts,
+    resolve_placement_prizes,
     roll_mood_bonus,
     simulate_race,
 )
@@ -887,3 +889,65 @@ def test_generate_pool_racer_avoids_taken():
     # The generated name should not repeat when added to taken
     kwargs2 = generate_pool_racer(guild_id=1, taken_names={kwargs1["name"]})
     assert kwargs2["name"] != kwargs1["name"]
+
+
+# ---------------------------------------------------------------------------
+# Placement prize tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_placement_prizes():
+    assert parse_placement_prizes("50,30,20") == [50, 30, 20]
+    assert parse_placement_prizes("100") == [100]
+    assert parse_placement_prizes("") == []
+    assert parse_placement_prizes("  50 , 30 , 20 ") == [50, 30, 20]
+
+
+@pytest.mark.asyncio
+async def test_resolve_placement_prizes(session: AsyncSession):
+    """Owned racers get prizes; unowned racers are skipped."""
+    r1 = Racer(id=1, name="Owned1st", owner_id=10, guild_id=1, speed=10, cornering=10, stamina=10)
+    r2 = Racer(id=2, name="Unowned2nd", owner_id=0, guild_id=1, speed=10, cornering=10, stamina=10)
+    r3 = Racer(id=3, name="Owned3rd", owner_id=20, guild_id=1, speed=10, cornering=10, stamina=10)
+    participants = [r1, r2, r3]
+    placements = [1, 2, 3]  # racer IDs in finish order
+
+    # Create wallet for owner 10
+    w1 = Wallet(user_id=10, guild_id=1, balance=100)
+    session.add(w1)
+    await session.commit()
+
+    awards = await resolve_placement_prizes(
+        session, placements, participants, guild_id=1, prize_list=[50, 30, 20]
+    )
+
+    # Owner 10 (1st) gets 50, owner 0 (2nd) skipped, owner 20 (3rd) gets 20
+    assert len(awards) == 2
+    assert awards[0] == (10, 1, 50)
+    assert awards[1] == (20, 3, 20)
+
+    # Check wallet balances
+    await session.refresh(w1)
+    assert w1.balance == 150  # 100 + 50
+
+    # Owner 20's wallet was auto-created
+    from sqlalchemy import select as sel
+    w2 = (await session.execute(sel(Wallet).where(Wallet.user_id == 20))).scalars().first()
+    assert w2 is not None
+    assert w2.balance == 20
+
+
+@pytest.mark.asyncio
+async def test_resolve_placement_prizes_beyond_list(session: AsyncSession):
+    """Positions beyond the prize list get nothing."""
+    r1 = Racer(id=1, name="First", owner_id=10, guild_id=1, speed=10, cornering=10, stamina=10)
+    r2 = Racer(id=2, name="Fourth", owner_id=20, guild_id=1, speed=10, cornering=10, stamina=10)
+    participants = [r1, r2]
+    placements = [1, 2]
+
+    awards = await resolve_placement_prizes(
+        session, placements, participants, guild_id=1, prize_list=[50]  # only 1st place
+    )
+
+    assert len(awards) == 1
+    assert awards[0] == (10, 1, 50)
