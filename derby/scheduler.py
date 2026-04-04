@@ -206,6 +206,8 @@ class DerbyScheduler:
             mood_changes = await logic.apply_mood_drift(
                 session, result.placements, participants
             )
+            new_injuries = logic.check_injury_risk(result)
+            await logic.apply_injuries(session, new_injuries, participants)
             healed = await self._tick_injury_recovery(session, guild_id)
             retirements = await self._apply_retirements(session, participants)
             await session.commit()
@@ -241,6 +243,8 @@ class DerbyScheduler:
         await self._stream_commentary(race_id, guild_id, log)
         await self._post_results(guild_id, result.placements, names)
         await self._dm_payouts(bets, race_id, winner_id, names)
+        if new_injuries:
+            await self._announce_injuries(guild_id, new_injuries, names)
         if retirements:
             await self._announce_retirements(guild_id, retirements)
         if healed:
@@ -484,6 +488,32 @@ class DerbyScheduler:
                 await channel.send(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
                 continue
+
+    async def _announce_injuries(
+        self,
+        guild_id: int,
+        injuries: list[tuple[int, str, int]],
+        names: dict[int, str],
+    ) -> None:
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        channel = self._get_channel(guild)
+        if channel is None:
+            return
+        lines = []
+        for rid, description, recovery in injuries:
+            rname = names.get(rid, f"Racer {rid}")
+            lines.append(f"**{rname}** — {description} (out {recovery} races)")
+        embed = discord.Embed(
+            title="\U0001f915 Race Injuries!",
+            description="\n".join(lines),
+            color=0xE02B2B,
+        )
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            return
 
     async def _tick_injury_recovery(
         self, session: AsyncSession, guild_id: int

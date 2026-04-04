@@ -645,6 +645,8 @@ class Derby(commands.Cog, name="derby"):
             await logic.apply_mood_drift(
                 session, result.placements, participants
             )
+            new_injuries = logic.check_injury_risk(result)
+            await logic.apply_injuries(session, new_injuries, participants)
             threshold = self.bot.settings.retirement_threshold
             for r in participants:
                 if random.randint(1, 100) >= threshold:
@@ -701,6 +703,12 @@ class Derby(commands.Cog, name="derby"):
             await self.bot.scheduler._post_results(
                 context.guild.id, result.placements, names
             )
+
+            # --- Announce injuries ---
+            if new_injuries:
+                await self.bot.scheduler._announce_injuries(
+                    context.guild.id, new_injuries, names
+                )
         finally:
             self.bot.scheduler.active_races.discard(race.id)
 

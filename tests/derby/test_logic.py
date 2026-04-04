@@ -6,15 +6,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from derby.logic import (
+    INJURY_DESCRIPTIONS,
     MOOD_BONUS,
     MOOD_THRESHOLDS,
     MapSegment,
     RaceMap,
     RaceResult,
     SegmentResult,
+    apply_injuries,
     apply_mood_drift,
     apply_temperament,
     calculate_odds,
+    check_injury_risk,
     load_all_maps,
     load_map,
     pick_map,
@@ -591,3 +594,143 @@ def test_2d4_recovery_range():
         results.add(roll)
     assert min(results) == 2
     assert max(results) == 8
+
+
+# ---------------------------------------------------------------------------
+# Post-race injury risk tests
+# ---------------------------------------------------------------------------
+
+
+def test_check_injury_risk_stumble_triggers():
+    """Racers who stumbled should have injury chances."""
+    result = RaceResult(
+        placements=[1, 2],
+        segments=[],
+        racer_names={1: "Stumbler", 2: "Clean"},
+        stumble_counts={1: 3, 2: 0},  # racer 1 stumbled 3 times
+    )
+    # Run many times to confirm stumbler can get injured
+    injured_ids = set()
+    for seed in range(500):
+        rng = random.Random(seed)
+        injuries = check_injury_risk(result, rng)
+        for rid, _, _ in injuries:
+            injured_ids.add(rid)
+    # Racer 1 should get injured at least once in 500 attempts (3 rolls × 5% each)
+    assert 1 in injured_ids
+    # Racer 2 has 0 stumbles but is last place — gets 1 roll
+    assert 2 in injured_ids
+
+
+def test_check_injury_risk_last_place_extra_roll():
+    """Last place racer gets an extra injury roll even with no stumbles."""
+    result = RaceResult(
+        placements=[1, 2, 3],
+        segments=[],
+        racer_names={1: "A", 2: "B", 3: "Last"},
+        stumble_counts={1: 0, 2: 0, 3: 0},
+    )
+    injured_count = 0
+    for seed in range(2000):
+        rng = random.Random(seed)
+        injuries = check_injury_risk(result, rng)
+        for rid, _, _ in injuries:
+            if rid == 3:
+                injured_count += 1
+    # ~5% of 2000 = ~100 injuries for last place
+    assert 50 < injured_count < 160
+    # Racers 1 and 2 should never get injured (0 stumbles, not last)
+
+
+def test_check_injury_risk_no_stumbles_not_last():
+    """Racer with 0 stumbles and not last should never get injured."""
+    result = RaceResult(
+        placements=[1, 2, 3],
+        segments=[],
+        racer_names={1: "A", 2: "B", 3: "C"},
+        stumble_counts={1: 0, 2: 0, 3: 0},
+    )
+    for seed in range(500):
+        rng = random.Random(seed)
+        injuries = check_injury_risk(result, rng)
+        for rid, _, _ in injuries:
+            assert rid not in (1, 2), f"Racer {rid} should not be injured"
+
+
+def test_check_injury_risk_only_one_injury_per_racer():
+    """A racer should only get injured once per race even with many stumbles."""
+    result = RaceResult(
+        placements=[1, 2],
+        segments=[],
+        racer_names={1: "Clumsy", 2: "Ok"},
+        stumble_counts={1: 10, 2: 0},  # 10 stumbles!
+    )
+    for seed in range(200):
+        rng = random.Random(seed)
+        injuries = check_injury_risk(result, rng)
+        racer_1_injuries = [i for i in injuries if i[0] == 1]
+        assert len(racer_1_injuries) <= 1
+
+
+def test_check_injury_risk_recovery_is_2d4():
+    """Injury recovery should be 2-8 (2d4)."""
+    result = RaceResult(
+        placements=[1, 2],
+        segments=[],
+        racer_names={1: "A", 2: "B"},
+        stumble_counts={1: 5, 2: 5},
+    )
+    recoveries = set()
+    for seed in range(2000):
+        rng = random.Random(seed)
+        injuries = check_injury_risk(result, rng)
+        for _, _, recovery in injuries:
+            recoveries.add(recovery)
+    assert min(recoveries) >= 2
+    assert max(recoveries) <= 8
+
+
+def test_check_injury_risk_description_from_list():
+    """Injury descriptions should come from INJURY_DESCRIPTIONS."""
+    result = RaceResult(
+        placements=[1, 2],
+        segments=[],
+        racer_names={1: "A", 2: "B"},
+        stumble_counts={1: 5, 2: 5},
+    )
+    for seed in range(500):
+        rng = random.Random(seed)
+        injuries = check_injury_risk(result, rng)
+        for _, desc, _ in injuries:
+            assert desc in INJURY_DESCRIPTIONS
+
+
+@pytest.mark.asyncio
+async def test_apply_injuries(session: AsyncSession):
+    """apply_injuries should set injuries and recovery on racer."""
+    r = Racer(name="Victim", owner_id=1, speed=20, cornering=20, stamina=20)
+    session.add(r)
+    await session.commit()
+    await session.refresh(r)
+
+    await apply_injuries(session, [(r.id, "Pulled hamstring", 4)], [r])
+    await session.commit()
+
+    assert r.injuries == "Pulled hamstring"
+    assert r.injury_races_remaining == 4
+
+
+def test_simulate_race_tracks_stumbles():
+    """RaceResult should include stumble_counts when using maps."""
+    r1 = Racer(id=1, name="A", owner_id=1, speed=20, cornering=20, stamina=20)
+    r2 = Racer(id=2, name="B", owner_id=2, speed=20, cornering=20, stamina=20)
+    race_map = RaceMap(
+        name="Test",
+        theme="test",
+        description="",
+        segments=[MapSegment(type="straight", distance=2)] * 5,
+    )
+    result = simulate_race({"racers": [r1, r2]}, seed=42, race_map=race_map)
+    assert isinstance(result.stumble_counts, dict)
+    assert 1 in result.stumble_counts
+    assert 2 in result.stumble_counts
