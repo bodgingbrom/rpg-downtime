@@ -11,6 +11,8 @@ from derby.logic import (
     MOOD_BONUS,
     MOOD_THRESHOLDS,
     TRAINABLE_STATS,
+    apply_feed,
+    apply_rest,
     MapSegment,
     RaceMap,
     RaceResult,
@@ -996,3 +998,49 @@ def test_training_failure_chance():
 def test_trainable_stats_constant():
     assert TRAINABLE_STATS == {"speed", "cornering", "stamina"}
     assert MAX_STAT == 31
+
+
+# ---------------------------------------------------------------------------
+# Mood care tests
+# ---------------------------------------------------------------------------
+
+
+def test_apply_rest():
+    # Normal case: mood increases by 1
+    new, err = apply_rest(3)
+    assert new == 4
+    assert err is None
+
+    # Cap at 5
+    new, err = apply_rest(4)
+    assert new == 5
+    assert err is None
+
+    # Already max → rejected
+    new, err = apply_rest(5)
+    assert new == 5
+    assert err is not None
+    assert "great spirits" in err.lower()
+
+
+def test_apply_feed():
+    # Normal case: mood increases by 2
+    new, err = apply_feed(2)
+    assert new == 4
+    assert err is None
+
+    # Caps at 5 (mood 4 + 2 = 6 → capped to 5)
+    new, err = apply_feed(4)
+    assert new == 5
+    assert err is None
+
+    # From mood 1 → 3
+    new, err = apply_feed(1)
+    assert new == 3
+    assert err is None
+
+    # Already max → rejected
+    new, err = apply_feed(5)
+    assert new == 5
+    assert err is not None
+    assert "great spirits" in err.lower()
