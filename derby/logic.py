@@ -173,6 +173,43 @@ def pick_name(taken: Set[str]) -> str | None:
     return random.choice(available)
 
 
+def calculate_buy_price(racer: models.Racer, base_cost: int, multiplier: int) -> int:
+    """Return the buy price for a racer based on its base stats."""
+    return base_cost + (racer.speed + racer.cornering + racer.stamina) * multiplier
+
+
+def calculate_sell_price(
+    racer: models.Racer, base_cost: int, multiplier: int, sell_fraction: float
+) -> int:
+    """Return the sell price (fraction of buy price, rounded down)."""
+    return int(calculate_buy_price(racer, base_cost, multiplier) * sell_fraction)
+
+
+def generate_pool_racer(guild_id: int, taken_names: Set[str]) -> dict:
+    """Return kwargs suitable for ``create_racer()`` to populate the pool.
+
+    Generates random stats, temperament, and a name from the name pool.
+    Falls back to a numbered name if all pool names are taken.
+    """
+    name = pick_name(taken_names)
+    if name is None:
+        # All 100 names exhausted — use a fallback
+        base = random.choice(_load_names())
+        name = f"{base}-{random.randint(100, 999)}"
+    career_length = random.randint(25, 40)
+    return {
+        "name": name,
+        "owner_id": 0,
+        "guild_id": guild_id,
+        "speed": random.randint(0, 31),
+        "cornering": random.randint(0, 31),
+        "stamina": random.randint(0, 31),
+        "temperament": random.choice(list(TEMPERAMENTS.keys())),
+        "career_length": career_length,
+        "peak_end": int(career_length * 0.6),
+    }
+
+
 def stat_band(value: int) -> str:
     """Return a human-readable quality label for a stat value (0-31)."""
     if value <= 15:

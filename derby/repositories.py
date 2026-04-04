@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Type, TypeVar
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Bet, CourseSegment, GuildSettings, Race, RaceEntry, Racer
@@ -108,6 +108,49 @@ async def get_guild_racers(
         )
     result = await session.execute(stmt)
     return result.scalars().all()
+
+
+async def get_unowned_guild_racers(
+    session: AsyncSession, guild_id: int, *, eligible_only: bool = True
+) -> list[Racer]:
+    """Return unowned racers (owner_id == 0) for a guild."""
+    stmt = select(Racer).where(Racer.guild_id == guild_id, Racer.owner_id == 0)
+    if eligible_only:
+        stmt = stmt.where(
+            Racer.retired.is_(False),
+            Racer.injury_races_remaining == 0,
+        )
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_owned_racers(
+    session: AsyncSession, owner_id: int, guild_id: int
+) -> list[Racer]:
+    """Return non-retired racers owned by a specific user in a guild."""
+    result = await session.execute(
+        select(Racer).where(
+            Racer.owner_id == owner_id,
+            Racer.guild_id == guild_id,
+            Racer.retired.is_(False),
+        )
+    )
+    return result.scalars().all()
+
+
+async def count_unowned_eligible_racers(
+    session: AsyncSession, guild_id: int
+) -> int:
+    """Count unowned, non-retired, non-injured racers for a guild."""
+    result = await session.execute(
+        select(func.count(Racer.id)).where(
+            Racer.guild_id == guild_id,
+            Racer.owner_id == 0,
+            Racer.retired.is_(False),
+            Racer.injury_races_remaining == 0,
+        )
+    )
+    return result.scalar() or 0
 
 
 # Race

@@ -44,6 +44,7 @@ class DummyContext:
         self.interaction = None
         self.channel = DummyChannel()
         self.guild = DummyGuild()
+        self.author = types.SimpleNamespace(id=42, display_name="TestUser")
 
     async def defer(self, **kwargs) -> None:
         pass
@@ -57,6 +58,7 @@ async def test_setup_adds_cog():
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     await derby_cog.setup(bot)
     assert "derby" in bot.cogs
+    assert "stable" in bot.cogs
 
 
 @pytest.mark.asyncio
@@ -702,3 +704,206 @@ async def test_settings_show(tmp_path: Path) -> None:
     field_names = [f.name for f in embed.fields]
     assert "default_wallet" in field_names
     assert "channel_name" in field_names
+
+
+# ---------------------------------------------------------------------------
+# Stable command tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stable_buy(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=200,
+        racer_buy_base=20,
+        racer_buy_multiplier=2,
+        max_racers_per_owner=3,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    # Create an unowned racer and give user a wallet
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Flash", owner_id=0, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+        )
+
+    await cog.stable_buy.callback(cog, ctx, racer.id)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Purchased" in embed.title
+
+    # Verify racer is now owned and wallet deducted
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        assert r.owner_id == ctx.author.id
+        w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
+        expected_price = 20 + 30 * 2  # base + stats_total * mult
+        assert w.balance == 200 - expected_price
+
+
+@pytest.mark.asyncio
+async def test_stable_buy_insufficient_funds(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=5,
+        racer_buy_base=20,
+        racer_buy_multiplier=2,
+        max_racers_per_owner=3,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Pricey", owner_id=0, guild_id=GUILD_ID,
+            speed=20, cornering=20, stamina=20,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=5,
+        )
+
+    await cog.stable_buy.callback(cog, ctx, racer.id)
+
+    assert ctx.sent
+    assert "Not enough coins" in str(ctx.sent[0].get("content", ""))
+
+    # Racer should still be unowned
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        assert r.owner_id == 0
+
+
+@pytest.mark.asyncio
+async def test_stable_sell(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        racer_buy_base=20,
+        racer_buy_multiplier=2,
+        racer_sell_fraction=0.5,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Bolt", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=50,
+        )
+
+    await cog.stable_sell.callback(cog, ctx, racer.id)
+
+    assert ctx.sent
+    assert "Sold" in str(ctx.sent[0].get("content", ""))
+
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        assert r.owner_id == 0
+        w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
+        sell_price = int((20 + 30 * 2) * 0.5)
+        assert w.balance == 50 + sell_price
+
+
+@pytest.mark.asyncio
+async def test_stable_sell_not_owner(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(race_times=["12:00"], default_wallet=100)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="NotYours", owner_id=999, guild_id=GUILD_ID,
+        )
+
+    await cog.stable_sell.callback(cog, ctx, racer.id)
+
+    assert ctx.sent
+    assert "don't own" in str(ctx.sent[0].get("content", ""))
+
+
+@pytest.mark.asyncio
+async def test_stable_rename(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(race_times=["12:00"], default_wallet=100)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="OldName", owner_id=ctx.author.id, guild_id=GUILD_ID,
+        )
+
+    await cog.stable_rename.callback(cog, ctx, racer.id, "NewName")
+
+    assert ctx.sent
+    assert "Renamed" in str(ctx.sent[0].get("content", ""))
+
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        assert r.name == "NewName"
+
+
+@pytest.mark.asyncio
+async def test_stable_rename_taken(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(race_times=["12:00"], default_wallet=100)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        await repo.create_racer(
+            session, name="Taken", owner_id=0, guild_id=GUILD_ID,
+        )
+        racer = await repo.create_racer(
+            session, name="Mine", owner_id=ctx.author.id, guild_id=GUILD_ID,
+        )
+
+    await cog.stable_rename.callback(cog, ctx, racer.id, "Taken")
+
+    assert ctx.sent
+    assert "already exists" in str(ctx.sent[0].get("content", ""))

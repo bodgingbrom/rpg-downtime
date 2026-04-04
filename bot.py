@@ -123,6 +123,7 @@ class DiscordBot(commands.Bot):
                     await repo.create_guild_settings(
                         session, guild_id=guild.id
                     )
+            await self.scheduler._replenish_pool(guild.id)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         """Log when the bot is removed from a server.  Data is kept intact

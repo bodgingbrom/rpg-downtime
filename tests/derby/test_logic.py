@@ -16,10 +16,13 @@ from derby.logic import (
     apply_injuries,
     apply_mood_drift,
     apply_temperament,
+    calculate_buy_price,
     calculate_odds,
+    calculate_sell_price,
     career_phase,
     check_injury_risk,
     effective_stats,
+    generate_pool_racer,
     load_all_maps,
     load_map,
     pick_map,
@@ -838,3 +841,49 @@ def test_decline_affects_simulation():
             peak_wins += 1
     # Peak racer should win significantly more often
     assert peak_wins > 65
+
+
+# ---------------------------------------------------------------------------
+# Pricing tests
+# ---------------------------------------------------------------------------
+
+
+def test_calculate_buy_price():
+    racer = Racer(id=1, name="A", owner_id=0, speed=15, cornering=15, stamina=15)
+    assert calculate_buy_price(racer, base_cost=20, multiplier=2) == 20 + 45 * 2
+
+    zero = Racer(id=2, name="B", owner_id=0, speed=0, cornering=0, stamina=0)
+    assert calculate_buy_price(zero, base_cost=20, multiplier=2) == 20
+
+    maxed = Racer(id=3, name="C", owner_id=0, speed=31, cornering=31, stamina=31)
+    assert calculate_buy_price(maxed, base_cost=20, multiplier=2) == 20 + 93 * 2
+
+
+def test_calculate_sell_price():
+    racer = Racer(id=1, name="A", owner_id=0, speed=15, cornering=15, stamina=15)
+    buy = calculate_buy_price(racer, 20, 2)
+    sell = calculate_sell_price(racer, 20, 2, 0.5)
+    assert sell == int(buy * 0.5)
+    assert sell < buy  # money sink
+
+
+def test_generate_pool_racer():
+    kwargs = generate_pool_racer(guild_id=42, taken_names=set())
+    assert kwargs["owner_id"] == 0
+    assert kwargs["guild_id"] == 42
+    assert 0 <= kwargs["speed"] <= 31
+    assert 0 <= kwargs["cornering"] <= 31
+    assert 0 <= kwargs["stamina"] <= 31
+    assert kwargs["temperament"] in (
+        "Agile", "Reckless", "Tactical", "Burly", "Steady", "Sharpshift", "Quirky"
+    )
+    assert kwargs["name"]  # not empty
+    assert 25 <= kwargs["career_length"] <= 40
+    assert kwargs["peak_end"] == int(kwargs["career_length"] * 0.6)
+
+
+def test_generate_pool_racer_avoids_taken():
+    kwargs1 = generate_pool_racer(guild_id=1, taken_names=set())
+    # The generated name should not repeat when added to taken
+    kwargs2 = generate_pool_racer(guild_id=1, taken_names={kwargs1["name"]})
+    assert kwargs2["name"] != kwargs1["name"]

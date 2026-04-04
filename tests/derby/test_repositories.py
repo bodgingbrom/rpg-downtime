@@ -110,8 +110,8 @@ async def test_guild_settings_crud(session: AsyncSession):
     fetched = await repo.get_guild_settings(session, 1)
     assert fetched.guild_id == 1
 
-    updated = await repo.update_guild_settings(session, 1, race_frequency=2)
-    assert updated.race_frequency == 2
+    updated = await repo.update_guild_settings(session, 1, bet_window=60)
+    assert updated.bet_window == 60
 
     await repo.delete_guild_settings(session, 1)
     assert await repo.get_guild_settings(session, 1) is None
@@ -145,3 +145,70 @@ async def test_get_race_history(session: AsyncSession):
     assert [h[0].id for h in history] == [r2.id, r1.id]
     assert history[0][1] == racer1.id and history[0][2] == 30
     assert history[1][1] == racer2.id and history[1][2] == 40
+
+
+@pytest.mark.asyncio
+async def test_get_unowned_guild_racers(session: AsyncSession):
+    """Unowned racers (owner_id=0) are returned; owned ones are not."""
+    await repo.create_racer(
+        session, name="Pool1", owner_id=0, guild_id=1, speed=10
+    )
+    await repo.create_racer(
+        session, name="Pool2", owner_id=0, guild_id=1, speed=5
+    )
+    await repo.create_racer(
+        session, name="Owned", owner_id=42, guild_id=1, speed=15
+    )
+    # Retired unowned racer — should be excluded when eligible_only=True
+    await repo.create_racer(
+        session, name="Retired", owner_id=0, guild_id=1, retired=True
+    )
+    # Injured unowned racer — should be excluded when eligible_only=True
+    r = await repo.create_racer(
+        session, name="Injured", owner_id=0, guild_id=1
+    )
+    await repo.update_racer(session, r.id, injury_races_remaining=2)
+
+    eligible = await repo.get_unowned_guild_racers(session, guild_id=1)
+    assert len(eligible) == 2
+    assert {r.name for r in eligible} == {"Pool1", "Pool2"}
+
+    all_unowned = await repo.get_unowned_guild_racers(
+        session, guild_id=1, eligible_only=False
+    )
+    assert len(all_unowned) == 4  # Pool1, Pool2, Retired, Injured
+
+
+@pytest.mark.asyncio
+async def test_get_owned_racers(session: AsyncSession):
+    """Only non-retired racers owned by the user in the guild are returned."""
+    await repo.create_racer(
+        session, name="Mine", owner_id=5, guild_id=1
+    )
+    await repo.create_racer(
+        session, name="AlsoMine", owner_id=5, guild_id=1
+    )
+    await repo.create_racer(
+        session, name="NotMine", owner_id=99, guild_id=1
+    )
+    await repo.create_racer(
+        session, name="OtherGuild", owner_id=5, guild_id=2
+    )
+    await repo.create_racer(
+        session, name="RetiredMine", owner_id=5, guild_id=1, retired=True
+    )
+
+    owned = await repo.get_owned_racers(session, owner_id=5, guild_id=1)
+    assert len(owned) == 2
+    assert {r.name for r in owned} == {"Mine", "AlsoMine"}
+
+
+@pytest.mark.asyncio
+async def test_count_unowned_eligible_racers(session: AsyncSession):
+    await repo.create_racer(session, name="A", owner_id=0, guild_id=1)
+    await repo.create_racer(session, name="B", owner_id=0, guild_id=1)
+    await repo.create_racer(session, name="C", owner_id=42, guild_id=1)
+    await repo.create_racer(session, name="D", owner_id=0, guild_id=1, retired=True)
+
+    count = await repo.count_unowned_eligible_racers(session, guild_id=1)
+    assert count == 2
