@@ -26,13 +26,20 @@ TEMPERAMENT_CHOICES = [
 async def racer_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[int]]:
-    """Autocomplete callback that suggests active racers by name."""
+    """Autocomplete callback that suggests racers in the next race."""
     sessionmaker = interaction.client.scheduler.sessionmaker
+    active = interaction.client.scheduler.active_races
     async with sessionmaker() as session:
-        result = await session.execute(
-            select(models.Racer).where(models.Racer.retired.is_(False))
+        race_result = await session.execute(
+            select(models.Race)
+            .where(models.Race.finished.is_(False))
+            .order_by(models.Race.id)
         )
-        racers = result.scalars().all()
+        races = race_result.scalars().all()
+        race = next((r for r in races if r.id not in active), None)
+        if race is None:
+            return []
+        racers = await repo.get_race_participants(session, race.id)
     choices = []
     current_lower = current.lower()
     for r in racers:
@@ -66,14 +73,11 @@ class Derby(commands.Cog, name="derby"):
             races = race_result.scalars().all()
             active = self.bot.scheduler.active_races
             race = next((r for r in races if r.id not in active), None)
-            racers_result = await session.execute(
-                select(models.Racer).where(
-                    models.Racer.retired.is_(False),
-                    models.Racer.injury_races_remaining == 0,
-                )
-            )
-            racers = racers_result.scalars().all()
-        if race is None or not racers:
+            if race is None:
+                await context.send("No upcoming race.", ephemeral=True)
+                return
+            racers = await repo.get_race_participants(session, race.id)
+        if not racers:
             await context.send("No upcoming race.", ephemeral=True)
             return
 
@@ -118,18 +122,17 @@ class Derby(commands.Cog, name="derby"):
             # lands on the same race that force-start would pick.
             active = self.bot.scheduler.active_races
             race = next((r for r in races if r.id not in active), None)
-            racers_result = await session.execute(
-                select(models.Racer).where(
-                    models.Racer.retired.is_(False),
-                    models.Racer.injury_races_remaining == 0,
-                )
-            )
-            racers = racers_result.scalars().all()
-        if race is None or not racers:
+            if race is None:
+                await context.send("No race available.", ephemeral=True)
+                return
+            racers = await repo.get_race_participants(session, race.id)
+        if not racers:
             await context.send("No race available.", ephemeral=True)
             return
         if racer not in [r.id for r in racers]:
-            await context.send("Racer not found.", ephemeral=True)
+            await context.send(
+                "That racer isn't in the next race.", ephemeral=True
+            )
             return
         racer_name = next((r.name for r in racers if r.id == racer), f"Racer {racer}")
         odds = logic.calculate_odds(racers, [], 0.1)
@@ -621,17 +624,20 @@ class Derby(commands.Cog, name="derby"):
                 )
                 return
             self.bot.scheduler.active_races.add(race.id)
-            racers_result = await session.execute(
-                select(models.Racer).where(
-                    models.Racer.retired.is_(False),
-                    models.Racer.injury_races_remaining == 0,
+            participants = await repo.get_race_participants(session, race.id)
+            if not participants:
+                # Legacy race without entries — fall back to random pick
+                racers_result = await session.execute(
+                    select(models.Racer).where(
+                        models.Racer.retired.is_(False),
+                        models.Racer.injury_races_remaining == 0,
+                    )
                 )
-            )
-            racers = racers_result.scalars().all()
-            if not racers:
-                await context.send("No racers available", ephemeral=True)
+                participants = racers_result.scalars().all()
+            if len(participants) < 2:
+                self.bot.scheduler.active_races.discard(race.id)
+                await context.send("Not enough racers available", ephemeral=True)
                 return
-            participants = random.sample(racers, min(8, len(racers)))
             race_map = logic.pick_map()
             result = logic.simulate_race(
                 {"racers": participants}, seed=race.id, race_map=race_map
