@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from derby.logic import (
     INJURY_DESCRIPTIONS,
+    MAX_STAT,
     MOOD_BONUS,
     MOOD_THRESHOLDS,
+    TRAINABLE_STATS,
     MapSegment,
     RaceMap,
     RaceResult,
@@ -19,6 +21,7 @@ from derby.logic import (
     calculate_buy_price,
     calculate_odds,
     calculate_sell_price,
+    calculate_training_cost,
     career_phase,
     check_injury_risk,
     effective_stats,
@@ -31,6 +34,7 @@ from derby.logic import (
     resolve_placement_prizes,
     roll_mood_bonus,
     simulate_race,
+    training_failure_chance,
 )
 from db_base import Base
 from derby.models import Bet, Race, Racer
@@ -951,3 +955,44 @@ async def test_resolve_placement_prizes_beyond_list(session: AsyncSession):
 
     assert len(awards) == 1
     assert awards[0] == (10, 1, 50)
+
+
+# ---------------------------------------------------------------------------
+# Training tests
+# ---------------------------------------------------------------------------
+
+
+def test_calculate_training_cost():
+    # Default: base=10, multiplier=2
+    assert calculate_training_cost(0, 10, 2) == 10
+    assert calculate_training_cost(15, 10, 2) == 40
+    assert calculate_training_cost(30, 10, 2) == 70
+    # Custom base/multiplier
+    assert calculate_training_cost(10, 20, 3) == 50
+
+
+def test_training_failure_chance():
+    # Normal+ mood, no injury → 0%
+    assert training_failure_chance(3, False) == 0.0
+    assert training_failure_chance(4, False) == 0.0
+    assert training_failure_chance(5, False) == 0.0
+
+    # Awful mood, no injury → 50%
+    assert training_failure_chance(1, False) == pytest.approx(0.50)
+
+    # Bad mood, no injury → 25%
+    assert training_failure_chance(2, False) == pytest.approx(0.25)
+
+    # Normal mood, injured → 25%
+    assert training_failure_chance(3, True) == pytest.approx(0.25)
+
+    # Awful mood, injured → 1 - (0.5 * 0.75) = 0.625
+    assert training_failure_chance(1, True) == pytest.approx(0.625)
+
+    # Bad mood, injured → 1 - (0.75 * 0.75) = 0.4375
+    assert training_failure_chance(2, True) == pytest.approx(0.4375)
+
+
+def test_trainable_stats_constant():
+    assert TRAINABLE_STATS == {"speed", "cornering", "stamina"}
+    assert MAX_STAT == 31

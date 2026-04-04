@@ -907,3 +907,242 @@ async def test_stable_rename_taken(tmp_path: Path) -> None:
 
     assert ctx.sent
     assert "already exists" in str(ctx.sent[0].get("content", ""))
+
+
+# ---------------------------------------------------------------------------
+# /stable train tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stable_train_success(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=200,
+        training_base=10,
+        training_multiplier=2,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Flash", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10, mood=4,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+        )
+
+    # Mood 4 (Good) → 0% failure chance
+    await cog.stable_train.callback(cog, ctx, racer.id, "speed")
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Training Complete" in embed.title
+
+    # Cost = 10 + 10 * 2 = 30
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        assert r.speed == 11
+        w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
+        assert w.balance == 200 - 30
+        assert r.mood == 3  # dropped from 4
+
+
+@pytest.mark.asyncio
+async def test_stable_train_not_owner(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="NotMine", owner_id=999, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10,
+        )
+
+    await cog.stable_train.callback(cog, ctx, racer.id, "speed")
+
+    assert ctx.sent
+    assert "don't own" in str(ctx.sent[0].get("content", ""))
+
+
+@pytest.mark.asyncio
+async def test_stable_train_insufficient_funds(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=5,
+        training_base=10, training_multiplier=2,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Expensive", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=15, cornering=10, stamina=10, mood=5,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=5,
+        )
+
+    await cog.stable_train.callback(cog, ctx, racer.id, "speed")
+
+    assert ctx.sent
+    assert "Training costs" in str(ctx.sent[0].get("content", ""))
+
+    # Stat should be unchanged
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        assert r.speed == 15
+
+
+@pytest.mark.asyncio
+async def test_stable_train_max_stat(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Maxed", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=31, cornering=10, stamina=10,
+        )
+
+    await cog.stable_train.callback(cog, ctx, racer.id, "speed")
+
+    assert ctx.sent
+    assert "already at maximum" in str(ctx.sent[0].get("content", ""))
+
+
+@pytest.mark.asyncio
+async def test_stable_train_retired(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="OldTimer", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10, retired=True,
+        )
+
+    await cog.stable_train.callback(cog, ctx, racer.id, "speed")
+
+    assert ctx.sent
+    assert "retired" in str(ctx.sent[0].get("content", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_stable_train_failure(tmp_path: Path) -> None:
+    """When training fails, coins are spent and mood drops but stat is unchanged."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=200,
+        training_base=10, training_multiplier=2,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Unlucky", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10, mood=3,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+        )
+
+    # Force failure by mocking random.random to return 0.0 (always < any positive fail_chance)
+    # But mood 3 gives 0% fail, so we need to set mood to 1 (50%)
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        r.mood = 1
+        await session.commit()
+
+    with patch("cogs.derby.random.random", return_value=0.0):
+        await cog.stable_train.callback(cog, ctx, racer.id, "speed")
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Failed" in embed.title
+
+    # Coins spent, mood stays at 1 (min), stat unchanged
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        assert r.speed == 10  # unchanged
+        assert r.mood == 1  # was 1, min is 1
+        w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
+        assert w.balance == 200 - 30  # cost = 10 + 10*2 = 30
+
+
+@pytest.mark.asyncio
+async def test_stable_train_mood_floor(tmp_path: Path) -> None:
+    """Mood at 1 stays at 1 after training (doesn't go below)."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=200,
+        training_base=10, training_multiplier=2,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Grumpy", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=5, cornering=10, stamina=10, mood=1,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+        )
+
+    # Force success despite mood (mock random to return 0.99 > 0.50 fail chance)
+    with patch("cogs.derby.random.random", return_value=0.99):
+        await cog.stable_train.callback(cog, ctx, racer.id, "speed")
+
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+        assert r.speed == 6  # trained successfully
+        assert r.mood == 1  # floor, didn't go to 0

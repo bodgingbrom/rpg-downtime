@@ -258,6 +258,8 @@ class DerbyScheduler:
                 "max_racers_per_owner": ("INTEGER", "NULL"),
                 "min_pool_size": ("INTEGER", "NULL"),
                 "placement_prizes": ("VARCHAR", "NULL"),
+                "training_base": ("INTEGER", "NULL"),
+                "training_multiplier": ("INTEGER", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:

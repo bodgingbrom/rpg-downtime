@@ -23,6 +23,12 @@ TEMPERAMENT_CHOICES = [
     app_commands.Choice(name=t, value=t) for t in logic.TEMPERAMENTS
 ]
 
+STAT_CHOICES = [
+    app_commands.Choice(name="Speed", value="speed"),
+    app_commands.Choice(name="Cornering", value="cornering"),
+    app_commands.Choice(name="Stamina", value="stamina"),
+]
+
 
 async def racer_autocomplete(
     interaction: discord.Interaction, current: str
@@ -879,6 +885,8 @@ class Derby(commands.Cog, name="derby"):
         "max_racers_per_owner",
         "min_pool_size",
         "placement_prizes",
+        "training_base",
+        "training_multiplier",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -1228,6 +1236,130 @@ class Stable(commands.Cog, name="stable"):
         await context.send(
             f"Renamed **{old_name}** to **{new_name}**."
         )
+
+    @stable.command(name="train", description="Train a racer to improve a stat")
+    @app_commands.describe(racer="Racer to train", stat="Stat to improve")
+    @app_commands.autocomplete(racer=owned_racer_autocomplete)
+    @app_commands.choices(stat=STAT_CHOICES)
+    async def stable_train(
+        self, context: Context, racer: int, stat: app_commands.Choice[str]
+    ) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        stat_name = stat.value if isinstance(stat, app_commands.Choice) else stat
+
+        if stat_name not in logic.TRAINABLE_STATS:
+            await context.send(
+                "Invalid stat. Choose speed, cornering, or stamina.",
+                ephemeral=True,
+            )
+            return
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+            if racer_obj.owner_id != context.author.id:
+                await context.send("You don't own that racer!", ephemeral=True)
+                return
+            if racer_obj.retired:
+                await context.send("This racer is retired.", ephemeral=True)
+                return
+
+            current_value = getattr(racer_obj, stat_name)
+            if current_value >= logic.MAX_STAT:
+                await context.send(
+                    f"**{racer_obj.name}**'s {stat_name} is already at maximum "
+                    f"({logic.MAX_STAT}).",
+                    ephemeral=True,
+                )
+                return
+
+            # Resolve training cost settings
+            gs = await repo.get_guild_settings(session, guild_id)
+            training_base = self._resolve("training_base", gs)
+            training_mult = self._resolve("training_multiplier", gs)
+            cost = logic.calculate_training_cost(
+                current_value, training_base, training_mult
+            )
+
+            # Check/create wallet
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
+            if wallet is None:
+                default_bal = self._resolve("default_wallet", gs)
+                wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            if wallet.balance < cost:
+                await context.send(
+                    f"Training costs **{cost} coins** but you only have "
+                    f"**{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            # Deduct cost and reduce mood
+            wallet.balance -= cost
+            old_mood = racer_obj.mood
+            new_mood = max(1, old_mood - 1)
+            racer_obj.mood = new_mood
+
+            # Roll for failure
+            fail_chance = logic.training_failure_chance(
+                old_mood, racer_obj.injury_races_remaining > 0
+            )
+            failed = random.random() < fail_chance
+
+            if not failed:
+                new_value = current_value + 1
+                await repo.update_racer(session, racer, **{stat_name: new_value})
+            else:
+                new_value = current_value
+
+            await session.commit()
+
+        # Build response embed
+        if failed:
+            embed = discord.Embed(
+                title=f"Training Failed: {racer_obj.name}",
+                description=(
+                    f"The training session didn't stick. "
+                    f"**{cost} coins** spent but {stat_name} unchanged."
+                ),
+                color=0xE74C3C,
+            )
+        else:
+            embed = discord.Embed(
+                title=f"Training Complete: {racer_obj.name}",
+                color=0x2ECC71,
+            )
+            embed.add_field(
+                name=stat_name.capitalize(),
+                value=(
+                    f"{_stat_band(current_value)} \u2192 {_stat_band(new_value)} "
+                    f"({current_value} \u2192 {new_value})"
+                ),
+                inline=True,
+            )
+
+        embed.add_field(name="Cost", value=f"{cost} coins", inline=True)
+        if old_mood != new_mood:
+            embed.add_field(
+                name="Mood",
+                value=f"{_mood_label(old_mood)} \u2192 {_mood_label(new_mood)}",
+                inline=True,
+            )
+        embed.set_footer(text=f"Balance: {wallet.balance} coins")
+        if fail_chance > 0:
+            pct = int(fail_chance * 100)
+            embed.description = (embed.description or "") + f"\n*Failure chance was {pct}%*"
+        await context.send(embed=embed)
 
 
 async def setup(bot) -> None:
