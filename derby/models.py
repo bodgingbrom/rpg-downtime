@@ -22,6 +22,9 @@ class Racer(Base):
     mood: Mapped[int] = mapped_column(Integer, default=3)
     injuries: Mapped[str] = mapped_column(String, default="")
     injury_races_remaining: Mapped[int] = mapped_column(Integer, default=0)
+    races_completed: Mapped[int] = mapped_column(Integer, default=0)
+    career_length: Mapped[int] = mapped_column(Integer, default=30)
+    peak_end: Mapped[int] = mapped_column(Integer, default=18)
 
 
 class Race(Base):

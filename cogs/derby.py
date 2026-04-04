@@ -237,16 +237,23 @@ class Derby(commands.Cog, name="derby"):
         if racer_obj is None:
             await context.send("Racer not found", ephemeral=True)
             return
+        phase = logic.career_phase(racer_obj)
+        eff = logic.effective_stats(racer_obj)
         embed = discord.Embed(title=racer_obj.name)
-        embed.add_field(name="Speed", value=_stat_band(racer_obj.speed), inline=True)
+        embed.add_field(name="Speed", value=_stat_band(eff["speed"]), inline=True)
         embed.add_field(
-            name="Cornering", value=_stat_band(racer_obj.cornering), inline=True
+            name="Cornering", value=_stat_band(eff["cornering"]), inline=True
         )
         embed.add_field(
-            name="Stamina", value=_stat_band(racer_obj.stamina), inline=True
+            name="Stamina", value=_stat_band(eff["stamina"]), inline=True
         )
         embed.add_field(name="Temperament", value=racer_obj.temperament, inline=True)
         embed.add_field(name="Mood", value=_mood_label(racer_obj.mood), inline=True)
+        embed.add_field(
+            name="Career",
+            value=f"Race {racer_obj.races_completed}/{racer_obj.career_length} ({phase})",
+            inline=True,
+        )
         injury_text = "None"
         if racer_obj.injuries:
             injury_text = f"{racer_obj.injuries} ({racer_obj.injury_races_remaining} races remaining)"
@@ -363,6 +370,7 @@ class Derby(commands.Cog, name="derby"):
                     ephemeral=True,
                 )
                 return
+        career_length = random.randint(25, 40)
         if random_stats:
             stats = {
                 "speed": random.randint(0, 31),
@@ -379,7 +387,12 @@ class Derby(commands.Cog, name="derby"):
             }
         async with self.bot.scheduler.sessionmaker() as session:
             racer = await repo.create_racer(
-                session, name=name, owner_id=owner.id, **stats
+                session,
+                name=name,
+                owner_id=owner.id,
+                career_length=career_length,
+                peak_end=int(career_length * 0.6),
+                **stats,
             )
         embed = discord.Embed(title=f"New Racer: {racer.name} (#{racer.id})")
         embed.add_field(
@@ -653,18 +666,21 @@ class Derby(commands.Cog, name="derby"):
             )
             new_injuries = logic.check_injury_risk(result)
             await logic.apply_injuries(session, new_injuries, participants)
-            threshold = self.bot.settings.retirement_threshold
             for r in participants:
-                if random.randint(1, 100) >= threshold:
+                r.races_completed += 1
+                if r.races_completed >= r.career_length:
                     await repo.update_racer(session, r.id, retired=True)
+                    cl = random.randint(25, 40)
                     await repo.create_racer(
                         session,
                         name=f"{r.name} II",
                         owner_id=r.owner_id,
-                        speed=int(r.speed * random.uniform(0.5, 0.75)),
-                        cornering=int(r.cornering * random.uniform(0.5, 0.75)),
-                        stamina=int(r.stamina * random.uniform(0.5, 0.75)),
-                        temperament=r.temperament,
+                        speed=random.randint(0, 31),
+                        cornering=random.randint(0, 31),
+                        stamina=random.randint(0, 31),
+                        temperament=random.choice(list(logic.TEMPERAMENTS)),
+                        career_length=cl,
+                        peak_end=int(cl * 0.6),
                     )
             await session.commit()
 

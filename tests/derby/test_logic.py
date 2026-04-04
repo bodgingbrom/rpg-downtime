@@ -17,7 +17,9 @@ from derby.logic import (
     apply_mood_drift,
     apply_temperament,
     calculate_odds,
+    career_phase,
     check_injury_risk,
+    effective_stats,
     load_all_maps,
     load_map,
     pick_map,
@@ -734,3 +736,97 @@ def test_simulate_race_tracks_stumbles():
     assert isinstance(result.stumble_counts, dict)
     assert 1 in result.stumble_counts
     assert 2 in result.stumble_counts
+
+
+# ---------------------------------------------------------------------------
+# Career lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_effective_stats_peak():
+    """During peak phase, effective stats equal base stats."""
+    r = Racer(
+        id=1, name="A", owner_id=1, speed=20, cornering=15, stamina=25,
+        races_completed=10, career_length=30, peak_end=18,
+    )
+    stats = effective_stats(r)
+    assert stats == {"speed": 20, "cornering": 15, "stamina": 25}
+
+
+def test_effective_stats_decline():
+    """During decline, each stat is reduced by (races_completed - peak_end)."""
+    r = Racer(
+        id=1, name="A", owner_id=1, speed=20, cornering=15, stamina=25,
+        races_completed=25, career_length=30, peak_end=18,
+    )
+    stats = effective_stats(r)
+    penalty = 25 - 18  # 7
+    assert stats == {"speed": 13, "cornering": 8, "stamina": 18}
+
+
+def test_effective_stats_floor_zero():
+    """Effective stats never go below zero."""
+    r = Racer(
+        id=1, name="A", owner_id=1, speed=3, cornering=2, stamina=1,
+        races_completed=28, career_length=30, peak_end=18,
+    )
+    stats = effective_stats(r)
+    assert all(v >= 0 for v in stats.values())
+    assert stats["stamina"] == 0  # 1 - 10 = 0 (clamped)
+
+
+def test_career_phase_peak():
+    r = Racer(
+        id=1, name="A", owner_id=1, races_completed=10,
+        career_length=30, peak_end=18,
+    )
+    assert career_phase(r) == "Peak"
+
+
+def test_career_phase_declining():
+    r = Racer(
+        id=1, name="A", owner_id=1, races_completed=22,
+        career_length=30, peak_end=18,
+    )
+    assert "Declining" in career_phase(r)
+    assert "-4" in career_phase(r)
+
+
+def test_career_phase_retiring_soon():
+    r = Racer(
+        id=1, name="A", owner_id=1, races_completed=28,
+        career_length=30, peak_end=18,
+    )
+    assert career_phase(r) == "Retiring Soon"
+
+
+def test_career_phase_retired():
+    r = Racer(
+        id=1, name="A", owner_id=1, races_completed=30,
+        career_length=30, peak_end=18,
+    )
+    assert career_phase(r) == "Retired"
+
+
+def test_decline_affects_simulation():
+    """A declining racer should perform worse than the same racer at peak."""
+    peak = Racer(
+        id=1, name="Peak", owner_id=1, speed=25, cornering=25, stamina=25,
+        races_completed=10, career_length=30, peak_end=18,
+    )
+    declining = Racer(
+        id=2, name="Old", owner_id=2, speed=25, cornering=25, stamina=25,
+        races_completed=28, career_length=30, peak_end=18,
+    )
+    race_map = RaceMap(
+        name="Test", theme="test", description="",
+        segments=[MapSegment(type="straight", distance=2)] * 3,
+    )
+    # Run many races to check statistical tendency
+    peak_wins = 0
+    for seed in range(100):
+        result = simulate_race({"racers": [peak, declining]}, seed=seed, race_map=race_map)
+        if result.placements[0] == peak.id:
+            peak_wins += 1
+    # Peak racer should win significantly more often
+    assert peak_wins > 65

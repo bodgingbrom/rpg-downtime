@@ -112,7 +112,7 @@ async def test_retirement(tmp_path: Path) -> None:
     settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
-        retirement_threshold=0,
+        retirement_threshold=101,
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
@@ -124,8 +124,15 @@ async def test_retirement(tmp_path: Path) -> None:
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
     await scheduler._init_db()
     async with scheduler.sessionmaker() as session:
-        r1 = await repo.create_racer(session, name="A", owner_id=1)
-        r2 = await repo.create_racer(session, name="B", owner_id=2)
+        # Both racers are at the end of their career — one more race retires them
+        r1 = await repo.create_racer(
+            session, name="A", owner_id=1, career_length=5, peak_end=3
+        )
+        r2 = await repo.create_racer(
+            session, name="B", owner_id=2, career_length=5, peak_end=3
+        )
+        await repo.update_racer(session, r1.id, races_completed=4)
+        await repo.update_racer(session, r2.id, races_completed=4)
         race = await repo.create_race(session, guild_id=guild.id)
         await repo.create_race_entries(session, race.id, [r1.id, r2.id])
 
@@ -134,7 +141,9 @@ async def test_retirement(tmp_path: Path) -> None:
     async with scheduler.sessionmaker() as session:
         racers = (await session.execute(select(Racer))).scalars().all()
         retired = [r for r in racers if r.retired]
-        assert retired and len(racers) == 4
+        active = [r for r in racers if not r.retired]
+        assert len(retired) == 2  # both original racers retired
+        assert len(active) == 2  # two successors created
 
 
 @pytest.mark.asyncio

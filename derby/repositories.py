@@ -58,6 +58,8 @@ async def create_racer(
     temperament: str = "Quirky",
     mood: int = 3,
     injuries: str = "",
+    career_length: int = 30,
+    peak_end: int = 18,
 ) -> Racer:
     return await _create(
         session,
@@ -71,6 +73,8 @@ async def create_racer(
         temperament=temperament,
         mood=mood,
         injuries=injuries,
+        career_length=career_length,
+        peak_end=peak_end,
     )
 
 
