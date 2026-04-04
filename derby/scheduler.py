@@ -59,10 +59,17 @@ class DerbyScheduler:
         )
         self.task = tasks.loop(time=race_times)(self._run)
         self.task.start()
-        # Wait for guild cache to populate before creating pending races
+        # Ensure pending races exist once the guild cache is ready.
+        # This runs in the background so it doesn't block setup_hook.
         if hasattr(self.bot, "wait_until_ready"):
-            await self.bot.wait_until_ready()
-        # Ensure each guild has a pending race with pre-picked participants
+            asyncio.create_task(self._deferred_ensure_pending_races())
+        else:
+            # Tests don't use wait_until_ready — run immediately
+            await self._ensure_pending_races()
+
+    async def _deferred_ensure_pending_races(self) -> None:
+        """Wait for the bot to be fully ready, then create pending races."""
+        await self.bot.wait_until_ready()
         await self._ensure_pending_races()
 
     async def close(self) -> None:
