@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     racer_sell_fraction: float = 0.5
     max_racers_per_owner: int = 3
     min_pool_size: int = 20
+    placement_prizes: str = "50,30,20"
 
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":

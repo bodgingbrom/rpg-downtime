@@ -257,6 +257,7 @@ class DerbyScheduler:
                 "racer_sell_fraction": ("FLOAT", "NULL"),
                 "max_racers_per_owner": ("INTEGER", "NULL"),
                 "min_pool_size": ("INTEGER", "NULL"),
+                "placement_prizes": ("VARCHAR", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:
@@ -461,6 +462,13 @@ class DerbyScheduler:
                 await logic.resolve_payouts(
                     session, race_id, winner_id, guild_id=guild_id
                 )
+            prize_list = logic.parse_placement_prizes(
+                self._resolve("placement_prizes", gs)
+            )
+            placement_awards = await logic.resolve_placement_prizes(
+                session, result.placements, participants,
+                guild_id=guild_id, prize_list=prize_list,
+            )
             mood_changes = await logic.apply_mood_drift(
                 session, result.placements, participants
             )
@@ -513,6 +521,10 @@ class DerbyScheduler:
             await self._announce_retirements(guild_id, retirements)
         if healed:
             await self._announce_healed(guild_id, healed)
+        if placement_awards:
+            await self._announce_placement_prizes(
+                guild_id, placement_awards, names
+            )
         self.bot.logger.info(
             "Race finished",
             extra={"guild_id": guild_id, "race_id": race_id},
@@ -808,6 +820,37 @@ class DerbyScheduler:
             title="\U0001f489 Racers Recovered!",
             description=f"{names} {'has' if len(healed) == 1 else 'have'} recovered from injuries and rejoined the roster!",
             color=0x2ECC71,
+        )
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            return
+
+    async def _announce_placement_prizes(
+        self,
+        guild_id: int,
+        awards: list[tuple[int, int, int]],
+        names: dict[int, str] | None = None,
+    ) -> None:
+        """Announce placement prize earnings to the race channel."""
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        channel = self._get_channel(guild)
+        if channel is None:
+            return
+        lines: list[str] = []
+        for owner_id, racer_id, prize in awards:
+            racer_name = (names or {}).get(racer_id, f"Racer {racer_id}")
+            lines.append(
+                f"**{racer_name}** earned **{prize} coins** for <@{owner_id}>!"
+            )
+        if not lines:
+            return
+        embed = discord.Embed(
+            title="\U0001f4b0 Placement Prizes!",
+            description="\n".join(lines),
+            color=0xF1C40F,
         )
         try:
             await channel.send(embed=embed)

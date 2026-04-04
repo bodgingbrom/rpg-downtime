@@ -87,6 +87,7 @@ class GuildSettings(Base):
     racer_sell_fraction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     max_racers_per_owner: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     min_pool_size: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    placement_prizes: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 __all__ = [
