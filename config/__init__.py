@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     max_racers_per_race: int = 6
     commentary_delay: float = 6.0
     channel_name: str | None = None
+    racer_buy_base: int = 20
+    racer_buy_multiplier: int = 2
+    racer_sell_fraction: float = 0.5
+    max_racers_per_owner: int = 3
+    min_pool_size: int = 20
 
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":

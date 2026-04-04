@@ -55,6 +55,55 @@ async def racer_autocomplete(
     return choices
 
 
+async def unowned_racer_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[int]]:
+    """Autocomplete showing unowned racers with prices."""
+    sessionmaker = interaction.client.scheduler.sessionmaker
+    guild_id = interaction.guild_id or 0
+    settings = interaction.client.settings
+    async with sessionmaker() as session:
+        racers = await repo.get_unowned_guild_racers(session, guild_id)
+        gs = await repo.get_guild_settings(session, guild_id)
+    base = resolve_guild_setting(gs, settings, "racer_buy_base")
+    mult = resolve_guild_setting(gs, settings, "racer_buy_multiplier")
+    choices = []
+    current_lower = current.lower()
+    for r in racers:
+        if current_lower in r.name.lower():
+            price = logic.calculate_buy_price(r, base, mult)
+            choices.append(
+                app_commands.Choice(
+                    name=f"{r.name} - {price} coins", value=r.id
+                )
+            )
+        if len(choices) >= 25:
+            break
+    return choices
+
+
+async def owned_racer_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[int]]:
+    """Autocomplete showing the user's owned racers."""
+    sessionmaker = interaction.client.scheduler.sessionmaker
+    guild_id = interaction.guild_id or 0
+    async with sessionmaker() as session:
+        racers = await repo.get_owned_racers(
+            session, interaction.user.id, guild_id
+        )
+    choices = []
+    current_lower = current.lower()
+    for r in racers:
+        if current_lower in r.name.lower():
+            choices.append(
+                app_commands.Choice(name=f"{r.name} (#{r.id})", value=r.id)
+            )
+        if len(choices) >= 25:
+            break
+    return choices
+
+
 class Derby(commands.Cog, name="derby"):
     def __init__(self, bot) -> None:
         self.bot = bot
@@ -816,6 +865,11 @@ class Derby(commands.Cog, name="derby"):
         "max_racers_per_race",
         "commentary_delay",
         "channel_name",
+        "racer_buy_base",
+        "racer_buy_multiplier",
+        "racer_sell_fraction",
+        "max_racers_per_owner",
+        "min_pool_size",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -880,7 +934,7 @@ class Derby(commands.Cog, name="derby"):
             try:
                 if key == "channel_name":
                     parsed: str | int | float = value
-                elif key == "commentary_delay":
+                elif key in ("commentary_delay", "racer_sell_fraction"):
                     parsed = float(value)
                 else:
                     parsed = int(value)
@@ -910,5 +964,263 @@ class Derby(commands.Cog, name="derby"):
         ][:25]
 
 
+class Stable(commands.Cog, name="stable"):
+    """Player-facing racer ownership commands."""
+
+    def __init__(self, bot) -> None:
+        self.bot = bot
+
+    def _resolve(self, key: str, gs) -> int | float | str:
+        return resolve_guild_setting(gs, self.bot.settings, key)
+
+    @commands.hybrid_group(name="stable", description="Your racing stable")
+    async def stable(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await self._show_stable(context)
+
+    async def _show_stable(self, context: Context) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            racers = await repo.get_owned_racers(
+                session, context.author.id, guild_id
+            )
+        if not racers:
+            await context.send(
+                "You don't own any racers yet! Use `/stable browse` to see "
+                "what's available, then `/stable buy` to purchase one.",
+                ephemeral=True,
+            )
+            return
+        embed = discord.Embed(title=f"{context.author.display_name}'s Stable")
+        for r in racers:
+            phase = logic.career_phase(r)
+            eff = logic.effective_stats(r)
+            injury = f" | Injured: {r.injuries} ({r.injury_races_remaining}r)" if r.injuries else ""
+            embed.add_field(
+                name=f"{r.name} (#{r.id})",
+                value=(
+                    f"Spd {_stat_band(eff['speed'])} / "
+                    f"Cor {_stat_band(eff['cornering'])} / "
+                    f"Sta {_stat_band(eff['stamina'])}\n"
+                    f"{r.temperament} | {_mood_label(r.mood)} | {phase}{injury}"
+                ),
+                inline=False,
+            )
+        await context.send(embed=embed)
+
+    @stable.command(name="browse", description="Browse racers available for purchase")
+    async def stable_browse(self, context: Context) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            racers = await repo.get_unowned_guild_racers(session, guild_id)
+            gs = await repo.get_guild_settings(session, guild_id)
+        base = self._resolve("racer_buy_base", gs)
+        mult = self._resolve("racer_buy_multiplier", gs)
+        if not racers:
+            await context.send("No racers available for purchase right now.", ephemeral=True)
+            return
+        embed = discord.Embed(title="Racers For Sale")
+        for r in racers[:25]:  # Discord embed limit
+            price = logic.calculate_buy_price(r, base, mult)
+            eff = logic.effective_stats(r)
+            phase = logic.career_phase(r)
+            embed.add_field(
+                name=f"{r.name} — {price} coins",
+                value=(
+                    f"Spd {_stat_band(eff['speed'])} / "
+                    f"Cor {_stat_band(eff['cornering'])} / "
+                    f"Sta {_stat_band(eff['stamina'])}\n"
+                    f"{r.temperament} | {_mood_label(r.mood)} | {phase}"
+                ),
+                inline=False,
+            )
+        if len(racers) > 25:
+            embed.set_footer(text=f"Showing 25 of {len(racers)} available racers")
+        await context.send(embed=embed)
+
+    @stable.command(name="buy", description="Buy an unowned racer")
+    @app_commands.describe(racer="Racer to purchase")
+    @app_commands.autocomplete(racer=unowned_racer_autocomplete)
+    async def stable_buy(self, context: Context, racer: int) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+            if racer_obj.owner_id != 0:
+                await context.send("That racer is already owned!", ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+            base = self._resolve("racer_buy_base", gs)
+            mult = self._resolve("racer_buy_multiplier", gs)
+            max_owned = self._resolve("max_racers_per_owner", gs)
+            price = logic.calculate_buy_price(racer_obj, base, mult)
+
+            # Check ownership limit
+            owned = await repo.get_owned_racers(
+                session, context.author.id, guild_id
+            )
+            if len(owned) >= max_owned:
+                await context.send(
+                    f"You already own {len(owned)} racers (max {max_owned}). "
+                    f"Sell one first with `/stable sell`.",
+                    ephemeral=True,
+                )
+                return
+
+            # Check/create wallet
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
+            if wallet is None:
+                default_bal = self._resolve("default_wallet", gs)
+                wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            if wallet.balance < price:
+                await context.send(
+                    f"Not enough coins! **{racer_obj.name}** costs "
+                    f"**{price}** but you only have **{wallet.balance}**.",
+                    ephemeral=True,
+                )
+                return
+
+            # Re-verify ownership hasn't changed (race condition guard)
+            refreshed = await repo.get_racer(session, racer)
+            if refreshed is None or refreshed.owner_id != 0:
+                await context.send("That racer was just purchased by someone else!", ephemeral=True)
+                return
+
+            wallet.balance -= price
+            await repo.update_racer(session, racer, owner_id=context.author.id)
+            await session.commit()
+
+        embed = discord.Embed(
+            title=f"Purchased {racer_obj.name}!",
+            description=f"You bought **{racer_obj.name}** for **{price} coins**.",
+            color=0x2ECC71,
+        )
+        eff = logic.effective_stats(racer_obj)
+        embed.add_field(name="Speed", value=_stat_band(eff["speed"]), inline=True)
+        embed.add_field(name="Cornering", value=_stat_band(eff["cornering"]), inline=True)
+        embed.add_field(name="Stamina", value=_stat_band(eff["stamina"]), inline=True)
+        embed.add_field(name="Temperament", value=racer_obj.temperament, inline=True)
+        embed.set_footer(text=f"Balance: {wallet.balance} coins")
+        await context.send(embed=embed)
+
+    @stable.command(name="sell", description="Sell one of your racers back to the pool")
+    @app_commands.describe(racer="Racer to sell")
+    @app_commands.autocomplete(racer=owned_racer_autocomplete)
+    async def stable_sell(self, context: Context, racer: int) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+            if racer_obj.owner_id != context.author.id:
+                await context.send("You don't own that racer!", ephemeral=True)
+                return
+
+            # Block selling if racer is in an unfinished race
+            in_race = (
+                await session.execute(
+                    select(models.RaceEntry.id)
+                    .join(models.Race, models.RaceEntry.race_id == models.Race.id)
+                    .where(
+                        models.RaceEntry.racer_id == racer,
+                        models.Race.finished.is_(False),
+                    )
+                )
+            ).scalars().first()
+            if in_race is not None:
+                await context.send(
+                    f"**{racer_obj.name}** is entered in an upcoming race and can't be sold right now.",
+                    ephemeral=True,
+                )
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+            base = self._resolve("racer_buy_base", gs)
+            mult = self._resolve("racer_buy_multiplier", gs)
+            frac = self._resolve("racer_sell_fraction", gs)
+            sell_price = logic.calculate_sell_price(racer_obj, base, mult, frac)
+
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
+            if wallet is None:
+                default_bal = self._resolve("default_wallet", gs)
+                wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            wallet.balance += sell_price
+            await repo.update_racer(session, racer, owner_id=0)
+            await session.commit()
+
+        await context.send(
+            f"Sold **{racer_obj.name}** for **{sell_price} coins**. "
+            f"Balance: **{wallet.balance}**."
+        )
+
+    @stable.command(name="rename", description="Rename one of your racers")
+    @app_commands.describe(racer="Racer to rename", new_name="New name (max 32 characters)")
+    @app_commands.autocomplete(racer=owned_racer_autocomplete)
+    async def stable_rename(
+        self, context: Context, racer: int, new_name: str
+    ) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        new_name = new_name.strip()
+        if not new_name or len(new_name) > 32:
+            await context.send(
+                "Name must be 1-32 characters.", ephemeral=True
+            )
+            return
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+            if racer_obj.owner_id != context.author.id:
+                await context.send("You don't own that racer!", ephemeral=True)
+                return
+
+            # Check name uniqueness among non-retired racers in guild
+            existing = await session.execute(
+                select(models.Racer.id).where(
+                    models.Racer.guild_id == guild_id,
+                    models.Racer.retired.is_(False),
+                    models.Racer.name == new_name,
+                )
+            )
+            if existing.scalars().first() is not None:
+                await context.send(
+                    f"A racer named **{new_name}** already exists in this guild.",
+                    ephemeral=True,
+                )
+                return
+
+            old_name = racer_obj.name
+            await repo.update_racer(session, racer, name=new_name)
+
+        await context.send(
+            f"Renamed **{old_name}** to **{new_name}**."
+        )
+
+
 async def setup(bot) -> None:
     await bot.add_cog(Derby(bot))
+    await bot.add_cog(Stable(bot))

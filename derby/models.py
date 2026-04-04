@@ -82,6 +82,11 @@ class GuildSettings(Base):
     max_racers_per_race: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     commentary_delay: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     channel_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    racer_buy_base: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    racer_buy_multiplier: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    racer_sell_fraction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    max_racers_per_owner: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    min_pool_size: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 __all__ = [

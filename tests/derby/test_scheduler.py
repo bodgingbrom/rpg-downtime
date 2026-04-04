@@ -74,6 +74,7 @@ async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -123,6 +124,7 @@ async def test_retirement(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -169,6 +171,7 @@ async def test_stream_commentary(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -194,6 +197,7 @@ async def test_commentary_stops_when_cancelled(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -228,6 +232,7 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -281,6 +286,7 @@ async def test_race_uses_max_six_racers(
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -368,6 +374,7 @@ async def test_ensure_pending_races_creates_race(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -404,6 +411,7 @@ async def test_guild_isolation(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild_a = DummyGuild(100)
@@ -517,3 +525,73 @@ async def test_guild_settings_max_racers_override(tmp_path: Path) -> None:
         assert len(races) == 1
         entries = await repo.get_race_entries(session, races[0].id)
         assert len(entries) == 3  # guild override, not global 6
+
+
+@pytest.mark.asyncio
+async def test_replenish_pool(tmp_path: Path) -> None:
+    """Pool replenishment creates racers up to min_pool_size, capped at 5 per call."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=8,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    # Start with 2 unowned racers — need 6 more to reach min_pool_size=8
+    async with scheduler.sessionmaker() as session:
+        await repo.create_racer(
+            session, name="A", owner_id=0, guild_id=GUILD_ID, speed=10
+        )
+        await repo.create_racer(
+            session, name="B", owner_id=0, guild_id=GUILD_ID, speed=10
+        )
+
+    # First call: creates 5 (capped)
+    created = await scheduler._replenish_pool(GUILD_ID)
+    assert created == 5
+
+    # Second call: creates 1 more (only 1 needed now)
+    created = await scheduler._replenish_pool(GUILD_ID)
+    assert created == 1
+
+    # Third call: pool is full, no more created
+    created = await scheduler._replenish_pool(GUILD_ID)
+    assert created == 0
+
+    async with scheduler.sessionmaker() as session:
+        count = await repo.count_unowned_eligible_racers(session, GUILD_ID)
+        assert count == 8
+
+
+@pytest.mark.asyncio
+async def test_replenish_pool_disabled(tmp_path: Path) -> None:
+    """When min_pool_size=0, no racers are created."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    created = await scheduler._replenish_pool(GUILD_ID)
+    assert created == 0

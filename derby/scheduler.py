@@ -246,6 +246,26 @@ class DerbyScheduler:
                         "ALTER TABLE bets ADD COLUMN payout_multiplier FLOAT DEFAULT 2.0"
                     )
                 )
+
+            # Add ownership/pool columns to guild_settings
+            gs_columns = await conn.run_sync(
+                lambda c: get_table_columns(c, "guild_settings")
+            )
+            gs_migrations = {
+                "racer_buy_base": ("INTEGER", "NULL"),
+                "racer_buy_multiplier": ("INTEGER", "NULL"),
+                "racer_sell_fraction": ("FLOAT", "NULL"),
+                "max_racers_per_owner": ("INTEGER", "NULL"),
+                "min_pool_size": ("INTEGER", "NULL"),
+            }
+            for col_name, (col_type, default) in gs_migrations.items():
+                if col_name not in gs_columns:
+                    await conn.execute(
+                        text(
+                            f"ALTER TABLE guild_settings ADD COLUMN "
+                            f"{col_name} {col_type} DEFAULT {default}"
+                        )
+                    )
         self._initialized = True
 
     async def _run(self) -> None:
@@ -256,6 +276,7 @@ class DerbyScheduler:
         await self._init_db()
 
         for guild in self.bot.guilds:
+            await self._replenish_pool(guild.id)
             # Find the pending race (created after the last race finished)
             async with self.sessionmaker() as session:
                 result = await session.execute(
@@ -313,6 +334,8 @@ class DerbyScheduler:
         Called on startup so there's always something for /race upcoming.
         """
         for guild in self.bot.guilds:
+            await self._replenish_pool(guild.id)
+
             async with self.sessionmaker() as session:
                 result = await session.execute(
                     select(models.Race).where(
@@ -331,6 +354,50 @@ class DerbyScheduler:
                 continue
 
             await self._create_next_race(guild.id)
+
+    async def _replenish_pool(self, guild_id: int) -> int:
+        """Ensure the guild has at least ``min_pool_size`` unowned eligible racers.
+
+        Creates up to 5 new racers per call to avoid flooding.
+        Returns the number of racers created.
+        """
+        gs = await self._load_guild_settings(guild_id)
+        min_size = self._resolve("min_pool_size", gs)
+
+        async with self.sessionmaker() as session:
+            current = await repo.count_unowned_eligible_racers(session, guild_id)
+
+        gap = min_size - current
+        if gap <= 0:
+            return 0
+
+        to_create = min(gap, 5)  # cap per call
+
+        # Gather taken names for uniqueness
+        async with self.sessionmaker() as session:
+            result = await session.execute(
+                select(models.Racer.name).where(
+                    models.Racer.guild_id == guild_id,
+                    models.Racer.retired.is_(False),
+                )
+            )
+            taken = {row[0] for row in result.all()}
+
+        created = 0
+        for _ in range(to_create):
+            kwargs = logic.generate_pool_racer(guild_id, taken)
+            taken.add(kwargs["name"])
+            async with self.sessionmaker() as session:
+                await repo.create_racer(session, **kwargs)
+            created += 1
+
+        if created:
+            self.bot.logger.info(
+                "Replenished pool with %d racers (had %d, target %d)",
+                created, current, min_size,
+                extra={"guild_id": guild_id},
+            )
+        return created
 
     async def _backfill_race_entries(self, race: models.Race) -> None:
         """Add participants to a legacy pending race that has none."""
