@@ -1,9 +1,13 @@
+import random
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from derby.logic import (
+    MOOD_BONUS,
+    MOOD_THRESHOLDS,
     MapSegment,
     RaceMap,
     RaceResult,
@@ -14,6 +18,7 @@ from derby.logic import (
     load_map,
     pick_map,
     resolve_payouts,
+    roll_mood_bonus,
     simulate_race,
 )
 from db_base import Base
@@ -293,3 +298,140 @@ def test_load_map_frozen_circuit(tmp_path):
     assert len(m.segments) == 5
     assert m.segments[0].type == "straight"
     assert m.segments[1].type == "corner"
+
+
+# ---------------------------------------------------------------------------
+# Mood d20 roll tests
+# ---------------------------------------------------------------------------
+
+
+def test_roll_mood_bonus_great_mood_bonus():
+    """Mood 5 (Great) should grant bonus on rolls 17+."""
+    rng = random.Random(0)
+    bonus_count = 0
+    penalty_count = 0
+    for _ in range(1000):
+        roll, bonus = roll_mood_bonus(5, rng)
+        if bonus > 0:
+            assert roll >= 17
+            bonus_count += 1
+        elif bonus < 0:
+            assert roll <= 1
+            penalty_count += 1
+    # ~20% bonus chance, ~5% penalty → expect roughly 200 and 50
+    assert 150 < bonus_count < 260
+    assert 20 < penalty_count < 90
+
+
+def test_roll_mood_bonus_awful_mood_penalty():
+    """Mood 1 (Awful) should never get a bonus, 20% penalty."""
+    rng = random.Random(42)
+    for _ in range(1000):
+        roll, bonus = roll_mood_bonus(1, rng)
+        assert bonus <= 0  # never positive
+    # Re-run and count penalties
+    rng = random.Random(42)
+    penalty_count = sum(1 for _ in range(1000) if roll_mood_bonus(1, rng)[1] < 0)
+    assert 150 < penalty_count < 260  # ~20%
+
+
+def test_roll_mood_bonus_normal_symmetric():
+    """Mood 3 (Normal) should have equal bonus/penalty chances (10% each)."""
+    rng = random.Random(99)
+    bonuses = 0
+    penalties = 0
+    for _ in range(2000):
+        _, bonus = roll_mood_bonus(3, rng)
+        if bonus > 0:
+            bonuses += 1
+        elif bonus < 0:
+            penalties += 1
+    # Both should be ~10% of 2000 = ~200
+    assert 140 < bonuses < 280
+    assert 140 < penalties < 280
+
+
+def test_roll_mood_bonus_values():
+    """Bonus and penalty should be exactly ±MOOD_BONUS."""
+    rng = random.Random(0)
+    seen_bonus = False
+    seen_penalty = False
+    for _ in range(500):
+        _, bonus = roll_mood_bonus(5, rng)
+        if bonus > 0:
+            assert bonus == MOOD_BONUS
+            seen_bonus = True
+        elif bonus < 0:
+            assert bonus == -MOOD_BONUS
+            seen_penalty = True
+    assert seen_bonus
+    # May or may not see penalty with mood 5 in 500 rolls — that's ok
+
+
+def test_mood_affects_simulation_outcome():
+    """Over many races, great mood should win more than awful mood (same stats)."""
+    great = Racer(id=1, name="Happy", owner_id=1, speed=15, cornering=15, stamina=15, mood=5)
+    awful = Racer(id=2, name="Grumpy", owner_id=2, speed=15, cornering=15, stamina=15, mood=1)
+    race_map = RaceMap(
+        name="Mood Test",
+        theme="test",
+        description="",
+        segments=[
+            MapSegment(type="straight", distance=2),
+            MapSegment(type="corner", distance=2),
+            MapSegment(type="climb", distance=2),
+            MapSegment(type="straight", distance=2),
+        ],
+    )
+    wins = 0
+    for seed in range(200):
+        result = simulate_race({"racers": [great, awful]}, seed=seed, race_map=race_map)
+        if result.placements[0] == 1:
+            wins += 1
+    # Great mood should win more than half — expect ~55-70%
+    assert wins > 100, f"Great mood racer won only {wins}/200 times"
+
+
+def test_mood_events_in_segments():
+    """Mood roll events should appear in segment events."""
+    r1 = Racer(id=1, name="Lucky", owner_id=1, speed=20, cornering=20, stamina=20, mood=5)
+    r2 = Racer(id=2, name="Unlucky", owner_id=2, speed=20, cornering=20, stamina=20, mood=1)
+    race_map = RaceMap(
+        name="Event Test",
+        theme="test",
+        description="",
+        segments=[
+            MapSegment(type="straight", distance=2),
+            MapSegment(type="corner", distance=2),
+            MapSegment(type="climb", distance=2),
+            MapSegment(type="straight", distance=2),
+            MapSegment(type="corner", distance=2),
+        ],
+    )
+    # Run enough seeds until we find mood events
+    found_mood_event = False
+    for seed in range(50):
+        result = simulate_race({"racers": [r1, r2]}, seed=seed, race_map=race_map)
+        all_events = [e for seg in result.segments for e in seg.events]
+        for event in all_events:
+            if "d20" in event or "natural" in event or "confidence" in event or "focus" in event:
+                found_mood_event = True
+                break
+        if found_mood_event:
+            break
+    assert found_mood_event, "No mood events found in 50 race seeds"
+
+
+def test_mood_odds_shift():
+    """Odds should reflect mood — great mood racer gets lower payout."""
+    happy = Racer(id=1, name="Happy", owner_id=1, speed=15, cornering=15, stamina=15, mood=5)
+    grumpy = Racer(id=2, name="Grumpy", owner_id=2, speed=15, cornering=15, stamina=15, mood=1)
+    race_map = RaceMap(
+        name="Odds Test",
+        theme="test",
+        description="",
+        segments=[MapSegment(type="straight", distance=2)] * 3,
+    )
+    odds = calculate_odds([happy, grumpy], [], 0.1, race_map=race_map)
+    # Happy (mood 5) should have lower payout (more likely to win)
+    assert odds[1] < odds[2], f"Expected happy odds {odds[1]} < grumpy odds {odds[2]}"

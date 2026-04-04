@@ -35,6 +35,33 @@ MOOD_LABELS = {
     5: "Great",
 }
 
+# D20 mood thresholds: (bonus_threshold, penalty_max)
+# Roll >= bonus_threshold → +MOOD_BONUS; roll <= penalty_max → -MOOD_BONUS
+MOOD_THRESHOLDS = {
+    5: (17, 1),   # Great: 20% bonus, 5% penalty
+    4: (18, 2),   # Good:  15% bonus, 10% penalty
+    3: (19, 2),   # Normal: 10% bonus, 10% penalty
+    2: (20, 4),   # Bad:   5% bonus, 20% penalty
+    1: (21, 4),   # Awful: 0% bonus (impossible on d20), 20% penalty
+}
+
+MOOD_BONUS = 5.0  # flat points added/subtracted per mood event
+
+
+def roll_mood_bonus(mood: int, rng: random.Random) -> tuple[int, float]:
+    """Roll a d20 for a mood event and return ``(roll, bonus)``.
+
+    ``bonus`` is ``+MOOD_BONUS``, ``-MOOD_BONUS``, or ``0``.
+    """
+    roll = rng.randint(1, 20)
+    bonus_threshold, penalty_max = MOOD_THRESHOLDS.get(mood, (19, 2))
+
+    if roll >= bonus_threshold:
+        return roll, MOOD_BONUS
+    if roll <= penalty_max:
+        return roll, -MOOD_BONUS
+    return roll, 0.0
+
 
 # ---------------------------------------------------------------------------
 # Map data structures and loading
@@ -264,6 +291,17 @@ def _detect_events(
     return events
 
 
+def _mood_expected_bonus(mood: int) -> float:
+    """Return the average per-segment bonus for a given mood.
+
+    Used to nudge odds so they reflect mood advantage/disadvantage.
+    """
+    bonus_threshold, penalty_max = MOOD_THRESHOLDS.get(mood, (19, 2))
+    bonus_chance = max(0, 21 - bonus_threshold) / 20.0
+    penalty_chance = penalty_max / 20.0
+    return (bonus_chance - penalty_chance) * MOOD_BONUS
+
+
 def _map_weighted_power(
     racer: models.Racer, race_map: RaceMap
 ) -> float:
@@ -280,7 +318,8 @@ def _map_weighted_power(
             + stats["cornering"] * weights["cornering"]
             + stats["stamina"] * weights["stamina"]
         )
-    return total / len(race_map.segments) if race_map.segments else _racer_power(racer)
+    base = total / len(race_map.segments) if race_map.segments else _racer_power(racer)
+    return base + _mood_expected_bonus(getattr(racer, "mood", 3))
 
 
 def calculate_odds(
@@ -359,13 +398,24 @@ def simulate_race(
         prev_order = [r.id for r in raw_racers]
         segment_results: List[SegmentResult] = []
 
+        # Build mood lookup for d20 rolls
+        racer_moods: Dict[int, int] = {
+            r.id: getattr(r, "mood", 3) for r in raw_racers
+        }
+
         for seg_idx, seg in enumerate(race_map.segments):
             seg_scores: Dict[int, float] = {}
             noise_rolls: Dict[int, float] = {}
+            mood_rolls: Dict[int, tuple[int, float]] = {}
             for rid, stats in racer_stats.items():
                 score, noise = _segment_score(
                     stats, seg.type, seg.distance, seg_idx, rng
                 )
+                # Mood d20 roll
+                d20, mood_bonus = roll_mood_bonus(racer_moods.get(rid, 3), rng)
+                mood_rolls[rid] = (d20, mood_bonus)
+                score += mood_bonus
+
                 seg_scores[rid] = score
                 noise_rolls[rid] = noise
                 cumulative[rid] += score
@@ -379,6 +429,21 @@ def simulate_race(
             events = _detect_events(
                 prev_order, curr_order, names, cumulative, noise_rolls
             )
+
+            # Add mood roll events
+            for rid, (d20, bonus) in mood_rolls.items():
+                rname = names.get(rid, f"Racer {rid}")
+                if bonus > 0:
+                    if d20 == 20:
+                        events.append(f"{rname} rolls a natural 20! Inspired burst of energy!")
+                    else:
+                        events.append(f"{rname} finds a burst of confidence! (d20: {d20})")
+                elif bonus < 0:
+                    if d20 == 1:
+                        events.append(f"{rname} rolls a natural 1! Completely loses focus!")
+                    else:
+                        events.append(f"{rname} loses concentration. (d20: {d20})")
+
             segment_results.append(
                 SegmentResult(
                     position=seg_idx + 1,
