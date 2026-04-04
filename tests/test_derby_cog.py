@@ -64,7 +64,7 @@ async def test_race_upcoming(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -96,7 +96,7 @@ async def test_race_bet(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -155,7 +155,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -186,7 +186,7 @@ async def test_racer_delete(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -216,7 +216,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=101,
         bet_window=0,
@@ -293,7 +293,7 @@ async def test_debug_race(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -325,7 +325,7 @@ async def test_race_history(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -375,7 +375,7 @@ async def test_add_racer_with_stats(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -412,7 +412,7 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -448,7 +448,7 @@ async def test_add_racer_default_name(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -479,7 +479,7 @@ async def test_add_racer_default_name_avoids_taken(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -512,7 +512,7 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -542,7 +542,7 @@ async def test_race_info_bands(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,
@@ -579,7 +579,7 @@ async def test_race_info_mood_label(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
     bot.settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=65,
         bet_window=0,

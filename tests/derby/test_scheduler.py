@@ -65,23 +65,32 @@ class DummyUser:
 async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=101,
         bet_window=0,
         countdown_total=0,
+        commentary_delay=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
     bot.guilds.append(guild)
 
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
-    await scheduler.tick()
+    await scheduler._init_db()
 
+    # No racers — tick should not create a race
+    await scheduler.tick()
+    async with scheduler.sessionmaker() as session:
+        races = (await session.execute(select(Race))).scalars().all()
+        assert len(races) == 0
+
+    # Add racers, tick again — should create and finish a race
     async with scheduler.sessionmaker() as session:
         await repo.create_racer(session, name="A", owner_id=1)
         await repo.create_racer(session, name="B", owner_id=2)
-        await scheduler.tick()
+    await scheduler.tick()
+    async with scheduler.sessionmaker() as session:
         races = (await session.execute(select(Race))).scalars().all()
         assert len(races) == 1 and races[0].finished
 
@@ -90,11 +99,12 @@ async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
 async def test_retirement(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=0,
         bet_window=0,
         countdown_total=0,
+        commentary_delay=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
@@ -105,6 +115,8 @@ async def test_retirement(tmp_path: Path) -> None:
     async with scheduler.sessionmaker() as session:
         await repo.create_racer(session, name="A", owner_id=1)
         await repo.create_racer(session, name="B", owner_id=2)
+
+    # tick() now creates and runs the race in one step
     await scheduler.tick()
 
     async with scheduler.sessionmaker() as session:
@@ -117,11 +129,12 @@ async def test_retirement(tmp_path: Path) -> None:
 async def test_stream_commentary(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=101,
         bet_window=0,
         countdown_total=0,
+        commentary_delay=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
@@ -141,11 +154,12 @@ async def test_stream_commentary(tmp_path: Path) -> None:
 async def test_commentary_stops_when_cancelled(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=101,
         bet_window=0,
         countdown_total=0,
+        commentary_delay=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
@@ -174,11 +188,12 @@ async def test_commentary_stops_when_cancelled(tmp_path: Path) -> None:
 async def test_payout_dm_sent(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=101,
         bet_window=0,
         countdown_total=0,
+        commentary_delay=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
@@ -192,6 +207,7 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
     await scheduler._init_db()
     async with scheduler.sessionmaker() as session:
+        # Pre-create a pending race with bets, then use _also_start_pending_races
         race = await repo.create_race(session, guild_id=guild.id)
         r1 = await repo.create_racer(session, name="A", owner_id=1)
         r2 = await repo.create_racer(session, name="B", owner_id=2)
@@ -204,7 +220,8 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
             session, race_id=race.id, user_id=user2.id, racer_id=r2.id, amount=20
         )
 
-    await scheduler.tick()
+    # Run the pre-created race via the pending-race handler
+    await scheduler._also_start_pending_races()
 
     assert len(user1.dms) == 1
     assert len(user2.dms) == 1
@@ -216,11 +233,12 @@ async def test_race_uses_max_eight_racers(
 ) -> None:
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=101,
         bet_window=0,
         countdown_total=0,
+        commentary_delay=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(1)
@@ -229,7 +247,6 @@ async def test_race_uses_max_eight_racers(
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
     await scheduler._init_db()
     async with scheduler.sessionmaker() as session:
-        await repo.create_race(session, guild_id=guild.id)
         for i in range(10):
             await repo.create_racer(session, name=f"R{i}", owner_id=i)
 
@@ -256,7 +273,7 @@ async def test_race_uses_max_eight_racers(
 async def test_config_channel_used(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
-        race_frequency=1,
+        race_times=["12:00"],
         default_wallet=100,
         retirement_threshold=101,
         bet_window=0,
