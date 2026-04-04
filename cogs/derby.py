@@ -476,46 +476,35 @@ class Derby(commands.Cog, name="derby"):
                 )
         await context.send(embed=embed)
 
-    @derby_group.command(name="start_race", description="Start a new race now")
+    @derby_group.command(
+        name="start_schedule",
+        description="Start the automatic race schedule",
+    )
     @checks.has_role("Race Admin")
-    async def start_race(self, context: Context) -> None:
+    async def start_schedule(self, context: Context) -> None:
         await context.defer()
-        async with self.bot.scheduler.sessionmaker() as session:
-            # Check for existing pending races to avoid confusion
-            existing = await session.execute(
-                select(models.Race).where(models.Race.finished.is_(False))
-            )
-            pending = [
-                r for r in existing.scalars().all()
-                if r.id not in self.bot.scheduler.active_races
-            ]
-            if pending:
-                await context.send(
-                    f"There's already a pending race (Race {pending[0].id}). "
-                    f"Use `/derby race force-start` to run it or "
-                    f"`/derby cancel_race` to cancel it first.",
-                    ephemeral=True,
-                )
-                return
-            race = await repo.create_race(session, guild_id=context.guild.id)
-            racers_result = await session.execute(
-                select(models.Racer).where(models.Racer.retired.is_(False))
-            )
-            racers = racers_result.scalars().all()
-        embed = discord.Embed(
-            title=f"Race {race.id} Created",
-            description=f"{len(racers)} active racers in the pool",
+        scheduler = self.bot.scheduler
+        if scheduler.task and scheduler.task.is_running():
+            await context.send("Race schedule is already running.", ephemeral=True)
+            return
+        await scheduler.start()
+        await context.send(
+            "Race schedule started! Races will run at the configured times."
         )
-        if racers:
-            odds = logic.calculate_odds(racers, [], 0.1)
-            for r in racers:
-                mult = odds.get(r.id, 0)
-                embed.add_field(
-                    name=f"{r.name} (#{r.id})",
-                    value=f"{mult:.1f}x",
-                    inline=True,
-                )
-        await context.send(embed=embed)
+
+    @derby_group.command(
+        name="stop_schedule",
+        description="Stop the automatic race schedule",
+    )
+    @checks.has_role("Race Admin")
+    async def stop_schedule(self, context: Context) -> None:
+        await context.defer()
+        scheduler = self.bot.scheduler
+        if not scheduler.task or not scheduler.task.is_running():
+            await context.send("Race schedule is not running.", ephemeral=True)
+            return
+        scheduler.task.cancel()
+        await context.send("Race schedule stopped.")
 
     @derby_group.command(name="cancel_race", description="Cancel the next race")
     @checks.has_role("Race Admin")

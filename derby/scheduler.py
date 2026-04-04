@@ -59,6 +59,9 @@ class DerbyScheduler:
         )
         self.task = tasks.loop(time=race_times)(self._run)
         self.task.start()
+        # Wait for guild cache to populate before creating pending races
+        if hasattr(self.bot, "wait_until_ready"):
+            await self.bot.wait_until_ready()
         # Ensure each guild has a pending race with pre-picked participants
         await self._ensure_pending_races()
 
