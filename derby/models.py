@@ -12,6 +12,7 @@ class Racer(Base):
     __tablename__ = "racers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     name: Mapped[str] = mapped_column(String, nullable=False)
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
     retired: Mapped[bool] = mapped_column(Boolean, default=False)

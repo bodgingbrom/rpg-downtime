@@ -81,6 +81,26 @@ class DerbyScheduler:
         if self._initialized:
             return
         async with self.engine.begin() as conn:
+            # Pre-migration: check if wallets table needs rebuild for
+            # composite PK (user_id, guild_id).  Drop it so create_all
+            # recreates it with the correct schema.
+            def _get_tables(sync_conn: Any) -> set[str]:
+                insp = inspect(sync_conn)
+                return set(insp.get_table_names())
+
+            tables = await conn.run_sync(_get_tables)
+
+            if "wallets" in tables:
+
+                def _wallet_has_guild_id(sync_conn: Any) -> bool:
+                    insp = inspect(sync_conn)
+                    cols = {c["name"] for c in insp.get_columns("wallets")}
+                    return "guild_id" in cols
+
+                has_guild = await conn.run_sync(_wallet_has_guild_id)
+                if not has_guild:
+                    await conn.execute(text("DROP TABLE wallets"))
+
             await conn.run_sync(Base.metadata.create_all)
 
             def get_table_columns(sync_conn: Any, table: str) -> set[str]:
@@ -101,6 +121,7 @@ class DerbyScheduler:
                 "races_completed": ("INTEGER", "0"),
                 "career_length": ("INTEGER", "30"),
                 "peak_end": ("INTEGER", "18"),
+                "guild_id": ("INTEGER", "0"),
             }
             for name, (col_type, default) in racer_migrations.items():
                 if name not in racer_columns:
@@ -108,6 +129,73 @@ class DerbyScheduler:
                         text(
                             f"ALTER TABLE racers ADD COLUMN {name} {col_type} DEFAULT {default}"
                         )
+                    )
+
+            # Migrate guild_id=0 racers: duplicate per guild and fix references
+            if "guild_id" not in racer_columns:
+                guild_rows = await conn.execute(
+                    text("SELECT DISTINCT guild_id FROM races")
+                )
+                guild_ids = [row[0] for row in guild_rows.fetchall()]
+
+                if guild_ids:
+                    old_racers = (
+                        await conn.execute(
+                            text("SELECT id, guild_id, name, owner_id, retired, "
+                                 "speed, cornering, stamina, temperament, mood, "
+                                 "injuries, injury_races_remaining, "
+                                 "races_completed, career_length, peak_end "
+                                 "FROM racers WHERE guild_id = 0")
+                        )
+                    ).fetchall()
+
+                    for gid in guild_ids:
+                        for row in old_racers:
+                            old_id = row[0]
+                            result = await conn.execute(
+                                text(
+                                    "INSERT INTO racers "
+                                    "(guild_id, name, owner_id, retired, "
+                                    "speed, cornering, stamina, temperament, "
+                                    "mood, injuries, injury_races_remaining, "
+                                    "races_completed, career_length, peak_end) "
+                                    "VALUES (:gid, :name, :owner, :retired, "
+                                    ":spd, :cor, :sta, :temp, "
+                                    ":mood, :inj, :irr, "
+                                    ":rc, :cl, :pe)"
+                                ),
+                                {
+                                    "gid": gid, "name": row[2],
+                                    "owner": row[3], "retired": row[4],
+                                    "spd": row[5], "cor": row[6],
+                                    "sta": row[7], "temp": row[8],
+                                    "mood": row[9], "inj": row[10],
+                                    "irr": row[11], "rc": row[12],
+                                    "cl": row[13], "pe": row[14],
+                                },
+                            )
+                            new_id = result.lastrowid
+                            # Fix race_entries for this guild's races
+                            await conn.execute(
+                                text(
+                                    "UPDATE race_entries SET racer_id = :new "
+                                    "WHERE racer_id = :old AND race_id IN "
+                                    "(SELECT id FROM races WHERE guild_id = :gid)"
+                                ),
+                                {"new": new_id, "old": old_id, "gid": gid},
+                            )
+                            # Fix bets for this guild's races
+                            await conn.execute(
+                                text(
+                                    "UPDATE bets SET racer_id = :new "
+                                    "WHERE racer_id = :old AND race_id IN "
+                                    "(SELECT id FROM races WHERE guild_id = :gid)"
+                                ),
+                                {"new": new_id, "old": old_id, "gid": gid},
+                            )
+                    # Remove the original guild_id=0 racers
+                    await conn.execute(
+                        text("DELETE FROM racers WHERE guild_id = 0")
                     )
 
             race_columns = await conn.run_sync(
@@ -165,13 +253,7 @@ class DerbyScheduler:
     async def _create_next_race(self, guild_id: int) -> models.Race | None:
         """Create a pending race for a guild and pre-pick its participants."""
         async with self.sessionmaker() as session:
-            racers_result = await session.execute(
-                select(models.Racer).where(
-                    models.Racer.retired.is_(False),
-                    models.Racer.injury_races_remaining == 0,
-                )
-            )
-            racers = racers_result.scalars().all()
+            racers = await repo.get_guild_racers(session, guild_id)
 
         if len(racers) < 2:
             return None
@@ -220,13 +302,7 @@ class DerbyScheduler:
     async def _backfill_race_entries(self, race: models.Race) -> None:
         """Add participants to a legacy pending race that has none."""
         async with self.sessionmaker() as session:
-            racers_result = await session.execute(
-                select(models.Racer).where(
-                    models.Racer.retired.is_(False),
-                    models.Racer.injury_races_remaining == 0,
-                )
-            )
-            racers = racers_result.scalars().all()
+            racers = await repo.get_guild_racers(session, race.guild_id)
             if len(racers) < 2:
                 return
             participants = random.sample(
@@ -278,7 +354,9 @@ class DerbyScheduler:
                 .all()
             )
             if winner_id is not None:
-                await logic.resolve_payouts(session, race_id, winner_id)
+                await logic.resolve_payouts(
+                    session, race_id, winner_id, guild_id=guild_id
+                )
             mood_changes = await logic.apply_mood_drift(
                 session, result.placements, participants
             )
@@ -286,7 +364,9 @@ class DerbyScheduler:
             await logic.apply_injuries(session, new_injuries, participants)
             healed = await self._tick_injury_recovery(session, guild_id)
             await self._increment_careers(session, participants)
-            retirements = await self._apply_retirements(session, participants)
+            retirements = await self._apply_retirements(
+                session, participants, guild_id=guild_id
+            )
             await session.commit()
         names = result.racer_names
 
@@ -454,7 +534,10 @@ class DerbyScheduler:
             racer.races_completed += 1
 
     async def _apply_retirements(
-        self, session: AsyncSession, racers: list[models.Racer]
+        self,
+        session: AsyncSession,
+        racers: list[models.Racer],
+        guild_id: int = 0,
     ) -> list[tuple[models.Racer, models.Racer]]:
         """Retire racers that have reached their career_length.
 
@@ -470,6 +553,7 @@ class DerbyScheduler:
                     session,
                     name=f"{racer.name} II",
                     owner_id=racer.owner_id,
+                    guild_id=guild_id,
                     speed=random.randint(0, 31),
                     cornering=random.randint(0, 31),
                     stamina=random.randint(0, 31),
@@ -589,6 +673,7 @@ class DerbyScheduler:
         """Decrement injury counters for all injured racers and auto-heal at 0."""
         result = await session.execute(
             select(models.Racer).where(
+                models.Racer.guild_id == guild_id,
                 models.Racer.retired.is_(False),
                 models.Racer.injury_races_remaining > 0,
             )

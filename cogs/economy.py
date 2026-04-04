@@ -14,13 +14,17 @@ class Economy(commands.Cog, name="economy"):
     @commands.hybrid_command(name="wallet", description="Show your wallet balance")
     async def wallet(self, context: Context) -> None:
         await context.defer()
+        guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
-            wallet = await wallet_repo.get_wallet(session, context.author.id)
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
             was_new = wallet is None
             if wallet is None:
                 wallet = await wallet_repo.create_wallet(
                     session,
                     user_id=context.author.id,
+                    guild_id=guild_id,
                     balance=self.bot.settings.default_wallet,
                 )
         if was_new:
