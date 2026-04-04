@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     placement_prizes: str = "50,30,20"
     training_base: int = 10
     training_multiplier: int = 2
+    rest_cost: int = 15
+    feed_cost: int = 30
 
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":

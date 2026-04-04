@@ -887,6 +887,8 @@ class Derby(commands.Cog, name="derby"):
         "placement_prizes",
         "training_base",
         "training_multiplier",
+        "rest_cost",
+        "feed_cost",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -1359,6 +1361,140 @@ class Stable(commands.Cog, name="stable"):
         if fail_chance > 0:
             pct = int(fail_chance * 100)
             embed.description = (embed.description or "") + f"\n*Failure chance was {pct}%*"
+        await context.send(embed=embed)
+
+    @stable.command(name="rest", description="Rest a racer to improve their mood (+1)")
+    @app_commands.describe(racer="Your racer to rest")
+    @app_commands.autocomplete(racer=owned_racer_autocomplete)
+    async def stable_rest(self, context: Context, racer: int) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+            if racer_obj.owner_id != context.author.id:
+                await context.send("You don't own that racer!", ephemeral=True)
+                return
+            if racer_obj.retired:
+                await context.send("This racer is retired.", ephemeral=True)
+                return
+
+            new_mood, error = logic.apply_rest(racer_obj.mood)
+            if error:
+                await context.send(error, ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+            cost = self._resolve("rest_cost", gs)
+
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
+            if wallet is None:
+                default_bal = self._resolve("default_wallet", gs)
+                wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            if wallet.balance < cost:
+                await context.send(
+                    f"Resting costs **{cost} coins** but you only have "
+                    f"**{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            old_mood = racer_obj.mood
+            wallet.balance -= cost
+            racer_obj.mood = new_mood
+            await session.commit()
+
+        embed = discord.Embed(
+            title=f"{racer_obj.name} Takes a Rest",
+            description=(
+                f"{racer_obj.name} relaxes in the stable and feels better."
+            ),
+            color=0x3498DB,
+        )
+        embed.add_field(
+            name="Mood",
+            value=f"{_mood_label(old_mood)} \u2192 {_mood_label(new_mood)}",
+            inline=True,
+        )
+        embed.add_field(name="Cost", value=f"{cost} coins", inline=True)
+        embed.set_footer(text=f"Balance: {wallet.balance} coins")
+        await context.send(embed=embed)
+
+    @stable.command(name="feed", description="Feed a racer premium oats to boost mood (+2)")
+    @app_commands.describe(racer="Your racer to feed")
+    @app_commands.autocomplete(racer=owned_racer_autocomplete)
+    async def stable_feed(self, context: Context, racer: int) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+            if racer_obj.owner_id != context.author.id:
+                await context.send("You don't own that racer!", ephemeral=True)
+                return
+            if racer_obj.retired:
+                await context.send("This racer is retired.", ephemeral=True)
+                return
+
+            new_mood, error = logic.apply_feed(racer_obj.mood)
+            if error:
+                await context.send(error, ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+            cost = self._resolve("feed_cost", gs)
+
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
+            if wallet is None:
+                default_bal = self._resolve("default_wallet", gs)
+                wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            if wallet.balance < cost:
+                await context.send(
+                    f"Feeding costs **{cost} coins** but you only have "
+                    f"**{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            old_mood = racer_obj.mood
+            wallet.balance -= cost
+            racer_obj.mood = new_mood
+            await session.commit()
+
+        embed = discord.Embed(
+            title=f"{racer_obj.name} Enjoys a Feast",
+            description=(
+                f"{racer_obj.name} devours a bucket of premium oats and perks right up."
+            ),
+            color=0xF39C12,
+        )
+        embed.add_field(
+            name="Mood",
+            value=f"{_mood_label(old_mood)} \u2192 {_mood_label(new_mood)}",
+            inline=True,
+        )
+        embed.add_field(name="Cost", value=f"{cost} coins", inline=True)
+        embed.set_footer(text=f"Balance: {wallet.balance} coins")
         await context.send(embed=embed)
 
 

@@ -260,6 +260,8 @@ class DerbyScheduler:
                 "placement_prizes": ("VARCHAR", "NULL"),
                 "training_base": ("INTEGER", "NULL"),
                 "training_multiplier": ("INTEGER", "NULL"),
+                "rest_cost": ("INTEGER", "NULL"),
+                "feed_cost": ("INTEGER", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:

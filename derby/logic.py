@@ -231,6 +231,28 @@ def training_failure_chance(mood: int, injured: bool) -> float:
     return 1.0 - (1.0 - mood_fail) * (1.0 - injury_fail)
 
 
+def apply_rest(current_mood: int) -> tuple[int, str | None]:
+    """Apply rest to a racer, raising mood by 1 (cap 5).
+
+    Returns ``(new_mood, error_message)``.  *error_message* is non-``None``
+    when the action should be rejected (racer already at max mood).
+    """
+    if current_mood >= 5:
+        return current_mood, "This racer is already in great spirits and doesn't need rest."
+    return min(current_mood + 1, 5), None
+
+
+def apply_feed(current_mood: int) -> tuple[int, str | None]:
+    """Apply premium feed to a racer, raising mood by 2 (cap 5).
+
+    Returns ``(new_mood, error_message)``.  *error_message* is non-``None``
+    when the action should be rejected (racer already at max mood).
+    """
+    if current_mood >= 5:
+        return current_mood, "This racer is already in great spirits and doesn't need feeding."
+    return min(current_mood + 2, 5), None
+
+
 def stat_band(value: int) -> str:
     """Return a human-readable quality label for a stat value (0-31)."""
     if value <= 15:

@@ -90,6 +90,8 @@ class GuildSettings(Base):
     placement_prizes: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     training_base: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     training_multiplier: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    rest_cost: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    feed_cost: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 __all__ = [
