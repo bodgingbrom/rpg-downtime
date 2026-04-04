@@ -110,6 +110,7 @@ class RaceResult:
     segments: list[SegmentResult]
     racer_names: dict[int, str]
     map_name: str = ""
+    stumble_counts: dict[int, int] = field(default_factory=dict)  # racer_id -> count
 
 
 _MAPS_DIR = os.path.join(os.path.dirname(__file__), "maps")
@@ -395,6 +396,7 @@ def simulate_race(
             )
 
         cumulative: Dict[int, float] = {r.id: 0.0 for r in raw_racers}
+        stumble_counts: Dict[int, int] = {r.id: 0 for r in raw_racers}
         prev_order = [r.id for r in raw_racers]
         segment_results: List[SegmentResult] = []
 
@@ -419,6 +421,8 @@ def simulate_race(
                 seg_scores[rid] = score
                 noise_rolls[rid] = noise
                 cumulative[rid] += score
+                if noise < 3:
+                    stumble_counts[rid] += 1
 
             curr_order = sorted(
                 cumulative.keys(), key=lambda rid: cumulative[rid], reverse=True
@@ -461,6 +465,7 @@ def simulate_race(
             segments=segment_results,
             racer_names=names,
             map_name=map_name,
+            stumble_counts=stumble_counts,
         )
 
     # --- Legacy single-pass fallback ---
@@ -484,6 +489,75 @@ def simulate_race(
         racer_names=names,
         map_name=map_name,
     )
+
+
+INJURY_DESCRIPTIONS = [
+    "Pulled hamstring",
+    "Bruised shoulder",
+    "Sprained ankle",
+    "Strained tendon",
+    "Twisted knee",
+    "Cracked rib",
+    "Sore back",
+    "Jarred hoof",
+]
+
+
+def check_injury_risk(
+    result: RaceResult,
+    rng: random.Random | None = None,
+) -> list[tuple[int, str, int]]:
+    """Check for post-race injuries based on stumbles and last place.
+
+    Each stumble during the race gives a 5% injury chance (nat 1 on d20).
+    Last place gets one additional 5% check.
+
+    Returns list of ``(racer_id, injury_description, recovery_races)``.
+    """
+    if rng is None:
+        rng = random.Random()
+
+    injuries: list[tuple[int, str, int]] = []
+    if not result.placements:
+        return injuries
+
+    last_place_id = result.placements[-1] if len(result.placements) > 1 else None
+
+    # Collect all racers who need injury rolls
+    # Each stumble = one d20 roll, nat 1 = injured
+    for rid in result.placements:
+        num_stumble_rolls = result.stumble_counts.get(rid, 0)
+
+        # Last place gets one extra roll
+        if rid == last_place_id:
+            num_stumble_rolls += 1
+
+        for _ in range(num_stumble_rolls):
+            if rng.randint(1, 20) == 1:  # nat 1 = 5%
+                description = rng.choice(INJURY_DESCRIPTIONS)
+                recovery = rng.randint(1, 4) + rng.randint(1, 4)  # 2d4
+                injuries.append((rid, description, recovery))
+                break  # only one injury per racer per race
+
+    return injuries
+
+
+async def apply_injuries(
+    session: AsyncSession,
+    injuries: list[tuple[int, str, int]],
+    participants: list[models.Racer] | None = None,
+) -> None:
+    """Apply injuries to racers in the database."""
+    racer_map: dict[int, models.Racer] = {}
+    if participants:
+        racer_map = {r.id: r for r in participants}
+
+    for rid, description, recovery in injuries:
+        racer = racer_map.get(rid) or await session.get(models.Racer, rid)
+        if racer is None:
+            continue
+        racer.injuries = description
+        racer.injury_races_remaining = recovery
 
 
 async def apply_mood_drift(
