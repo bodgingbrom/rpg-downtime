@@ -1,83 +1,27 @@
-"""
-Copyright © Krypton 2019-Present - https://github.com/kkrypt0nn (https://krypton.ninja)
-Description:
-🐍 A simple template to start to code your own and personalized Discord bot in Python
-
-Version: 6.3.0
-"""
-
 import json
 import logging
 import os
 import platform
-import random
 from datetime import datetime
 
-import aiosqlite
 import discord
 import sentry_sdk
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord.ext.commands import Context
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
 
 from config import Settings
-from database import DatabaseManager
-from db_base import Base
 from derby.scheduler import DerbyScheduler
-
-# Ensure all models are imported so Base.metadata.create_all picks them up
-import derby.models  # noqa: F401
-import economy.models  # noqa: F401
 
 load_dotenv()
 sentry_sdk.init(os.getenv("SENTRY_DSN"))
 
-"""	
-Setup bot intents (events restrictions)
-For more information about intents, please go to the following websites:
-https://discordpy.readthedocs.io/en/latest/intents.html
-https://discordpy.readthedocs.io/en/latest/intents.html#privileged-intents
-
-
-Default Intents:
-intents.bans = True
-intents.dm_messages = True
-intents.dm_reactions = True
-intents.dm_typing = True
-intents.emojis = True
-intents.emojis_and_stickers = True
-intents.guild_messages = True
-intents.guild_reactions = True
-intents.guild_scheduled_events = True
-intents.guild_typing = True
-intents.guilds = True
-intents.integrations = True
-intents.invites = True
-intents.messages = True # `message_content` is required to get the content of the messages
-intents.reactions = True
-intents.typing = True
-intents.voice_states = True
-intents.webhooks = True
-
-Privileged Intents (Needs to be enabled on developer portal of Discord), please use them only if you need them:
-intents.members = True
-intents.message_content = True
-intents.presences = True
-"""
-
 intents = discord.Intents.default()
 
-"""
-Uncomment this if you want to use prefix (normal) commands.
-It is recommended to use slash commands and therefore not use prefix commands.
 
-If you want to use prefix commands, make sure to also enable the intent below in the Discord developer portal.
-"""
-# intents.message_content = True
-
-# Setup both of the loggers
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 
 
 class JsonFormatter(logging.Formatter):
@@ -119,34 +63,11 @@ class DiscordBot(commands.Bot):
             intents=intents,
             help_command=None,
         )
-        """
-        This creates custom bot variables so that we can access these variables in cogs more easily.
-
-        For example, The logger is available using the following code:
-        - self.logger # In this class
-        - bot.logger # In this file
-        - self.bot.logger # In cogs
-        """
         self.logger = logger
-        self.database = None
         self.bot_prefix = os.getenv("PREFIX")
         self.invite_link = os.getenv("INVITE_LINK")
         self.settings: Settings | None = None
         self.scheduler: DerbyScheduler | None = None
-
-    async def init_db(self) -> Engine:
-        db_path = f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
-        async with aiosqlite.connect(db_path) as db:
-            with open(
-                f"{os.path.realpath(os.path.dirname(__file__))}/database/schema.sql",
-                encoding="utf-8",
-            ) as file:
-                await db.executescript(file.read())
-            await db.commit()
-
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        return engine
 
     async def load_cogs(self) -> None:
         """
@@ -164,21 +85,6 @@ class DiscordBot(commands.Bot):
                         f"Failed to load extension {extension}\n{exception}"
                     )
 
-    @tasks.loop(minutes=1.0)
-    async def status_task(self) -> None:
-        """
-        Setup the game status task of the bot.
-        """
-        statuses = ["with you!", "with Krypton!", "with humans!"]
-        await self.change_presence(activity=discord.Game(random.choice(statuses)))
-
-    @status_task.before_loop
-    async def before_status_task(self) -> None:
-        """
-        Before starting the status changing task, we make sure the bot is ready
-        """
-        await self.wait_until_ready()
-
     async def setup_hook(self) -> None:
         """
         This will just be executed when the bot starts the first time.
@@ -191,7 +97,6 @@ class DiscordBot(commands.Bot):
         )
         self.logger.info("-------------------")
         self.settings = Settings.from_yaml()
-        engine = await self.init_db()
         await self.load_cogs()
         guild_ids = os.getenv("SYNC_GUILD_IDS", "")
         for gid in guild_ids.split(","):
@@ -200,13 +105,6 @@ class DiscordBot(commands.Bot):
                 guild = discord.Object(id=int(gid))
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
-        self.status_task.start()
-        self.database = DatabaseManager(
-            connection=await aiosqlite.connect(
-                f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
-            ),
-            engine=engine,
-        )
         self.scheduler = DerbyScheduler(self)
         await self.scheduler.start()
 

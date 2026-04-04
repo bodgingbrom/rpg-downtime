@@ -1,4 +1,3 @@
-aiohttp
 aiosqlite
 anthropic
 discord.py==2.5.2
