@@ -199,6 +199,9 @@ class DerbyScheduler:
             )
             if winner_id is not None:
                 await logic.resolve_payouts(session, race_id, winner_id)
+            mood_changes = await logic.apply_mood_drift(
+                session, result.placements, participants
+            )
             retirements = await self._apply_retirements(session, participants)
             await session.commit()
         names = result.racer_names

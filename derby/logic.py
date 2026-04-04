@@ -486,6 +486,57 @@ def simulate_race(
     )
 
 
+async def apply_mood_drift(
+    session: AsyncSession,
+    placements: list[int],
+    participants: list[models.Racer] | None = None,
+) -> dict[int, tuple[int, int]]:
+    """Adjust racer moods after a race and return changes.
+
+    Winner mood +1 (cap 5), last place mood -1 (floor 1).
+    All other racers drift one step toward neutral (3) — this keeps
+    unowned racers from spiralling into permanent bad mood.
+
+    Returns ``{racer_id: (old_mood, new_mood)}`` for racers that changed.
+    """
+    if not placements:
+        return {}
+
+    changes: dict[int, tuple[int, int]] = {}
+    winner_id = placements[0]
+    loser_id = placements[-1] if len(placements) > 1 else None
+
+    # Build lookup of participants for in-memory updates
+    racer_map: dict[int, models.Racer] = {}
+    if participants:
+        racer_map = {r.id: r for r in participants}
+
+    for rid in placements:
+        racer = racer_map.get(rid) or await session.get(models.Racer, rid)
+        if racer is None:
+            continue
+        old_mood = racer.mood
+
+        if rid == winner_id:
+            new_mood = min(5, old_mood + 1)
+        elif rid == loser_id:
+            new_mood = max(1, old_mood - 1)
+        else:
+            # Drift toward neutral (3)
+            if old_mood > 3:
+                new_mood = old_mood - 1
+            elif old_mood < 3:
+                new_mood = old_mood + 1
+            else:
+                new_mood = old_mood
+
+        if new_mood != old_mood:
+            racer.mood = new_mood
+            changes[rid] = (old_mood, new_mood)
+
+    return changes
+
+
 async def resolve_payouts(
     session: AsyncSession, race_id: int, winner_id: int
 ) -> None:
