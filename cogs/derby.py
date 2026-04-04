@@ -80,6 +80,18 @@ class Derby(commands.Cog, name="derby"):
         odds = logic.calculate_odds(racers, [], 0.1)
         embed = discord.Embed(title="Upcoming Race")
         embed.add_field(name="Race ID", value=str(race.id), inline=False)
+
+        # Show next race time using Discord timestamp (auto-localizes)
+        task = getattr(self.bot.scheduler, "task", None)
+        next_iter = getattr(task, "next_iteration", None) if task else None
+        if next_iter is not None:
+            ts = int(next_iter.timestamp())
+            embed.add_field(
+                name="Scheduled",
+                value=f"<t:{ts}:F> (<t:{ts}:R>)",
+                inline=False,
+            )
+
         for r in racers:
             mult = odds.get(r.id, 0)
             embed.add_field(

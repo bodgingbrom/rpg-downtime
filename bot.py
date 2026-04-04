@@ -193,10 +193,13 @@ class DiscordBot(commands.Bot):
         self.settings = Settings.from_yaml()
         engine = await self.init_db()
         await self.load_cogs()
-        if guild_id := os.getenv("DEV_GUILD_ID"):
-            test_guild = discord.Object(id=int(guild_id))
-            self.tree.copy_global_to(guild=test_guild)
-            await self.tree.sync(guild=test_guild)
+        guild_ids = os.getenv("SYNC_GUILD_IDS", "")
+        for gid in guild_ids.split(","):
+            gid = gid.strip()
+            if gid:
+                guild = discord.Object(id=int(gid))
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
         self.status_task.start()
         self.database = DatabaseManager(
             connection=await aiosqlite.connect(
