@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     retirement_threshold: int = 96
     bet_window: int = 120
     countdown_total: int = 10
+    max_racers_per_race: int = 6
     commentary_delay: float = 6.0
     channel_name: str | None = None
 

@@ -228,7 +228,7 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_race_uses_max_eight_racers(
+async def test_race_uses_max_six_racers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db_path = tmp_path / "db.sqlite"
@@ -266,7 +266,7 @@ async def test_race_uses_max_eight_racers(
 
     await scheduler.tick()
 
-    assert counts == [8]
+    assert counts == [6]
 
 
 @pytest.mark.asyncio
