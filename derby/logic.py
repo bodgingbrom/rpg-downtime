@@ -191,6 +191,36 @@ def mood_label(value: int) -> str:
     return MOOD_LABELS.get(value, str(value))
 
 
+def effective_stats(racer: models.Racer) -> dict[str, int]:
+    """Return a racer's stats with decline penalty applied.
+
+    During the decline phase (races_completed > peak_end), each stat is
+    reduced by ``(races_completed - peak_end)``.  Base stats are never
+    modified — the penalty is applied at simulation time only.
+    """
+    completed = getattr(racer, "races_completed", None) or 0
+    peak = getattr(racer, "peak_end", None) or 18
+    penalty = max(0, completed - peak)
+    return {
+        "speed": max(0, racer.speed - penalty),
+        "cornering": max(0, racer.cornering - penalty),
+        "stamina": max(0, racer.stamina - penalty),
+    }
+
+
+def career_phase(racer: models.Racer) -> str:
+    """Return a human-readable career phase label."""
+    if racer.races_completed >= racer.career_length:
+        return "Retired"
+    remaining = racer.career_length - racer.races_completed
+    if remaining <= 3:
+        return "Retiring Soon"
+    if racer.races_completed > racer.peak_end:
+        decline = racer.races_completed - racer.peak_end
+        return f"Declining (-{decline})"
+    return "Peak"
+
+
 def apply_temperament(
     stats: Dict[str, int], temperament: str, modifier: float = TEMPERAMENT_MODIFIER
 ) -> Dict[str, int]:
@@ -216,11 +246,8 @@ def apply_temperament(
 
 
 def _racer_power(racer: models.Racer) -> float:
-    """Return the effective power score for a racer after temperament."""
-    stats = apply_temperament(
-        {"speed": racer.speed, "cornering": racer.cornering, "stamina": racer.stamina},
-        racer.temperament,
-    )
+    """Return the effective power score for a racer after temperament and decline."""
+    stats = apply_temperament(effective_stats(racer), racer.temperament)
     return float(stats["speed"] + stats["cornering"] + stats["stamina"])
 
 
@@ -307,10 +334,7 @@ def _map_weighted_power(
     racer: models.Racer, race_map: RaceMap
 ) -> float:
     """Return the expected power score for a racer on a specific map."""
-    stats = apply_temperament(
-        {"speed": racer.speed, "cornering": racer.cornering, "stamina": racer.stamina},
-        racer.temperament,
-    )
+    stats = apply_temperament(effective_stats(racer), racer.temperament)
     total = 0.0
     for seg in race_map.segments:
         weights = SEGMENT_TYPES.get(seg.type, SEGMENT_TYPES["straight"])
@@ -391,8 +415,7 @@ def simulate_race(
         racer_stats: Dict[int, Dict[str, int]] = {}
         for r in raw_racers:
             racer_stats[r.id] = apply_temperament(
-                {"speed": r.speed, "cornering": r.cornering, "stamina": r.stamina},
-                r.temperament,
+                effective_stats(r), r.temperament,
             )
 
         cumulative: Dict[int, float] = {r.id: 0.0 for r in raw_racers}

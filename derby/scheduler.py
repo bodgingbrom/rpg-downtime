@@ -88,6 +88,9 @@ class DerbyScheduler:
                 "mood": ("INTEGER", "3"),
                 "injuries": ("VARCHAR", "''"),
                 "injury_races_remaining": ("INTEGER", "0"),
+                "races_completed": ("INTEGER", "0"),
+                "career_length": ("INTEGER", "30"),
+                "peak_end": ("INTEGER", "18"),
             }
             for name, (col_type, default) in racer_migrations.items():
                 if name not in racer_columns:
@@ -272,6 +275,7 @@ class DerbyScheduler:
             new_injuries = logic.check_injury_risk(result)
             await logic.apply_injuries(session, new_injuries, participants)
             healed = await self._tick_injury_recovery(session, guild_id)
+            await self._increment_careers(session, participants)
             retirements = await self._apply_retirements(session, participants)
             await session.commit()
         names = result.racer_names
@@ -432,22 +436,36 @@ class DerbyScheduler:
             if i < len(log) - 1:
                 await asyncio.sleep(delay)
 
+    async def _increment_careers(
+        self, session: AsyncSession, racers: list[models.Racer]
+    ) -> None:
+        """Increment races_completed for all participants."""
+        for racer in racers:
+            racer.races_completed += 1
+
     async def _apply_retirements(
         self, session: AsyncSession, racers: list[models.Racer]
     ) -> list[tuple[models.Racer, models.Racer]]:
-        threshold = self.bot.settings.retirement_threshold
+        """Retire racers that have reached their career_length.
+
+        For each retired racer, create a new house racer with random
+        stats to keep the roster populated.
+        """
         retirements: list[tuple[models.Racer, models.Racer]] = []
         for racer in racers:
-            if random.randint(1, 100) >= threshold:
+            if racer.races_completed >= racer.career_length:
                 await repo.update_racer(session, racer.id, retired=True)
+                career_length = random.randint(25, 40)
                 successor = await repo.create_racer(
                     session,
                     name=f"{racer.name} II",
                     owner_id=racer.owner_id,
-                    speed=int(racer.speed * random.uniform(0.5, 0.75)),
-                    cornering=int(racer.cornering * random.uniform(0.5, 0.75)),
-                    stamina=int(racer.stamina * random.uniform(0.5, 0.75)),
-                    temperament=racer.temperament,
+                    speed=random.randint(0, 31),
+                    cornering=random.randint(0, 31),
+                    stamina=random.randint(0, 31),
+                    temperament=random.choice(list(logic.TEMPERAMENTS.keys())),
+                    career_length=career_length,
+                    peak_end=int(career_length * 0.6),
                 )
                 retirements.append((racer, successor))
         return retirements
@@ -508,8 +526,8 @@ class DerbyScheduler:
             embed = discord.Embed(
                 title=f"Retirement: {old.name}",
                 description=(
-                    f"**{old.name}** has retired! "
-                    f"Their successor **{new.name}** joins the roster."
+                    f"**{old.name}** retires after {old.races_completed} races! "
+                    f"A new racer, **{new.name}**, joins the roster."
                 ),
             )
             embed.add_field(

@@ -427,7 +427,8 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
     owner = types.SimpleNamespace(id=99)
 
-    with patch("random.randint", side_effect=[1, 2, 3]), patch(
+    # side_effect: career_length(25,40), speed(0,31), cornering(0,31), stamina(0,31)
+    with patch("random.randint", side_effect=[30, 1, 2, 3]), patch(
         "random.choice", return_value="Burly"
     ):
         await cog.add_racer(ctx, name="Lucky", owner=owner, random_stats=True)
@@ -441,6 +442,8 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
         3,
         "Burly",
     ]
+    assert racer.career_length == 30
+    assert racer.peak_end == 18  # int(30 * 0.6)
 
 
 @pytest.mark.asyncio
