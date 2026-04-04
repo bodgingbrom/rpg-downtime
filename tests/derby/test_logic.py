@@ -12,6 +12,7 @@ from derby.logic import (
     RaceMap,
     RaceResult,
     SegmentResult,
+    apply_mood_drift,
     apply_temperament,
     calculate_odds,
     load_all_maps,
@@ -435,3 +436,101 @@ def test_mood_odds_shift():
     odds = calculate_odds([happy, grumpy], [], 0.1, race_map=race_map)
     # Happy (mood 5) should have lower payout (more likely to win)
     assert odds[1] < odds[2], f"Expected happy odds {odds[1]} < grumpy odds {odds[2]}"
+
+
+# ---------------------------------------------------------------------------
+# Mood drift tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mood_drift_winner_increases(session: AsyncSession):
+    """Winner's mood should increase by 1."""
+    r1 = Racer(name="Winner", owner_id=1, speed=20, cornering=20, stamina=20, mood=3)
+    r2 = Racer(name="Loser", owner_id=2, speed=20, cornering=20, stamina=20, mood=3)
+    session.add_all([r1, r2])
+    await session.commit()
+    await session.refresh(r1)
+    await session.refresh(r2)
+
+    changes = await apply_mood_drift(session, [r1.id, r2.id], [r1, r2])
+    await session.commit()
+
+    assert r1.mood == 4  # winner goes up
+    assert r2.mood == 2  # loser goes down
+    assert r1.id in changes
+    assert r2.id in changes
+    assert changes[r1.id] == (3, 4)
+    assert changes[r2.id] == (3, 2)
+
+
+@pytest.mark.asyncio
+async def test_mood_drift_clamped_at_boundaries(session: AsyncSession):
+    """Mood should not go above 5 or below 1."""
+    r1 = Racer(name="Max", owner_id=1, speed=20, cornering=20, stamina=20, mood=5)
+    r2 = Racer(name="Min", owner_id=2, speed=20, cornering=20, stamina=20, mood=1)
+    session.add_all([r1, r2])
+    await session.commit()
+    await session.refresh(r1)
+    await session.refresh(r2)
+
+    changes = await apply_mood_drift(session, [r1.id, r2.id], [r1, r2])
+    await session.commit()
+
+    assert r1.mood == 5  # already max, stays at 5
+    assert r2.mood == 1  # already min, stays at 1
+    # No changes since they're already at boundaries
+    assert r1.id not in changes
+    assert r2.id not in changes
+
+
+@pytest.mark.asyncio
+async def test_mood_drift_middle_racers_toward_neutral(session: AsyncSession):
+    """Middle-placed racers drift toward mood 3 (neutral)."""
+    r1 = Racer(name="Winner", owner_id=1, speed=20, cornering=20, stamina=20, mood=3)
+    r2 = Racer(name="HighMood", owner_id=2, speed=20, cornering=20, stamina=20, mood=5)
+    r3 = Racer(name="LowMood", owner_id=3, speed=20, cornering=20, stamina=20, mood=1)
+    r4 = Racer(name="Loser", owner_id=4, speed=20, cornering=20, stamina=20, mood=3)
+    session.add_all([r1, r2, r3, r4])
+    await session.commit()
+    for r in [r1, r2, r3, r4]:
+        await session.refresh(r)
+
+    # Placements: r1 wins, r4 is last
+    # r2 and r3 are middle — should drift toward 3
+    changes = await apply_mood_drift(
+        session, [r1.id, r2.id, r3.id, r4.id], [r1, r2, r3, r4]
+    )
+    await session.commit()
+
+    assert r1.mood == 4  # winner +1
+    assert r2.mood == 4  # was 5, drifts toward 3 → 4
+    assert r3.mood == 2  # was 1, drifts toward 3 → 2
+    assert r4.mood == 2  # loser -1
+
+
+@pytest.mark.asyncio
+async def test_mood_drift_neutral_middle_unchanged(session: AsyncSession):
+    """A middle-placed racer at mood 3 stays at 3."""
+    r1 = Racer(name="Winner", owner_id=1, speed=20, cornering=20, stamina=20, mood=3)
+    r2 = Racer(name="Middle", owner_id=2, speed=20, cornering=20, stamina=20, mood=3)
+    r3 = Racer(name="Loser", owner_id=3, speed=20, cornering=20, stamina=20, mood=3)
+    session.add_all([r1, r2, r3])
+    await session.commit()
+    for r in [r1, r2, r3]:
+        await session.refresh(r)
+
+    changes = await apply_mood_drift(
+        session, [r1.id, r2.id, r3.id], [r1, r2, r3]
+    )
+    await session.commit()
+
+    assert r2.mood == 3  # no change for neutral middle
+    assert r2.id not in changes
+
+
+@pytest.mark.asyncio
+async def test_mood_drift_empty_placements(session: AsyncSession):
+    """Empty placements should return empty changes."""
+    changes = await apply_mood_drift(session, [], None)
+    assert changes == {}

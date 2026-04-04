@@ -569,6 +569,9 @@ class Derby(commands.Cog, name="derby"):
             )
             if winner_id is not None:
                 await logic.resolve_payouts(session, race.id, winner_id)
+            await logic.apply_mood_drift(
+                session, result.placements, participants
+            )
             threshold = self.bot.settings.retirement_threshold
             for r in participants:
                 if random.randint(1, 100) >= threshold:
