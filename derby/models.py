@@ -120,6 +120,33 @@ class PlayerData(Base):
     extra_slots: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class Tournament(Base):
+    """A scheduled tournament bracket for a specific rank tier."""
+
+    __tablename__ = "tournaments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    rank: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending/running/finished
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class TournamentEntry(Base):
+    """Links a racer to a tournament as a participant."""
+
+    __tablename__ = "tournament_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id"), nullable=False)
+    racer_id: Mapped[int] = mapped_column(ForeignKey("racers.id"), nullable=False)
+    owner_id: Mapped[int] = mapped_column(Integer, default=0)
+    placement: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    eliminated_round: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    is_pool_filler: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 __all__ = [
     "Base",
     "Racer",
@@ -129,4 +156,6 @@ __all__ = [
     "CourseSegment",
     "GuildSettings",
     "PlayerData",
+    "Tournament",
+    "TournamentEntry",
 ]
