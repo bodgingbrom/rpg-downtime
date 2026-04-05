@@ -273,6 +273,10 @@ class DerbyScheduler:
                 "retired_sell_penalty": ("FLOAT", "NULL"),
                 "foal_sell_penalty": ("FLOAT", "NULL"),
                 "min_training_to_race": ("INTEGER", "NULL"),
+                "breeding_fee": ("INTEGER", "NULL"),
+                "breeding_cooldown": ("INTEGER", "NULL"),
+                "min_races_to_breed": ("INTEGER", "NULL"),
+                "max_foals_per_female": ("INTEGER", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:

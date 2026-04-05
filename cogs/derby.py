@@ -913,6 +913,10 @@ class Derby(commands.Cog, name="derby"):
         "retired_sell_penalty",
         "foal_sell_penalty",
         "min_training_to_race",
+        "breeding_fee",
+        "breeding_cooldown",
+        "min_races_to_breed",
+        "max_foals_per_female",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -1641,6 +1645,123 @@ class Stable(commands.Cog, name="stable"):
         else:
             embed.add_field(name="Status", value="Fully upgraded!", inline=True)
         embed.set_footer(text=f"Balance: {wallet.balance} coins")
+        await context.send(embed=embed)
+
+
+    @stable.command(name="breed", description="Breed two of your racers to produce a foal")
+    @app_commands.describe(male="Male racer (sire)", female="Female racer (dam)")
+    @app_commands.autocomplete(male=owned_racer_autocomplete, female=owned_racer_autocomplete)
+    async def stable_breed(self, context: Context, male: int, female: int) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+
+        if male == female:
+            await context.send("You must select two different racers.", ephemeral=True)
+            return
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            sire = await repo.get_racer(session, male)
+            dam = await repo.get_racer(session, female)
+            if sire is None or sire.guild_id != guild_id:
+                await context.send("Male racer not found.", ephemeral=True)
+                return
+            if dam is None or dam.guild_id != guild_id:
+                await context.send("Female racer not found.", ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+            fee = self._resolve("breeding_fee", gs)
+            cooldown = self._resolve("breeding_cooldown", gs)
+            min_races = self._resolve("min_races_to_breed", gs)
+            max_foals = self._resolve("max_foals_per_female", gs)
+
+            # Stable slot check
+            stable = await repo.get_stable_racers(
+                session, context.author.id, guild_id
+            )
+            base_slots = self._resolve("max_racers_per_owner", gs)
+            pd = await repo.get_player_data(
+                session, context.author.id, guild_id
+            )
+            extra = pd.extra_slots if pd else 0
+            upgrade_costs = logic.parse_stable_upgrade_costs(
+                self._resolve("stable_upgrade_costs", gs)
+            )
+            max_slots = min(base_slots + extra, base_slots + len(upgrade_costs))
+
+            # Validate
+            error = logic.validate_breeding(
+                sire, dam, context.author.id, len(stable), max_slots,
+                min_races=min_races, max_foals=max_foals,
+            )
+            if error:
+                await context.send(error, ephemeral=True)
+                return
+
+            # Check wallet
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
+            if wallet is None:
+                default_bal = self._resolve("default_wallet", gs)
+                wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            if wallet.balance < fee:
+                await context.send(
+                    f"Breeding costs **{fee} coins** but you only have "
+                    f"**{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            # Breed!
+            kwargs = logic.breed_racer(sire, dam, guild_id)
+            foal = await repo.create_racer(session, **kwargs)
+
+            wallet.balance -= fee
+            sire.breed_cooldown = cooldown
+            dam.breed_cooldown = cooldown
+            dam.foal_count = (dam.foal_count or 0) + 1
+            await session.commit()
+
+        min_train = self._resolve("min_training_to_race", gs)
+        gender = _gender(foal.gender, "")
+        embed = discord.Embed(
+            title=f"\U0001f423 New Foal: {foal.name}",
+            description=(
+                f"**{sire.name}** \u2642 \u00d7 **{dam.name}** \u2640 "
+                f"produced a foal!"
+            ),
+            color=0xE91E63,
+        )
+        embed.add_field(name="Gender", value=f"{gender} {foal.gender}", inline=True)
+        embed.add_field(name="Temperament", value=foal.temperament, inline=True)
+        embed.add_field(
+            name="Career",
+            value=f"{foal.career_length} races (peak until {foal.peak_end})",
+            inline=True,
+        )
+        embed.add_field(
+            name="Speed", value=f"{_stat_band(foal.speed)} ({foal.speed})", inline=True
+        )
+        embed.add_field(
+            name="Cornering", value=f"{_stat_band(foal.cornering)} ({foal.cornering})", inline=True
+        )
+        embed.add_field(
+            name="Stamina", value=f"{_stat_band(foal.stamina)} ({foal.stamina})", inline=True
+        )
+        embed.add_field(
+            name="Training",
+            value=f"0/{min_train} sessions before racing",
+            inline=False,
+        )
+        embed.set_footer(
+            text=f"Breeding fee: {fee} coins | Balance: {wallet.balance} coins"
+        )
         await context.send(embed=embed)
 
 

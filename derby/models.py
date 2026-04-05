@@ -103,6 +103,10 @@ class GuildSettings(Base):
     retired_sell_penalty: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     foal_sell_penalty: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     min_training_to_race: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    breeding_fee: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    breeding_cooldown: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    min_races_to_breed: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    max_foals_per_female: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 class PlayerData(Base):

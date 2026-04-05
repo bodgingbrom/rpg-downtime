@@ -301,6 +301,137 @@ def apply_feed(current_mood: int) -> tuple[int, str | None]:
     return min(current_mood + 2, 5), None
 
 
+# ---------------------------------------------------------------------------
+# Breeding
+# ---------------------------------------------------------------------------
+
+
+def check_lineage(racer_a: models.Racer, racer_b: models.Racer) -> str | None:
+    """Return an error string if the two racers are too closely related.
+
+    Rejects parent-child and half-sibling pairings.  Returns ``None``
+    when the pairing is acceptable.
+    """
+    # Parent-child
+    if racer_a.sire_id == racer_b.id or racer_a.dam_id == racer_b.id:
+        return "Cannot breed a racer with its own parent."
+    if racer_b.sire_id == racer_a.id or racer_b.dam_id == racer_a.id:
+        return "Cannot breed a racer with its own parent."
+
+    # Half-siblings (shared sire or dam, both non-None)
+    if (
+        racer_a.sire_id is not None
+        and racer_b.sire_id is not None
+        and racer_a.sire_id == racer_b.sire_id
+    ):
+        return "Cannot breed half-siblings (shared sire)."
+    if (
+        racer_a.dam_id is not None
+        and racer_b.dam_id is not None
+        and racer_a.dam_id == racer_b.dam_id
+    ):
+        return "Cannot breed half-siblings (shared dam)."
+
+    return None
+
+
+def validate_breeding(
+    sire: models.Racer,
+    dam: models.Racer,
+    owner_id: int,
+    stable_count: int,
+    max_slots: int,
+    *,
+    min_races: int = 5,
+    max_foals: int = 3,
+) -> str | None:
+    """Return an error string if the breeding is invalid, else ``None``."""
+    if sire.gender != "M":
+        return f"**{sire.name}** is not male."
+    if dam.gender != "F":
+        return f"**{dam.name}** is not female."
+    if sire.owner_id != owner_id or dam.owner_id != owner_id:
+        return "You must own both racers to breed them."
+    if (sire.races_completed or 0) < min_races:
+        return f"**{sire.name}** needs at least {min_races} races before breeding."
+    if (dam.races_completed or 0) < min_races:
+        return f"**{dam.name}** needs at least {min_races} races before breeding."
+    if (sire.breed_cooldown or 0) > 0:
+        return f"**{sire.name}** is on breeding cooldown ({sire.breed_cooldown} races remaining)."
+    if (dam.breed_cooldown or 0) > 0:
+        return f"**{dam.name}** is on breeding cooldown ({dam.breed_cooldown} races remaining)."
+    if (dam.foal_count or 0) >= max_foals:
+        return f"**{dam.name}** has already had the maximum {max_foals} foals."
+    if stable_count >= max_slots:
+        return "Your stable is full. Sell a racer or upgrade your stable first."
+
+    lineage_err = check_lineage(sire, dam)
+    if lineage_err:
+        return lineage_err
+
+    return None
+
+
+def breed_racer(
+    sire: models.Racer,
+    dam: models.Racer,
+    guild_id: int,
+    rng: random.Random | None = None,
+) -> dict:
+    """Generate kwargs for ``create_racer()`` representing the offspring.
+
+    Stat inheritance: one stat (chosen randomly) inherits from parents
+    (random value between them), the other two are random 0-31.
+    Temperament: 10% random mutation, else 75% sire / 25% dam.
+    Career: average of parents ±5, clamped 25-40.
+    """
+    if rng is None:
+        rng = random.Random()
+
+    # Pick 1 stat to inherit
+    stats = ["speed", "cornering", "stamina"]
+    inherited_stat = rng.choice(stats)
+    other_stats = [s for s in stats if s != inherited_stat]
+
+    sire_val = getattr(sire, inherited_stat)
+    dam_val = getattr(dam, inherited_stat)
+    lo, hi = min(sire_val, dam_val), max(sire_val, dam_val)
+    inherited_value = rng.randint(lo, hi)
+
+    result_stats = {}
+    result_stats[inherited_stat] = inherited_value
+    for s in other_stats:
+        result_stats[s] = rng.randint(0, 31)
+
+    # Temperament
+    if rng.randint(1, 10) == 1:
+        temperament = rng.choice(list(TEMPERAMENTS.keys()))
+    else:
+        temperament = sire.temperament if rng.randint(1, 4) <= 3 else dam.temperament
+
+    # Career
+    avg_career = (sire.career_length + dam.career_length) / 2
+    career_length = int(avg_career + rng.randint(-5, 5))
+    career_length = max(25, min(40, career_length))
+
+    return {
+        "name": f"{dam.name}'s Foal",
+        "owner_id": sire.owner_id,
+        "guild_id": guild_id,
+        "speed": result_stats["speed"],
+        "cornering": result_stats["cornering"],
+        "stamina": result_stats["stamina"],
+        "temperament": temperament,
+        "mood": 3,
+        "career_length": career_length,
+        "peak_end": int(career_length * 0.6),
+        "gender": rng.choice(["M", "F"]),
+        "sire_id": sire.id,
+        "dam_id": dam.id,
+        "training_count": 0,
+    }
+
+
 def stat_band(value: int) -> str:
     """Return a human-readable quality label for a stat value (0-31)."""
     if value <= 15:
