@@ -98,6 +98,20 @@ class GuildSettings(Base):
     training_multiplier: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     rest_cost: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     feed_cost: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    stable_upgrade_costs: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    female_buy_multiplier: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    retired_sell_penalty: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    foal_sell_penalty: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+
+class PlayerData(Base):
+    """Per-player per-guild data such as stable slot upgrades."""
+
+    __tablename__ = "player_data"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    extra_slots: Mapped[int] = mapped_column(Integer, default=0)
 
 
 __all__ = [
@@ -108,4 +122,5 @@ __all__ = [
     "Bet",
     "CourseSegment",
     "GuildSettings",
+    "PlayerData",
 ]

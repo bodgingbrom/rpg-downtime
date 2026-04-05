@@ -5,7 +5,7 @@ from typing import Type, TypeVar
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Bet, CourseSegment, GuildSettings, Race, RaceEntry, Racer
+from .models import Bet, CourseSegment, GuildSettings, PlayerData, Race, RaceEntry, Racer
 
 ModelT = TypeVar("ModelT", Racer, Race, Bet, CourseSegment, GuildSettings)
 
@@ -322,3 +322,26 @@ async def get_race_history(
             payout = 0
         history.append((race, winner, payout))
     return history
+
+
+# PlayerData
+async def get_player_data(
+    session: AsyncSession, user_id: int, guild_id: int
+) -> PlayerData | None:
+    result = await session.execute(
+        select(PlayerData).where(
+            PlayerData.user_id == user_id,
+            PlayerData.guild_id == guild_id,
+        )
+    )
+    return result.scalars().first()
+
+
+async def create_player_data(
+    session: AsyncSession, *, user_id: int, guild_id: int, extra_slots: int = 0
+) -> PlayerData:
+    pd = PlayerData(user_id=user_id, guild_id=guild_id, extra_slots=extra_slots)
+    session.add(pd)
+    await session.commit()
+    await session.refresh(pd)
+    return pd

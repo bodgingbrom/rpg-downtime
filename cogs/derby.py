@@ -74,11 +74,12 @@ async def unowned_racer_autocomplete(
         gs = await repo.get_guild_settings(session, guild_id)
     base = resolve_guild_setting(gs, settings, "racer_buy_base")
     mult = resolve_guild_setting(gs, settings, "racer_buy_multiplier")
+    fem_mult = resolve_guild_setting(gs, settings, "female_buy_multiplier")
     choices = []
     current_lower = current.lower()
     for r in racers:
         if current_lower in r.name.lower():
-            price = logic.calculate_buy_price(r, base, mult)
+            price = logic.calculate_buy_price(r, base, mult, fem_mult)
             choices.append(
                 app_commands.Choice(
                     name=f"{r.name} - {price} coins", value=r.id
@@ -907,6 +908,10 @@ class Derby(commands.Cog, name="derby"):
         "training_multiplier",
         "rest_cost",
         "feed_cost",
+        "stable_upgrade_costs",
+        "female_buy_multiplier",
+        "retired_sell_penalty",
+        "foal_sell_penalty",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -969,9 +974,15 @@ class Derby(commands.Cog, name="derby"):
 
             # Parse value to the correct type
             try:
-                if key in ("channel_name", "placement_prizes"):
+                if key in ("channel_name", "placement_prizes", "stable_upgrade_costs"):
                     parsed: str | int | float = value
-                elif key in ("commentary_delay", "racer_sell_fraction"):
+                elif key in (
+                    "commentary_delay",
+                    "racer_sell_fraction",
+                    "female_buy_multiplier",
+                    "retired_sell_penalty",
+                    "foal_sell_penalty",
+                ):
                     parsed = float(value)
                 else:
                     parsed = int(value)
@@ -1056,12 +1067,13 @@ class Stable(commands.Cog, name="stable"):
             gs = await repo.get_guild_settings(session, guild_id)
         base = self._resolve("racer_buy_base", gs)
         mult = self._resolve("racer_buy_multiplier", gs)
+        fem_mult = self._resolve("female_buy_multiplier", gs)
         if not racers:
             await context.send("No racers available for purchase right now.", ephemeral=True)
             return
         embed = discord.Embed(title="Racers For Sale")
         for r in racers[:25]:  # Discord embed limit
-            price = logic.calculate_buy_price(r, base, mult)
+            price = logic.calculate_buy_price(r, base, mult, fem_mult)
             eff = logic.effective_stats(r)
             phase = logic.career_phase(r)
             gender = _gender(getattr(r, "gender", "M"), "")
@@ -1097,17 +1109,26 @@ class Stable(commands.Cog, name="stable"):
             gs = await repo.get_guild_settings(session, guild_id)
             base = self._resolve("racer_buy_base", gs)
             mult = self._resolve("racer_buy_multiplier", gs)
-            max_owned = self._resolve("max_racers_per_owner", gs)
-            price = logic.calculate_buy_price(racer_obj, base, mult)
+            fem_mult = self._resolve("female_buy_multiplier", gs)
+            price = logic.calculate_buy_price(racer_obj, base, mult, fem_mult)
 
-            # Check ownership limit
-            owned = await repo.get_owned_racers(
+            # Check ownership limit (retired racers count toward slots)
+            stable = await repo.get_stable_racers(
                 session, context.author.id, guild_id
             )
-            if len(owned) >= max_owned:
+            base_slots = self._resolve("max_racers_per_owner", gs)
+            pd = await repo.get_player_data(
+                session, context.author.id, guild_id
+            )
+            extra = pd.extra_slots if pd else 0
+            upgrade_costs = logic.parse_stable_upgrade_costs(
+                self._resolve("stable_upgrade_costs", gs)
+            )
+            max_slots = min(base_slots + extra, base_slots + len(upgrade_costs))
+            if len(stable) >= max_slots:
                 await context.send(
-                    f"You already own {len(owned)} racers (max {max_owned}). "
-                    f"Sell one first with `/stable sell`.",
+                    f"Your stable is full ({len(stable)}/{max_slots}). "
+                    f"Sell a racer or `/stable upgrade` for more slots.",
                     ephemeral=True,
                 )
                 return
@@ -1192,7 +1213,15 @@ class Stable(commands.Cog, name="stable"):
             base = self._resolve("racer_buy_base", gs)
             mult = self._resolve("racer_buy_multiplier", gs)
             frac = self._resolve("racer_sell_fraction", gs)
-            sell_price = logic.calculate_sell_price(racer_obj, base, mult, frac)
+            fem_mult = self._resolve("female_buy_multiplier", gs)
+            ret_pen = self._resolve("retired_sell_penalty", gs)
+            foal_pen = self._resolve("foal_sell_penalty", gs)
+            sell_price = logic.calculate_sell_price(
+                racer_obj, base, mult, frac,
+                female_multiplier=fem_mult,
+                retired_penalty=ret_pen,
+                foal_penalty=foal_pen,
+            )
 
             wallet = await wallet_repo.get_wallet(
                 session, context.author.id, guild_id
@@ -1514,6 +1543,94 @@ class Stable(commands.Cog, name="stable"):
             inline=True,
         )
         embed.add_field(name="Cost", value=f"{cost} coins", inline=True)
+        embed.set_footer(text=f"Balance: {wallet.balance} coins")
+        await context.send(embed=embed)
+
+
+    @stable.command(name="upgrade", description="Upgrade your stable to hold more racers")
+    async def stable_upgrade(self, context: Context) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+            base_slots = self._resolve("max_racers_per_owner", gs)
+            cost_string = self._resolve("stable_upgrade_costs", gs)
+            upgrade_costs = logic.parse_stable_upgrade_costs(cost_string)
+
+            pd = await repo.get_player_data(
+                session, context.author.id, guild_id
+            )
+            extra = pd.extra_slots if pd else 0
+            max_extra = len(upgrade_costs)
+            current_slots = base_slots + extra
+            max_slots = base_slots + max_extra
+
+            if extra >= max_extra:
+                await context.send(
+                    f"Your stable is fully upgraded! "
+                    f"({current_slots}/{max_slots} slots)",
+                    ephemeral=True,
+                )
+                return
+
+            cost = logic.get_next_upgrade_cost(extra, upgrade_costs)
+            if cost is None:
+                await context.send("No upgrades available.", ephemeral=True)
+                return
+
+            # Check/create wallet
+            wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
+            if wallet is None:
+                default_bal = self._resolve("default_wallet", gs)
+                wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            if wallet.balance < cost:
+                await context.send(
+                    f"Upgrading costs **{cost} coins** but you only have "
+                    f"**{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            wallet.balance -= cost
+            if pd is None:
+                pd = await repo.create_player_data(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    extra_slots=1,
+                )
+            else:
+                pd.extra_slots += 1
+            await session.commit()
+
+        new_slots = base_slots + pd.extra_slots
+        embed = discord.Embed(
+            title="Stable Upgraded!",
+            description=(
+                f"Your stable now holds **{new_slots}** racers "
+                f"(was {new_slots - 1})."
+            ),
+            color=0x9B59B6,
+        )
+        embed.add_field(name="Cost", value=f"{cost} coins", inline=True)
+        remaining = max_extra - pd.extra_slots
+        if remaining > 0:
+            next_cost = logic.get_next_upgrade_cost(pd.extra_slots, upgrade_costs)
+            embed.add_field(
+                name="Next Upgrade",
+                value=f"{next_cost} coins ({remaining} remaining)",
+                inline=True,
+            )
+        else:
+            embed.add_field(name="Status", value="Fully upgraded!", inline=True)
         embed.set_footer(text=f"Balance: {wallet.balance} coins")
         await context.send(embed=embed)
 

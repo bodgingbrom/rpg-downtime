@@ -1069,3 +1069,81 @@ def test_gender_labels():
     from derby.logic import GENDER_LABELS
     assert GENDER_LABELS["M"] == "\u2642"
     assert GENDER_LABELS["F"] == "\u2640"
+
+
+# ---------------------------------------------------------------------------
+# Stable slot upgrade + gender pricing tests
+# ---------------------------------------------------------------------------
+
+
+def test_buy_female_costs_more():
+    """Female racers cost more due to breeding value."""
+    male = Racer(id=1, name="M", owner_id=0, speed=10, cornering=10, stamina=10, gender="M")
+    female = Racer(id=2, name="F", owner_id=0, speed=10, cornering=10, stamina=10, gender="F")
+    base, mult, fem_mult = 20, 2, 1.5
+
+    male_price = calculate_buy_price(male, base, mult)
+    female_price = calculate_buy_price(female, base, mult, female_multiplier=fem_mult)
+
+    # Male: 20 + 30*2 = 80
+    assert male_price == 80
+    # Female: 20 + int(30*2*1.5) = 20 + 90 = 110
+    assert female_price == 110
+    assert female_price > male_price
+
+
+def test_sell_retired_penalty():
+    """Retired racers sell for less."""
+    from derby.logic import calculate_sell_price
+    racer = Racer(
+        id=1, name="Old", owner_id=1, speed=10, cornering=10, stamina=10,
+        retired=True,
+    )
+    normal_sell = calculate_sell_price(racer, 20, 2, 0.5, retired_penalty=1.0)
+    penalised_sell = calculate_sell_price(racer, 20, 2, 0.5, retired_penalty=0.6)
+    assert penalised_sell < normal_sell
+    # 80 * 0.5 * 0.6 = 24
+    assert penalised_sell == 24
+
+
+def test_sell_female_foals_penalty():
+    """Each foal reduces a female's sell value."""
+    from derby.logic import calculate_sell_price
+    base_f = Racer(
+        id=1, name="Mom0", owner_id=1, speed=10, cornering=10, stamina=10,
+        gender="F", foal_count=0,
+    )
+    one_foal = Racer(
+        id=2, name="Mom1", owner_id=1, speed=10, cornering=10, stamina=10,
+        gender="F", foal_count=1,
+    )
+    max_foal = Racer(
+        id=3, name="Mom3", owner_id=1, speed=10, cornering=10, stamina=10,
+        gender="F", foal_count=3,
+    )
+
+    sell_0 = calculate_sell_price(base_f, 20, 2, 0.5, female_multiplier=1.5, foal_penalty=0.3)
+    sell_1 = calculate_sell_price(one_foal, 20, 2, 0.5, female_multiplier=1.5, foal_penalty=0.3)
+    sell_3 = calculate_sell_price(max_foal, 20, 2, 0.5, female_multiplier=1.5, foal_penalty=0.3)
+
+    assert sell_0 > sell_1 > sell_3
+    # At max foals: foal_mult = 1 - (3/3)*(1-0.3) = 0.3
+    # sell_3 = int(110 * 0.5 * 0.3) = int(16.5) = 16
+    assert sell_3 == 16
+
+
+def test_parse_stable_upgrade_costs():
+    from derby.logic import parse_stable_upgrade_costs
+    assert parse_stable_upgrade_costs("500,1000,2000") == [500, 1000, 2000]
+    assert parse_stable_upgrade_costs("100") == [100]
+    assert parse_stable_upgrade_costs("") == []
+    assert parse_stable_upgrade_costs("  500 , 1000 ") == [500, 1000]
+
+
+def test_upgrade_costs_escalate():
+    from derby.logic import get_next_upgrade_cost
+    costs = [500, 1000, 2000]
+    assert get_next_upgrade_cost(0, costs) == 500
+    assert get_next_upgrade_cost(1, costs) == 1000
+    assert get_next_upgrade_cost(2, costs) == 2000
+    assert get_next_upgrade_cost(3, costs) is None  # maxed

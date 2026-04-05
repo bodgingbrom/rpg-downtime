@@ -268,6 +268,10 @@ class DerbyScheduler:
                 "training_multiplier": ("INTEGER", "NULL"),
                 "rest_cost": ("INTEGER", "NULL"),
                 "feed_cost": ("INTEGER", "NULL"),
+                "stable_upgrade_costs": ("VARCHAR", "NULL"),
+                "female_buy_multiplier": ("FLOAT", "NULL"),
+                "retired_sell_penalty": ("FLOAT", "NULL"),
+                "foal_sell_penalty": ("FLOAT", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:

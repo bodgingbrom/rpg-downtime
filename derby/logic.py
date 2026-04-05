@@ -173,16 +173,62 @@ def pick_name(taken: Set[str]) -> str | None:
     return random.choice(available)
 
 
-def calculate_buy_price(racer: models.Racer, base_cost: int, multiplier: int) -> int:
-    """Return the buy price for a racer based on its base stats."""
-    return base_cost + (racer.speed + racer.cornering + racer.stamina) * multiplier
+def calculate_buy_price(
+    racer: models.Racer,
+    base_cost: int,
+    multiplier: int,
+    female_multiplier: float = 1.0,
+) -> int:
+    """Return the buy price for a racer based on its base stats.
+
+    Females cost more because of their breeding value.  The stat component
+    is scaled by *female_multiplier* when the racer's gender is ``"F"``.
+    """
+    stat_total = (racer.speed + racer.cornering + racer.stamina) * multiplier
+    if getattr(racer, "gender", "M") == "F":
+        stat_total = int(stat_total * female_multiplier)
+    return base_cost + stat_total
 
 
 def calculate_sell_price(
-    racer: models.Racer, base_cost: int, multiplier: int, sell_fraction: float
+    racer: models.Racer,
+    base_cost: int,
+    multiplier: int,
+    sell_fraction: float,
+    female_multiplier: float = 1.0,
+    retired_penalty: float = 1.0,
+    foal_penalty: float = 1.0,
+    max_foals: int = 3,
 ) -> int:
-    """Return the sell price (fraction of buy price, rounded down)."""
-    return int(calculate_buy_price(racer, base_cost, multiplier) * sell_fraction)
+    """Return the sell price with penalties for retired status and foal count.
+
+    *retired_penalty* scales the price when the racer is retired (e.g. 0.6).
+    *foal_penalty* is the floor multiplier at max foals.  The actual
+    multiplier interpolates linearly: ``1 - (foal_count / max_foals) * (1 - foal_penalty)``.
+    """
+    buy = calculate_buy_price(racer, base_cost, multiplier, female_multiplier)
+    price = buy * sell_fraction
+    if getattr(racer, "retired", False):
+        price *= retired_penalty
+    foal_count = getattr(racer, "foal_count", 0) or 0
+    if foal_count > 0 and max_foals > 0:
+        foal_mult = 1.0 - (foal_count / max_foals) * (1.0 - foal_penalty)
+        price *= foal_mult
+    return int(price)
+
+
+def parse_stable_upgrade_costs(cost_string: str) -> list[int]:
+    """Parse a comma-separated string like ``"500,1000,2000"`` into a list of ints."""
+    if not cost_string or not cost_string.strip():
+        return []
+    return [int(v.strip()) for v in cost_string.split(",") if v.strip()]
+
+
+def get_next_upgrade_cost(extra_slots: int, costs: list[int]) -> int | None:
+    """Return the cost of the next stable slot upgrade, or None if maxed."""
+    if extra_slots >= len(costs):
+        return None
+    return costs[extra_slots]
 
 
 def generate_pool_racer(guild_id: int, taken_names: Set[str]) -> dict:
