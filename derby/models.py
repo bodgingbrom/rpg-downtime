@@ -32,6 +32,7 @@ class Racer(Base):
     foal_count: Mapped[int] = mapped_column(Integer, default=0)
     breed_cooldown: Mapped[int] = mapped_column(Integer, default=0)
     training_count: Mapped[int] = mapped_column(Integer, default=0)
+    rank: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class Race(Base):

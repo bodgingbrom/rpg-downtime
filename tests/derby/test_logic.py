@@ -1283,3 +1283,87 @@ def test_upset_rate_realistic():
         f"Strong racer won {wins}/500 ({win_rate:.1%}) — "
         f"expected 55-95% for meaningful but not deterministic advantage"
     )
+
+
+# ---------------------------------------------------------------------------
+# Rank system tests
+# ---------------------------------------------------------------------------
+
+
+def test_calculate_rank_boundaries():
+    from derby.logic import calculate_rank
+
+    # D: 0-23
+    assert calculate_rank(0, 0, 0) == "D"
+    assert calculate_rank(8, 8, 7) == "D"  # 23
+    # C: 24-46
+    assert calculate_rank(8, 8, 8) == "C"  # 24
+    assert calculate_rank(15, 15, 16) == "C"  # 46
+    # B: 47-65
+    assert calculate_rank(16, 16, 15) == "B"  # 47
+    assert calculate_rank(22, 22, 21) == "B"  # 65
+    # A: 66-80
+    assert calculate_rank(22, 22, 22) == "A"  # 66
+    assert calculate_rank(27, 27, 26) == "A"  # 80
+    # S: 81-93
+    assert calculate_rank(27, 27, 27) == "S"  # 81
+    assert calculate_rank(31, 31, 31) == "S"  # 93
+
+
+def test_assign_rank_if_needed_sets_once():
+    from derby.logic import assign_rank_if_needed
+
+    r = Racer(id=1, name="Test", owner_id=0, speed=10, cornering=10, stamina=10)
+    assert r.rank is None
+    result = assign_rank_if_needed(r)
+    assert result == "C"
+    assert r.rank == "C"
+
+    # Second call should return None — rank already set
+    result2 = assign_rank_if_needed(r)
+    assert result2 is None
+    assert r.rank == "C"  # unchanged
+
+
+def test_assign_rank_preserves_existing():
+    """A D-rank racer with S-level stats should keep D rank."""
+    from derby.logic import assign_rank_if_needed
+
+    r = Racer(id=1, name="Test", owner_id=0, speed=31, cornering=31, stamina=31, rank="D")
+    result = assign_rank_if_needed(r)
+    assert result is None
+    assert r.rank == "D"
+
+
+def test_rank_label():
+    from derby.logic import rank_label
+
+    assert rank_label("D") == "D-Rank"
+    assert rank_label("C") == "C-Rank"
+    assert rank_label("B") == "B-Rank"
+    assert rank_label("A") == "A-Rank"
+    assert rank_label("S") == "S-Rank"
+    assert rank_label(None) == "Unranked"
+
+
+def test_generate_pool_racer_has_rank():
+    """Pool-generated racers should include a rank."""
+    kwargs = generate_pool_racer(guild_id=1, taken_names=set())
+    assert "rank" in kwargs
+    total = kwargs["speed"] + kwargs["cornering"] + kwargs["stamina"]
+    from derby.logic import calculate_rank
+    assert kwargs["rank"] == calculate_rank(kwargs["speed"], kwargs["cornering"], kwargs["stamina"])
+
+
+def test_breed_racer_has_rank():
+    """Bred racers should include a rank."""
+    from derby.logic import breed_racer
+    import random as stdlib_random
+    sire = Racer(id=1, name="Sire", owner_id=1, gender="M", speed=20, cornering=20, stamina=20,
+                 career_length=30, temperament="Quirky")
+    dam = Racer(id=2, name="Dam", owner_id=1, gender="F", speed=20, cornering=20, stamina=20,
+                career_length=30, temperament="Quirky")
+    kwargs = breed_racer(sire, dam, guild_id=1, rng=stdlib_random.Random(42))
+    assert "rank" in kwargs
+    from derby.logic import calculate_rank
+    assert kwargs["rank"] == calculate_rank(kwargs["speed"], kwargs["cornering"], kwargs["stamina"])
