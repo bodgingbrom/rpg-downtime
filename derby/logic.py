@@ -274,22 +274,67 @@ def generate_pool_racer(guild_id: int, taken_names: Set[str]) -> dict:
         base = random.choice(_load_names())
         name = f"{base}-{random.randint(100, 999)}"
     career_length = random.randint(25, 40)
+    speed = random.randint(0, 31)
+    cornering = random.randint(0, 31)
+    stamina = random.randint(0, 31)
     return {
         "name": name,
         "owner_id": 0,
         "guild_id": guild_id,
-        "speed": random.randint(0, 31),
-        "cornering": random.randint(0, 31),
-        "stamina": random.randint(0, 31),
+        "speed": speed,
+        "cornering": cornering,
+        "stamina": stamina,
         "temperament": random.choice(list(TEMPERAMENTS.keys())),
         "career_length": career_length,
         "peak_end": int(career_length * 0.6),
         "gender": random.choice(["M", "F"]),
+        "rank": calculate_rank(speed, cornering, stamina),
     }
 
 
 MAX_STAT = 31
 TRAINABLE_STATS = {"speed", "cornering", "stamina"}
+
+# ---------------------------------------------------------------------------
+# Rank system
+# ---------------------------------------------------------------------------
+
+# Ordered highest-first so the first match wins.
+RANK_THRESHOLDS: list[tuple[str, int]] = [
+    ("S", 81),
+    ("A", 66),
+    ("B", 47),
+    ("C", 24),
+    ("D", 0),
+]
+
+
+def calculate_rank(speed: int, cornering: int, stamina: int) -> str:
+    """Return the rank letter (D/C/B/A/S) for a given set of base stats."""
+    total = speed + cornering + stamina
+    for letter, minimum in RANK_THRESHOLDS:
+        if total >= minimum:
+            return letter
+    return "D"  # fallback, shouldn't happen
+
+
+def assign_rank_if_needed(racer: models.Racer) -> str | None:
+    """Set the racer's rank if not already assigned.  Returns the rank if
+    newly assigned, or ``None`` if the racer already had one.
+
+    Rank is permanent — once set it never changes, even if stats change.
+    """
+    if racer.rank is not None:
+        return None
+    racer.rank = calculate_rank(racer.speed, racer.cornering, racer.stamina)
+    return racer.rank
+
+
+def rank_label(rank: str | None) -> str:
+    """Return a human-readable rank label like 'B-Rank' or 'Unranked'."""
+    if rank is None:
+        return "Unranked"
+    return f"{rank}-Rank"
 GENDER_LABELS = {"M": "\u2642", "F": "\u2640"}
 
 
@@ -460,6 +505,9 @@ def breed_racer(
         "sire_id": sire.id,
         "dam_id": dam.id,
         "training_count": 0,
+        "rank": calculate_rank(
+            result_stats["speed"], result_stats["cornering"], result_stats["stamina"]
+        ),
     }
 
 

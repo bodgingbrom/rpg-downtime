@@ -331,3 +331,45 @@ async def test_pool_racer_races_regardless_of_training(session: AsyncSession):
     racers = await repo.get_guild_racers(session, guild_id=1, min_training=5)
     assert len(racers) == 1
     assert racers[0].name == "PoolRacer"
+
+
+@pytest.mark.asyncio
+async def test_create_racer_with_rank(session: AsyncSession):
+    """Racer created with rank should store it."""
+    racer = await repo.create_racer(
+        session, name="Ranked", owner_id=0, guild_id=1,
+        speed=20, cornering=20, stamina=20, rank="A",
+    )
+    assert racer.rank == "A"
+
+    fetched = await repo.get_racer(session, racer.id)
+    assert fetched.rank == "A"
+
+
+@pytest.mark.asyncio
+async def test_get_racers_by_rank(session: AsyncSession):
+    """Should return only racers with the specified rank."""
+    await repo.create_racer(
+        session, name="D1", owner_id=0, guild_id=1, speed=5, cornering=5, stamina=5, rank="D",
+    )
+    await repo.create_racer(
+        session, name="C1", owner_id=0, guild_id=1, speed=10, cornering=10, stamina=10, rank="C",
+    )
+    await repo.create_racer(
+        session, name="C2", owner_id=1, guild_id=1, speed=12, cornering=12, stamina=12, rank="C",
+    )
+    await repo.create_racer(
+        session, name="CRetired", owner_id=0, guild_id=1, speed=10, cornering=10, stamina=10,
+        rank="C", retired=True,
+    )
+
+    d_racers = await repo.get_racers_by_rank(session, guild_id=1, rank="D")
+    assert len(d_racers) == 1
+    assert d_racers[0].name == "D1"
+
+    c_racers = await repo.get_racers_by_rank(session, guild_id=1, rank="C")
+    assert len(c_racers) == 2  # excludes retired
+
+    c_unowned = await repo.get_racers_by_rank(session, guild_id=1, rank="C", unowned_only=True)
+    assert len(c_unowned) == 1
+    assert c_unowned[0].name == "C1"

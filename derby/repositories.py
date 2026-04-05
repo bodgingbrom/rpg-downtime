@@ -67,6 +67,7 @@ async def create_racer(
     foal_count: int = 0,
     breed_cooldown: int = 0,
     training_count: int = 0,
+    rank: str | None = None,
 ) -> Racer:
     return await _create(
         session,
@@ -89,6 +90,7 @@ async def create_racer(
         foal_count=foal_count,
         breed_cooldown=breed_cooldown,
         training_count=training_count,
+        rank=rank,
     )
 
 
@@ -146,6 +148,25 @@ async def get_unowned_guild_racers(
             Racer.retired.is_(False),
             Racer.injury_races_remaining == 0,
         )
+    result = await session.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_racers_by_rank(
+    session: AsyncSession,
+    guild_id: int,
+    rank: str,
+    *,
+    unowned_only: bool = False,
+) -> list[Racer]:
+    """Return non-retired racers in a guild with a specific rank."""
+    stmt = select(Racer).where(
+        Racer.guild_id == guild_id,
+        Racer.rank == rank,
+        Racer.retired.is_(False),
+    )
+    if unowned_only:
+        stmt = stmt.where(Racer.owner_id == 0)
     result = await session.execute(stmt)
     return result.scalars().all()
 

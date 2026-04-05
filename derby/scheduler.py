@@ -159,6 +159,7 @@ class DerbyScheduler:
                 "foal_count": ("INTEGER", "0"),
                 "breed_cooldown": ("INTEGER", "0"),
                 "training_count": ("INTEGER", "5"),
+                "rank": ("VARCHAR", "NULL"),
             }
             for name, (col_type, default) in racer_migrations.items():
                 if name not in racer_columns:
@@ -167,6 +168,19 @@ class DerbyScheduler:
                             f"ALTER TABLE racers ADD COLUMN {name} {col_type} DEFAULT {default}"
                         )
                     )
+
+            # Backfill rank for existing racers that don't have one yet.
+            await conn.execute(
+                text(
+                    "UPDATE racers SET rank = CASE "
+                    "WHEN (speed + cornering + stamina) >= 81 THEN 'S' "
+                    "WHEN (speed + cornering + stamina) >= 66 THEN 'A' "
+                    "WHEN (speed + cornering + stamina) >= 47 THEN 'B' "
+                    "WHEN (speed + cornering + stamina) >= 24 THEN 'C' "
+                    "ELSE 'D' END "
+                    "WHERE rank IS NULL"
+                )
+            )
 
             # Migrate guild_id=0 racers: duplicate per guild and fix references
             if "guild_id" not in racer_columns:

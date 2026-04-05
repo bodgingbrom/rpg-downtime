@@ -351,6 +351,11 @@ class Derby(commands.Cog, name="derby"):
         embed.add_field(name="Temperament", value=racer_obj.temperament, inline=True)
         embed.add_field(name="Mood", value=_mood_label(racer_obj.mood), inline=True)
         embed.add_field(
+            name="Rank",
+            value=logic.rank_label(getattr(racer_obj, "rank", None)),
+            inline=True,
+        )
+        embed.add_field(
             name="Career",
             value=f"Race {racer_obj.races_completed}/{racer_obj.career_length} ({phase})",
             inline=True,
@@ -506,6 +511,9 @@ class Derby(commands.Cog, name="derby"):
                 "stamina": stamina or 0,
                 "temperament": temperament or "Quirky",
             }
+        rank = logic.calculate_rank(
+            stats.get("speed", 0), stats.get("cornering", 0), stats.get("stamina", 0)
+        )
         async with self.bot.scheduler.sessionmaker() as session:
             racer = await repo.create_racer(
                 session,
@@ -514,6 +522,7 @@ class Derby(commands.Cog, name="derby"):
                 guild_id=guild_id,
                 career_length=career_length,
                 peak_end=int(career_length * 0.6),
+                rank=rank,
                 **stats,
             )
         embed = discord.Embed(title=f"New Racer: {racer.name} (#{racer.id})")
@@ -1085,8 +1094,9 @@ class Stable(commands.Cog, name="stable"):
             training = ""
             if r.sire_id is not None and tc < min_train:
                 training = f" | Training: {tc}/{min_train} \U0001f3cb"
+            rank = logic.rank_label(getattr(r, "rank", None))
             embed.add_field(
-                name=f"{gender} {r.name} (#{r.id})",
+                name=f"{gender} {r.name} (#{r.id}) [{rank}]",
                 value=(
                     f"Spd {_stat_band(eff['speed'])} / "
                     f"Cor {_stat_band(eff['cornering'])} / "
@@ -1116,8 +1126,9 @@ class Stable(commands.Cog, name="stable"):
             eff = logic.effective_stats(r)
             phase = logic.career_phase(r)
             gender = _gender(getattr(r, "gender", "M"), "")
+            rank = logic.rank_label(getattr(r, "rank", None))
             embed.add_field(
-                name=f"{gender} {r.name} — {price} coins",
+                name=f"{gender} {r.name} [{rank}] — {price} coins",
                 value=(
                     f"Spd {_stat_band(eff['speed'])} / "
                     f"Cor {_stat_band(eff['cornering'])} / "
