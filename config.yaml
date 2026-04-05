@@ -6,4 +6,4 @@ default_wallet: 100
 retirement_threshold: 96
 bet_window: 120
 countdown_total: 10
-channel_name: downtime-derby
+channel_name: downtime-games

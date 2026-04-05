@@ -263,3 +263,26 @@ async def test_get_stable_racers_includes_retired(session: AsyncSession):
     active_only = await repo.get_owned_racers(session, owner_id=5, guild_id=1)
     assert len(active_only) == 1
     assert active_only[0].name == "Active"
+
+
+# ---------------------------------------------------------------------------
+# PlayerData tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_player_data_crud(session: AsyncSession):
+    """Create and retrieve PlayerData for stable slot upgrades."""
+    pd = await repo.create_player_data(
+        session, user_id=42, guild_id=1, extra_slots=1
+    )
+    assert pd.user_id == 42
+    assert pd.guild_id == 1
+    assert pd.extra_slots == 1
+
+    fetched = await repo.get_player_data(session, user_id=42, guild_id=1)
+    assert fetched is not None
+    assert fetched.extra_slots == 1
+
+    # Different guild returns None
+    assert await repo.get_player_data(session, user_id=42, guild_id=2) is None

@@ -1355,3 +1355,190 @@ async def test_stable_feed_retired(tmp_path: Path) -> None:
 
     assert ctx.sent
     assert "retired" in str(ctx.sent[0].get("content", "")).lower()
+
+
+# ---------------------------------------------------------------------------
+# /stable upgrade tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stable_upgrade_success(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=200,
+        max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=600,
+        )
+
+    await cog.stable_upgrade.callback(cog, ctx)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Upgraded" in embed.title
+
+    async with sessionmaker() as session:
+        pd = await repo.get_player_data(session, ctx.author.id, GUILD_ID)
+        assert pd is not None
+        assert pd.extra_slots == 1
+        w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
+        assert w.balance == 600 - 500
+
+
+@pytest.mark.asyncio
+async def test_stable_upgrade_at_max(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=200,
+        max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    # Already fully upgraded
+    async with sessionmaker() as session:
+        await repo.create_player_data(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, extra_slots=3,
+        )
+
+    await cog.stable_upgrade.callback(cog, ctx)
+
+    assert ctx.sent
+    assert "fully upgraded" in str(ctx.sent[0].get("content", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_stable_upgrade_insufficient_funds(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=50,
+        max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=50,
+        )
+
+    await cog.stable_upgrade.callback(cog, ctx)
+
+    assert ctx.sent
+    assert "Upgrading costs" in str(ctx.sent[0].get("content", ""))
+
+
+@pytest.mark.asyncio
+async def test_buy_respects_upgraded_slots(tmp_path: Path) -> None:
+    """After upgrading, a player can buy a 4th racer."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=2000,
+        racer_buy_base=20, racer_buy_multiplier=2,
+        max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        # Player owns 3 racers (at base limit)
+        for i in range(3):
+            await repo.create_racer(
+                session, name=f"R{i}", owner_id=ctx.author.id, guild_id=GUILD_ID,
+                speed=5, cornering=5, stamina=5,
+            )
+        # An unowned racer to buy
+        new_racer = await repo.create_racer(
+            session, name="NewOne", owner_id=0, guild_id=GUILD_ID,
+            speed=5, cornering=5, stamina=5,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=2000,
+        )
+        # Upgrade: 1 extra slot
+        await repo.create_player_data(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, extra_slots=1,
+        )
+
+    await cog.stable_buy.callback(cog, ctx, new_racer.id)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Purchased" in embed.title
+
+
+@pytest.mark.asyncio
+async def test_stable_counts_retired_toward_limit(tmp_path: Path) -> None:
+    """Retired racers count toward the stable slot limit."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=2000,
+        racer_buy_base=20, racer_buy_multiplier=2,
+        max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        # 2 active + 1 retired = 3 total (at limit)
+        await repo.create_racer(
+            session, name="Active1", owner_id=ctx.author.id, guild_id=GUILD_ID,
+        )
+        await repo.create_racer(
+            session, name="Active2", owner_id=ctx.author.id, guild_id=GUILD_ID,
+        )
+        await repo.create_racer(
+            session, name="Retired1", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            retired=True,
+        )
+        target = await repo.create_racer(
+            session, name="WantThis", owner_id=0, guild_id=GUILD_ID,
+            speed=5, cornering=5, stamina=5,
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=2000,
+        )
+
+    await cog.stable_buy.callback(cog, ctx, target.id)
+
+    assert ctx.sent
+    # Should be rejected — stable is full
+    assert "full" in str(ctx.sent[0].get("content", "")).lower()
+
+    # Racer should still be unowned
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, target.id)
+        assert r.owner_id == 0
