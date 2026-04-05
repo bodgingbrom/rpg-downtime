@@ -1544,3 +1544,175 @@ async def test_stable_counts_retired_toward_limit(tmp_path: Path) -> None:
     async with sessionmaker() as session:
         r = await repo.get_racer(session, target.id)
         assert r.owner_id == 0
+
+
+# ---------------------------------------------------------------------------
+# /stable breed tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stable_breed_success(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=200,
+        max_racers_per_owner=6, breeding_fee=25,
+        breeding_cooldown=6, min_races_to_breed=5,
+        max_foals_per_female=3,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        sire = await repo.create_racer(
+            session, name="Dad", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=20, cornering=20, stamina=20, gender="M",
+            career_length=30, peak_end=18,
+        )
+        await repo.update_racer(session, sire.id, races_completed=10)
+        dam = await repo.create_racer(
+            session, name="Mom", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=25, cornering=25, stamina=25, gender="F",
+            career_length=30, peak_end=18,
+        )
+        await repo.update_racer(session, dam.id, races_completed=10)
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+        )
+
+    await cog.stable_breed.callback(cog, ctx, sire.id, dam.id)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Foal" in embed.title
+
+    # Verify state changes
+    async with sessionmaker() as session:
+        s = await repo.get_racer(session, sire.id)
+        d = await repo.get_racer(session, dam.id)
+        assert s.breed_cooldown == 6
+        assert d.breed_cooldown == 6
+        assert d.foal_count == 1
+
+        w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
+        assert w.balance == 200 - 25
+
+        # Foal should exist
+        all_racers = await repo.get_stable_racers(
+            session, ctx.author.id, GUILD_ID
+        )
+        foals = [r for r in all_racers if r.sire_id == sire.id]
+        assert len(foals) == 1
+        foal = foals[0]
+        assert foal.dam_id == dam.id
+        assert foal.name == "Mom's Foal"
+        assert foal.training_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stable_breed_insufficient_funds(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=10,
+        max_racers_per_owner=6, breeding_fee=25,
+        min_races_to_breed=5, max_foals_per_female=3,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        sire = await repo.create_racer(
+            session, name="Dad", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="M",
+        )
+        await repo.update_racer(session, sire.id, races_completed=10)
+        dam = await repo.create_racer(
+            session, name="Mom", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="F",
+        )
+        await repo.update_racer(session, dam.id, races_completed=10)
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=10,
+        )
+
+    await cog.stable_breed.callback(cog, ctx, sire.id, dam.id)
+
+    assert ctx.sent
+    assert "Breeding costs" in str(ctx.sent[0].get("content", ""))
+
+
+@pytest.mark.asyncio
+async def test_stable_breed_same_racer_rejected(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=200,
+        max_racers_per_owner=6, breeding_fee=25,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Self", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="M",
+        )
+        await repo.update_racer(session, racer.id, races_completed=10)
+
+    await cog.stable_breed.callback(cog, ctx, racer.id, racer.id)
+
+    assert ctx.sent
+    assert "two different" in str(ctx.sent[0].get("content", "")).lower()
+
+
+@pytest.mark.asyncio
+async def test_stable_breed_validation_error(tmp_path: Path) -> None:
+    """Breeding two males should be rejected by validation."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=200,
+        max_racers_per_owner=6, breeding_fee=25,
+        min_races_to_breed=5, max_foals_per_female=3,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        r1 = await repo.create_racer(
+            session, name="Boy1", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="M",
+        )
+        await repo.update_racer(session, r1.id, races_completed=10)
+        r2 = await repo.create_racer(
+            session, name="Boy2", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="M",
+        )
+        await repo.update_racer(session, r2.id, races_completed=10)
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+        )
+
+    await cog.stable_breed.callback(cog, ctx, r1.id, r2.id)
+
+    assert ctx.sent
+    assert "not female" in str(ctx.sent[0].get("content", "")).lower()
