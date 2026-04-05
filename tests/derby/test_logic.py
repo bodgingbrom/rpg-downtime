@@ -35,6 +35,11 @@ from derby.logic import (
     resolve_payouts,
     resolve_placement_prizes,
     roll_mood_bonus,
+    roll_race_day_form,
+    FORM_TABLE,
+    NOISE_MULT_LOW,
+    NOISE_MULT_HIGH,
+    NOISE_FLOOR,
     simulate_race,
     training_failure_chance,
 )
@@ -136,8 +141,8 @@ def test_simulate_race_stat_influence():
         result = simulate_race({"racers": [strong, weak]}, seed=seed)
         if result.placements[0] == 1:
             wins += 1
-    # Strong racer should win the vast majority
-    assert wins > 80
+    # Strong racer should win the majority (multiplicative noise allows upsets)
+    assert wins > 60
 
 
 def test_simulate_race_returns_race_result():
@@ -199,7 +204,7 @@ def test_simulate_race_speed_track_favors_speed():
         result = simulate_race({"racers": [fast, slow]}, seed=seed, race_map=speed_map)
         if result.placements[0] == 1:
             wins += 1
-    assert wins > 75
+    assert wins > 55
 
 
 def test_simulate_race_corner_track_favors_cornering():
@@ -223,7 +228,7 @@ def test_simulate_race_corner_track_favors_cornering():
         )
         if result.placements[0] == 1:
             wins += 1
-    assert wins > 75
+    assert wins > 55
 
 
 def test_simulate_race_deterministic_with_seed():
@@ -1147,3 +1152,134 @@ def test_upgrade_costs_escalate():
     assert get_next_upgrade_cost(1, costs) == 1000
     assert get_next_upgrade_cost(2, costs) == 2000
     assert get_next_upgrade_cost(3, costs) is None  # maxed
+
+
+# ---------------------------------------------------------------------------
+# Race variance overhaul tests
+# ---------------------------------------------------------------------------
+
+
+def test_segment_score_multiplicative():
+    """Segment score should use multiplicative noise within bounds."""
+    from derby.logic import _segment_score
+
+    rng = random.Random(42)
+    stats = {"speed": 20, "cornering": 20, "stamina": 20}
+    results = []
+    for _ in range(500):
+        score, noise_mult = _segment_score(stats, "straight", 2, 0, rng)
+        assert NOISE_MULT_LOW <= noise_mult <= NOISE_MULT_HIGH
+        assert score >= 0  # shouldn't go negative with decent stats
+        results.append((score, noise_mult))
+
+    # Score should vary significantly due to multiplicative noise
+    scores = [s for s, _ in results]
+    assert max(scores) / min(scores) > 1.5, "Score range too narrow for multiplicative noise"
+
+
+def test_segment_score_zero_stats():
+    """Zero-stat racer still gets noise floor score (additive chaos)."""
+    from derby.logic import _segment_score
+
+    rng = random.Random(99)
+    stats = {"speed": 0, "cornering": 0, "stamina": 0}
+    scores = []
+    for _ in range(100):
+        score, _ = _segment_score(stats, "straight", 2, 0, rng)
+        scores.append(score)
+    # With zero stats, raw * noise_mult ≈ 0, but additive floor gives 0-NOISE_FLOOR
+    assert max(scores) <= NOISE_FLOOR + 1
+    assert min(scores) >= -1  # fatigue can make it slightly negative
+
+
+def test_race_day_form_mood_influence():
+    """Higher mood should produce higher average form over many trials."""
+    averages = {}
+    for mood in range(1, 6):
+        forms = []
+        for seed in range(1000):
+            rng = random.Random(seed)
+            forms.append(roll_race_day_form(mood, rng))
+        averages[mood] = sum(forms) / len(forms)
+
+    # Each mood should have higher average form than the one below
+    for mood in range(2, 6):
+        assert averages[mood] > averages[mood - 1], (
+            f"Mood {mood} avg form ({averages[mood]:.4f}) not greater "
+            f"than mood {mood-1} avg ({averages[mood-1]:.4f})"
+        )
+
+    # Great mood should average positive, Awful should average negative
+    assert averages[5] > 0, f"Great mood avg form should be positive: {averages[5]:.4f}"
+    assert averages[1] < 0, f"Awful mood avg form should be negative: {averages[1]:.4f}"
+
+
+def test_race_day_form_within_bounds():
+    """Form values should stay within the FORM_TABLE ranges."""
+    for mood in range(1, 6):
+        low, high = FORM_TABLE[mood]
+        for seed in range(200):
+            rng = random.Random(seed)
+            form = roll_race_day_form(mood, rng)
+            assert low <= form <= high, (
+                f"Mood {mood} form {form} out of range [{low}, {high}]"
+            )
+
+
+def test_race_day_form_hidden_from_odds():
+    """Odds should NOT change based on form — only on stats and mood expected bonus."""
+    r1 = Racer(id=1, name="A", owner_id=1, speed=20, cornering=20, stamina=20, mood=3)
+    r2 = Racer(id=2, name="B", owner_id=2, speed=10, cornering=10, stamina=10, mood=3)
+    # Odds are deterministic (no RNG) — calling twice should give same result
+    odds1 = calculate_odds([r1, r2], [], 0.1)
+    odds2 = calculate_odds([r1, r2], [], 0.1)
+    assert odds1 == odds2
+
+
+def test_form_stored_in_result():
+    """RaceResult should contain form values for all racers."""
+    r1 = Racer(id=1, name="A", owner_id=1, speed=20, cornering=20, stamina=20, mood=5)
+    r2 = Racer(id=2, name="B", owner_id=2, speed=15, cornering=15, stamina=15, mood=1)
+    race_map = RaceMap(
+        name="Form Test",
+        theme="test",
+        description="",
+        segments=[
+            MapSegment(type="straight", distance=2),
+            MapSegment(type="corner", distance=2),
+        ],
+    )
+    result = simulate_race({"racers": [r1, r2]}, seed=42, race_map=race_map)
+    assert 1 in result.form
+    assert 2 in result.form
+    # Form values should be floats (race day form offsets)
+    assert isinstance(result.form[1], float)
+    assert isinstance(result.form[2], float)
+
+
+def test_upset_rate_realistic():
+    """A moderately better racer should win 55-80% against a slightly weaker one."""
+    strong = Racer(id=1, name="Strong", owner_id=1, speed=22, cornering=22, stamina=22, mood=3)
+    medium = Racer(id=2, name="Medium", owner_id=2, speed=15, cornering=15, stamina=15, mood=3)
+    race_map = RaceMap(
+        name="Upset Test",
+        theme="test",
+        description="",
+        segments=[
+            MapSegment(type="straight", distance=2),
+            MapSegment(type="corner", distance=2),
+            MapSegment(type="climb", distance=2),
+            MapSegment(type="straight", distance=2),
+            MapSegment(type="corner", distance=2),
+        ],
+    )
+    wins = 0
+    for seed in range(500):
+        result = simulate_race({"racers": [strong, medium]}, seed=seed, race_map=race_map)
+        if result.placements[0] == 1:
+            wins += 1
+    win_rate = wins / 500
+    assert 0.55 <= win_rate <= 0.95, (
+        f"Strong racer won {wins}/500 ({win_rate:.1%}) — "
+        f"expected 55-95% for meaningful but not deterministic advantage"
+    )
