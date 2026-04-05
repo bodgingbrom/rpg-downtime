@@ -47,6 +47,25 @@ MOOD_THRESHOLDS = {
 
 MOOD_BONUS = 5.0  # flat points added/subtracted per mood event
 
+# Multiplicative noise range for segment scoring.
+NOISE_MULT_LOW = 0.55
+NOISE_MULT_HIGH = 1.45
+
+# Additive noise floor — represents inherent chaos of racing (track
+# conditions, crowds, random stumbles).  Independent of stats so weaker
+# racers get a baseline randomness that can close gaps.
+NOISE_FLOOR = 40.0
+
+# Race Day Form table: mood -> (low_offset, high_offset)
+# Applied as segment_score * (1.0 + form_offset) for ALL segments in a race
+FORM_TABLE: dict[int, tuple[float, float]] = {
+    1: (-0.35, 0.10),   # Awful: mostly bad days
+    2: (-0.25, 0.15),   # Bad: downside bias
+    3: (-0.20, 0.25),   # Normal: slight upside bias
+    4: (-0.10, 0.35),   # Good: mostly good days
+    5: (-0.05, 0.45),   # Great: almost always a boost
+}
+
 
 def roll_mood_bonus(mood: int, rng: random.Random) -> tuple[int, float]:
     """Roll a d20 for a mood event and return ``(roll, bonus)``.
@@ -61,6 +80,17 @@ def roll_mood_bonus(mood: int, rng: random.Random) -> tuple[int, float]:
     if roll <= penalty_max:
         return roll, -MOOD_BONUS
     return roll, 0.0
+
+
+def roll_race_day_form(mood: int, rng: random.Random) -> float:
+    """Roll a hidden Race Day Form modifier based on mood.
+
+    Returns a float offset applied multiplicatively to all segment scores
+    for this racer during the race: ``segment_score * (1.0 + form)``.
+    Better mood gives a wider upside range and narrower downside.
+    """
+    low, high = FORM_TABLE.get(mood, FORM_TABLE[3])
+    return rng.uniform(low, high)
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +141,7 @@ class RaceResult:
     racer_names: dict[int, str]
     map_name: str = ""
     stumble_counts: dict[int, int] = field(default_factory=dict)  # racer_id -> count
+    form: dict[int, float] = field(default_factory=dict)  # racer_id -> race day form offset
 
 
 _MAPS_DIR = os.path.join(os.path.dirname(__file__), "maps")
@@ -519,8 +550,9 @@ def _segment_score(
 ) -> tuple[float, float]:
     """Calculate a racer's score for a single segment.
 
-    Returns ``(score, noise)`` where noise is the raw random component
-    (used for event detection).
+    Returns ``(score, noise_mult)`` where *noise_mult* is the multiplicative
+    random factor (used for event detection).  Noise is multiplicative so
+    variance scales with power — everyone can have bad segments.
     """
     weights = SEGMENT_TYPES.get(segment_type, SEGMENT_TYPES["straight"])
 
@@ -532,9 +564,10 @@ def _segment_score(
 
     distance_factor = 0.8 + (distance * 0.2)
     fatigue = max(0, segment_index * 1.5 - racer_stats["stamina"] * 0.15)
-    noise = rng.uniform(0, 15)
+    noise_mult = rng.uniform(NOISE_MULT_LOW, NOISE_MULT_HIGH)
+    floor = rng.uniform(0, NOISE_FLOOR)
 
-    return (raw * distance_factor) - fatigue + noise, noise
+    return (raw * distance_factor - fatigue) * noise_mult + floor, noise_mult
 
 
 def _detect_events(
@@ -569,10 +602,10 @@ def _detect_events(
                 f"{names.get(curr_order[0], '???')} pulls away with a commanding lead!"
             )
 
-    for rid, noise in noise_rolls.items():
-        if noise < 3:
+    for rid, noise_mult in noise_rolls.items():
+        if noise_mult < 0.65:
             events.append(f"{names.get(rid, f'Racer {rid}')} stumbles!")
-        elif noise > 12:
+        elif noise_mult > 1.35:
             events.append(f"{names.get(rid, f'Racer {rid}')} surges forward!")
 
     return events
@@ -626,7 +659,7 @@ def calculate_odds(
         payout = (1.0 - house_edge) / base_prob
         return {(r.id if hasattr(r, "id") else int(r)): payout for r in racers}
 
-    NOISE_BASELINE = 7.5  # average of uniform(0, 15) per segment
+    NOISE_BASELINE = 5.0  # small floor so zero-stat racers get non-zero odds
     weights: List[float] = []
     for racer in racers:
         if race_map and race_map.segments:
@@ -687,12 +720,18 @@ def simulate_race(
             r.id: getattr(r, "mood", 3) for r in raw_racers
         }
 
+        # Roll hidden Race Day Form for each racer (mood-influenced)
+        race_form: Dict[int, float] = {
+            r.id: roll_race_day_form(racer_moods[r.id], rng)
+            for r in raw_racers
+        }
+
         for seg_idx, seg in enumerate(race_map.segments):
             seg_scores: Dict[int, float] = {}
             noise_rolls: Dict[int, float] = {}
             mood_rolls: Dict[int, tuple[int, float]] = {}
             for rid, stats in racer_stats.items():
-                score, noise = _segment_score(
+                score, noise_mult = _segment_score(
                     stats, seg.type, seg.distance, seg_idx, rng
                 )
                 # Mood d20 roll
@@ -700,10 +739,13 @@ def simulate_race(
                 mood_rolls[rid] = (d20, mood_bonus)
                 score += mood_bonus
 
+                # Apply hidden Race Day Form
+                score *= (1.0 + race_form[rid])
+
                 seg_scores[rid] = score
-                noise_rolls[rid] = noise
+                noise_rolls[rid] = noise_mult
                 cumulative[rid] += score
-                if noise < 3:
+                if noise_mult < 0.65:
                     stumble_counts[rid] += 1
 
             curr_order = sorted(
@@ -748,6 +790,7 @@ def simulate_race(
             racer_names=names,
             map_name=map_name,
             stumble_counts=stumble_counts,
+            form=race_form,
         )
 
     # --- Legacy single-pass fallback ---
@@ -755,7 +798,7 @@ def simulate_race(
         scored: List[Tuple[int, float]] = []
         for racer in raw_racers:
             power = _racer_power(racer)
-            score = power + rng.uniform(0, 40)
+            score = power * rng.uniform(NOISE_MULT_LOW, NOISE_MULT_HIGH) + rng.uniform(0, NOISE_FLOOR)
             scored.append((racer.id, score))
         scored.sort(key=lambda x: x[1], reverse=True)
         placements = [rid for rid, _ in scored]
