@@ -286,3 +286,48 @@ async def test_player_data_crud(session: AsyncSession):
 
     # Different guild returns None
     assert await repo.get_player_data(session, user_id=42, guild_id=2) is None
+
+
+# ---------------------------------------------------------------------------
+# Training gate tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_foal_excluded_from_race_pool(session: AsyncSession):
+    """A bred racer with training_count < min_training is excluded."""
+    # Pool racer (no sire) — always eligible regardless of training_count
+    await repo.create_racer(
+        session, name="Pool", owner_id=0, guild_id=1, training_count=0,
+    )
+    # Bred foal — untrained, should be excluded
+    await repo.create_racer(
+        session, name="Foal", owner_id=0, guild_id=1,
+        sire_id=99, dam_id=98, training_count=2,
+    )
+    # Bred foal — fully trained, should be included
+    await repo.create_racer(
+        session, name="TrainedFoal", owner_id=0, guild_id=1,
+        sire_id=99, dam_id=98, training_count=5,
+    )
+
+    # Without training gate — all 3 returned
+    all_racers = await repo.get_guild_racers(session, guild_id=1)
+    assert len(all_racers) == 3
+
+    # With training gate of 5
+    gated = await repo.get_guild_racers(session, guild_id=1, min_training=5)
+    assert len(gated) == 2
+    assert {r.name for r in gated} == {"Pool", "TrainedFoal"}
+
+
+@pytest.mark.asyncio
+async def test_pool_racer_races_regardless_of_training(session: AsyncSession):
+    """Pool-generated racers (no sire_id) race even with training_count=0."""
+    await repo.create_racer(
+        session, name="PoolRacer", owner_id=0, guild_id=1, training_count=0,
+    )
+
+    racers = await repo.get_guild_racers(session, guild_id=1, min_training=5)
+    assert len(racers) == 1
+    assert racers[0].name == "PoolRacer"

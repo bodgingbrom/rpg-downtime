@@ -105,12 +105,19 @@ async def delete_racer(session: AsyncSession, racer_id: int) -> None:
 
 
 async def get_guild_racers(
-    session: AsyncSession, guild_id: int, *, eligible_only: bool = True
+    session: AsyncSession,
+    guild_id: int,
+    *,
+    eligible_only: bool = True,
+    min_training: int | None = None,
 ) -> list[Racer]:
     """Return racers belonging to a guild.
 
     When ``eligible_only`` is True (default), only non-retired racers
     with no active injuries are returned.
+
+    When ``min_training`` is set, bred racers (those with a ``sire_id``)
+    whose ``training_count`` is below the threshold are excluded.
     """
     stmt = select(Racer).where(Racer.guild_id == guild_id)
     if eligible_only:
@@ -119,7 +126,14 @@ async def get_guild_racers(
             Racer.injury_races_remaining == 0,
         )
     result = await session.execute(stmt)
-    return result.scalars().all()
+    racers = result.scalars().all()
+    if eligible_only and min_training is not None:
+        # Bred racers (have a sire) must meet the training gate
+        racers = [
+            r for r in racers
+            if r.sire_id is None or (r.training_count or 0) >= min_training
+        ]
+    return racers
 
 
 async def get_unowned_guild_racers(

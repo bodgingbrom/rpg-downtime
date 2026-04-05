@@ -645,3 +645,94 @@ async def test_placement_prizes_credited(tmp_path: Path) -> None:
         w2 = await wallet_repo.get_wallet(session, 200, GUILD_ID)
         # One got 1st (50), other got 2nd (30) — total 80
         assert w1.balance + w2.balance == 80
+
+
+@pytest.mark.asyncio
+async def test_breed_cooldown_ticks_down(tmp_path: Path) -> None:
+    """After a race, breed_cooldown decrements for all guild racers."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    async with scheduler.sessionmaker() as session:
+        # Two race participants
+        r1 = await repo.create_racer(
+            session, name="Runner1", owner_id=1, guild_id=GUILD_ID,
+        )
+        r2 = await repo.create_racer(
+            session, name="Runner2", owner_id=2, guild_id=GUILD_ID,
+        )
+        # A non-participant with cooldown (should still tick)
+        r3 = await repo.create_racer(
+            session, name="Breeder", owner_id=3, guild_id=GUILD_ID,
+            breed_cooldown=4,
+        )
+        # A racer already at 0 cooldown (should stay at 0)
+        r4 = await repo.create_racer(
+            session, name="NoCooldown", owner_id=4, guild_id=GUILD_ID,
+            breed_cooldown=0,
+        )
+        race = await repo.create_race(session, guild_id=guild.id)
+        await repo.create_race_entries(session, race.id, [r1.id, r2.id])
+
+    await scheduler.tick()
+
+    async with scheduler.sessionmaker() as session:
+        breeder = await repo.get_racer(session, r3.id)
+        assert breeder.breed_cooldown == 3  # 4 → 3
+        no_cd = await repo.get_racer(session, r4.id)
+        assert no_cd.breed_cooldown == 0  # stays at 0
+
+
+@pytest.mark.asyncio
+async def test_breed_cooldown_stops_at_zero(tmp_path: Path) -> None:
+    """Breed cooldown doesn't go negative."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    async with scheduler.sessionmaker() as session:
+        r1 = await repo.create_racer(
+            session, name="A", owner_id=1, guild_id=GUILD_ID,
+        )
+        r2 = await repo.create_racer(
+            session, name="B", owner_id=2, guild_id=GUILD_ID,
+        )
+        r3 = await repo.create_racer(
+            session, name="LastRace", owner_id=3, guild_id=GUILD_ID,
+            breed_cooldown=1,
+        )
+        race = await repo.create_race(session, guild_id=guild.id)
+        await repo.create_race_entries(session, race.id, [r1.id, r2.id])
+
+    await scheduler.tick()
+
+    async with scheduler.sessionmaker() as session:
+        racer = await repo.get_racer(session, r3.id)
+        assert racer.breed_cooldown == 0  # 1 → 0, not negative

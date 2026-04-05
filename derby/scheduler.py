@@ -272,6 +272,7 @@ class DerbyScheduler:
                 "female_buy_multiplier": ("FLOAT", "NULL"),
                 "retired_sell_penalty": ("FLOAT", "NULL"),
                 "foal_sell_penalty": ("FLOAT", "NULL"),
+                "min_training_to_race": ("INTEGER", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:
@@ -319,13 +320,16 @@ class DerbyScheduler:
 
     async def _create_next_race(self, guild_id: int) -> models.Race | None:
         """Create a pending race for a guild and pre-pick its participants."""
+        gs = await self._load_guild_settings(guild_id)
+        min_train = self._resolve("min_training_to_race", gs)
         async with self.sessionmaker() as session:
-            racers = await repo.get_guild_racers(session, guild_id)
+            racers = await repo.get_guild_racers(
+                session, guild_id, min_training=min_train,
+            )
 
         if len(racers) < 2:
             return None
 
-        gs = await self._load_guild_settings(guild_id)
         max_racers = self._resolve("max_racers_per_race", gs)
         async with self.sessionmaker() as session:
             race = await repo.create_race(session, guild_id=guild_id)
@@ -418,8 +422,11 @@ class DerbyScheduler:
         """Add participants to a legacy pending race that has none."""
         gs = await self._load_guild_settings(race.guild_id)
         max_racers = self._resolve("max_racers_per_race", gs)
+        min_train = self._resolve("min_training_to_race", gs)
         async with self.sessionmaker() as session:
-            racers = await repo.get_guild_racers(session, race.guild_id)
+            racers = await repo.get_guild_racers(
+                session, race.guild_id, min_training=min_train,
+            )
             if len(racers) < 2:
                 return
             participants = random.sample(
@@ -490,6 +497,7 @@ class DerbyScheduler:
             await logic.apply_injuries(session, new_injuries, participants)
             healed = await self._tick_injury_recovery(session, guild_id)
             await self._increment_careers(session, participants)
+            await self._tick_breed_cooldowns(session, guild_id)
             retirements = await self._apply_retirements(
                 session, participants, guild_id=guild_id
             )
@@ -820,6 +828,19 @@ class DerbyScheduler:
                 racer.injury_races_remaining = 0
                 healed.append(racer)
         return healed
+
+    async def _tick_breed_cooldowns(
+        self, session: AsyncSession, guild_id: int
+    ) -> None:
+        """Decrement breed_cooldown for all guild racers with cooldown > 0."""
+        result = await session.execute(
+            select(models.Racer).where(
+                models.Racer.guild_id == guild_id,
+                models.Racer.breed_cooldown > 0,
+            )
+        )
+        for racer in result.scalars().all():
+            racer.breed_cooldown = max(0, racer.breed_cooldown - 1)
 
     async def _announce_healed(
         self, guild_id: int, healed: list[models.Racer]

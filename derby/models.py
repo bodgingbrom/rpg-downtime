@@ -102,6 +102,7 @@ class GuildSettings(Base):
     female_buy_multiplier: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     retired_sell_penalty: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     foal_sell_penalty: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    min_training_to_race: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 class PlayerData(Base):
