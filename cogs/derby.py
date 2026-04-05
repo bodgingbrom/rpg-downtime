@@ -366,6 +366,21 @@ class Derby(commands.Cog, name="derby"):
             injury_text = f"{racer_obj.injuries} ({racer_obj.injury_races_remaining} races remaining)"
         embed.add_field(name="Injuries", value=injury_text, inline=False)
 
+        # Accolades
+        t_wins = getattr(racer_obj, "tournament_wins", 0) or 0
+        t_places = getattr(racer_obj, "tournament_placements", 0) or 0
+        if t_wins > 0 or t_places > 0:
+            accolade_parts = []
+            if t_wins > 0:
+                accolade_parts.append(f"\U0001f3c6 {t_wins} Tournament Win{'s' if t_wins != 1 else ''}")
+            if t_places > 0:
+                accolade_parts.append(f"\U0001f948 {t_places} Placement{'s' if t_places != 1 else ''}")
+            embed.add_field(
+                name="Accolades",
+                value=" | ".join(accolade_parts),
+                inline=False,
+            )
+
         # Lineage info
         sire_id = getattr(racer_obj, "sire_id", None)
         dam_id = getattr(racer_obj, "dam_id", None)
@@ -1096,8 +1111,10 @@ class Stable(commands.Cog, name="stable"):
             if r.sire_id is not None and tc < min_train:
                 training = f" | Training: {tc}/{min_train} \U0001f3cb"
             rank = logic.rank_label(getattr(r, "rank", None))
+            t_wins = getattr(r, "tournament_wins", 0) or 0
+            trophy = f" \U0001f3c6{t_wins}" if t_wins > 0 else ""
             embed.add_field(
-                name=f"{gender} {r.name} (#{r.id}) [{rank}]",
+                name=f"{gender} {r.name} (#{r.id}) [{rank}]{trophy}",
                 value=(
                     f"Spd {_stat_band(eff['speed'])} / "
                     f"Cor {_stat_band(eff['cornering'])} / "
@@ -1267,11 +1284,13 @@ class Stable(commands.Cog, name="stable"):
             fem_mult = self._resolve("female_buy_multiplier", gs)
             ret_pen = self._resolve("retired_sell_penalty", gs)
             foal_pen = self._resolve("foal_sell_penalty", gs)
+            t_bonus = logic.calculate_tournament_sell_bonus(racer_obj)
             sell_price = logic.calculate_sell_price(
                 racer_obj, base, mult, frac,
                 female_multiplier=fem_mult,
                 retired_penalty=ret_pen,
                 foal_penalty=foal_pen,
+                tournament_bonus=t_bonus,
             )
 
             wallet = await wallet_repo.get_wallet(

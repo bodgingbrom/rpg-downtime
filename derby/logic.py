@@ -230,12 +230,14 @@ def calculate_sell_price(
     retired_penalty: float = 1.0,
     foal_penalty: float = 1.0,
     max_foals: int = 3,
+    tournament_bonus: int = 0,
 ) -> int:
     """Return the sell price with penalties for retired status and foal count.
 
     *retired_penalty* scales the price when the racer is retired (e.g. 0.6).
     *foal_penalty* is the floor multiplier at max foals.  The actual
     multiplier interpolates linearly: ``1 - (foal_count / max_foals) * (1 - foal_penalty)``.
+    *tournament_bonus* is a flat amount added after all multipliers (from wins).
     """
     buy = calculate_buy_price(racer, base_cost, multiplier, female_multiplier)
     price = buy * sell_fraction
@@ -245,7 +247,7 @@ def calculate_sell_price(
     if foal_count > 0 and max_foals > 0:
         foal_mult = 1.0 - (foal_count / max_foals) * (1.0 - foal_penalty)
         price *= foal_mult
-    return int(price)
+    return int(price) + tournament_bonus
 
 
 def parse_stable_upgrade_costs(cost_string: str) -> list[int]:
@@ -365,6 +367,100 @@ TOURNAMENT_SELL_BONUS: dict[str, int] = {
     "A": 1000,
     "S": 2500,
 }
+
+
+async def resolve_tournament_prizes(
+    session: AsyncSession,
+    rank: str,
+    final_placements: list[int],
+    entry_map: dict[int, int],
+    guild_id: int,
+) -> list[tuple[int, int, int]]:
+    """Award coin prizes to tournament top-4 owners.
+
+    Parameters
+    ----------
+    session: DB session for wallet operations.
+    rank: Tournament rank tier (D-S).
+    final_placements: Racer IDs in placement order (1st first).
+    entry_map: Mapping of racer_id -> owner_id.
+    guild_id: Guild ID for wallet lookup.
+
+    Returns list of ``(owner_id, racer_id, coins)`` for each award given.
+    """
+    prizes = TOURNAMENT_PRIZES.get(rank, [0, 0, 0, 0])
+    awards: list[tuple[int, int, int]] = []
+
+    for i, racer_id in enumerate(final_placements[:4]):
+        owner_id = entry_map.get(racer_id, 0)
+        if owner_id == 0:
+            continue  # pool racers don't get prizes
+        prize = prizes[i] if i < len(prizes) else 0
+        if prize <= 0:
+            continue
+
+        wallet = (
+            await session.execute(
+                select(Wallet).where(
+                    Wallet.user_id == owner_id,
+                    Wallet.guild_id == guild_id,
+                )
+            )
+        ).scalars().first()
+        if wallet is None:
+            wallet = Wallet(user_id=owner_id, guild_id=guild_id, balance=0)
+            session.add(wallet)
+            await session.flush()
+
+        wallet.balance += prize
+        awards.append((owner_id, racer_id, prize))
+
+    return awards
+
+
+async def apply_tournament_rewards(
+    session: AsyncSession,
+    rank: str,
+    final_placements: list[int],
+    entry_map: dict[int, int],
+) -> None:
+    """Apply mood, cooldown, and accolade rewards to tournament top-4.
+
+    - 1st: mood = 5, breed_cooldown = 0, tournament_wins += 1
+    - 2nd-4th: mood = min(mood + 1, 5), tournament_placements += 1
+    Only applies to player-owned racers (owner_id != 0).
+    """
+    for i, racer_id in enumerate(final_placements[:4]):
+        owner_id = entry_map.get(racer_id, 0)
+        if owner_id == 0:
+            continue
+
+        racer = await session.get(models.Racer, racer_id)
+        if racer is None:
+            continue
+
+        if i == 0:
+            # Winner
+            racer.mood = 5
+            racer.breed_cooldown = 0
+            racer.tournament_wins = (getattr(racer, "tournament_wins", 0) or 0) + 1
+        else:
+            # 2nd-4th
+            racer.mood = min((racer.mood or 3) + 1, 5)
+            racer.tournament_placements = (
+                (getattr(racer, "tournament_placements", 0) or 0) + 1
+            )
+
+    await session.flush()
+
+
+def calculate_tournament_sell_bonus(racer: models.Racer) -> int:
+    """Return the total sell price bonus from tournament wins."""
+    wins = getattr(racer, "tournament_wins", 0) or 0
+    rank = getattr(racer, "rank", None)
+    if wins <= 0 or rank is None:
+        return 0
+    return TOURNAMENT_SELL_BONUS.get(rank, 0) * wins
 
 
 @dataclass

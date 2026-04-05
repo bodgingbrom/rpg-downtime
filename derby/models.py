@@ -33,6 +33,8 @@ class Racer(Base):
     breed_cooldown: Mapped[int] = mapped_column(Integer, default=0)
     training_count: Mapped[int] = mapped_column(Integer, default=0)
     rank: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    tournament_wins: Mapped[int] = mapped_column(Integer, default=0)
+    tournament_placements: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Race(Base):
