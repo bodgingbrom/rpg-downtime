@@ -61,6 +61,12 @@ async def create_racer(
     injuries: str = "",
     career_length: int = 30,
     peak_end: int = 18,
+    gender: str = "M",
+    sire_id: int | None = None,
+    dam_id: int | None = None,
+    foal_count: int = 0,
+    breed_cooldown: int = 0,
+    training_count: int = 0,
 ) -> Racer:
     return await _create(
         session,
@@ -77,6 +83,12 @@ async def create_racer(
         injuries=injuries,
         career_length=career_length,
         peak_end=peak_end,
+        gender=gender,
+        sire_id=sire_id,
+        dam_id=dam_id,
+        foal_count=foal_count,
+        breed_cooldown=breed_cooldown,
+        training_count=training_count,
     )
 
 
@@ -133,6 +145,22 @@ async def get_owned_racers(
             Racer.owner_id == owner_id,
             Racer.guild_id == guild_id,
             Racer.retired.is_(False),
+        )
+    )
+    return result.scalars().all()
+
+
+async def get_stable_racers(
+    session: AsyncSession, owner_id: int, guild_id: int
+) -> list[Racer]:
+    """Return ALL racers owned by a user in a guild, including retired.
+
+    Used for stable slot counting — retired racers still occupy a slot.
+    """
+    result = await session.execute(
+        select(Racer).where(
+            Racer.owner_id == owner_id,
+            Racer.guild_id == guild_id,
         )
     )
     return result.scalars().all()

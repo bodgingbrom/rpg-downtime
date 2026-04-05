@@ -887,6 +887,7 @@ def test_generate_pool_racer():
     )
     assert kwargs["name"]  # not empty
     assert 25 <= kwargs["career_length"] <= 40
+    assert kwargs["gender"] in ("M", "F")
     assert kwargs["peak_end"] == int(kwargs["career_length"] * 0.6)
 
 
@@ -1044,3 +1045,27 @@ def test_apply_feed():
     assert new == 5
     assert err is not None
     assert "great spirits" in err.lower()
+
+
+# ---------------------------------------------------------------------------
+# Gender + lineage tests
+# ---------------------------------------------------------------------------
+
+
+def test_generate_pool_racer_gender_distribution():
+    """Over many generations, gender should be roughly 50/50."""
+    genders = [
+        generate_pool_racer(guild_id=1, taken_names=set())["gender"]
+        for _ in range(200)
+    ]
+    m_count = genders.count("M")
+    f_count = genders.count("F")
+    # Allow wide tolerance — just make sure both appear
+    assert m_count > 30
+    assert f_count > 30
+
+
+def test_gender_labels():
+    from derby.logic import GENDER_LABELS
+    assert GENDER_LABELS["M"] == "\u2642"
+    assert GENDER_LABELS["F"] == "\u2640"

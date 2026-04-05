@@ -212,3 +212,54 @@ async def test_count_unowned_eligible_racers(session: AsyncSession):
 
     count = await repo.count_unowned_eligible_racers(session, guild_id=1)
     assert count == 2
+
+
+# ---------------------------------------------------------------------------
+# Lineage + stable slot counting tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_racer_with_lineage(session: AsyncSession):
+    """Sire/dam IDs and breeding fields are stored correctly."""
+    sire = await repo.create_racer(
+        session, name="Dad", owner_id=1, guild_id=1, gender="M",
+    )
+    dam = await repo.create_racer(
+        session, name="Mom", owner_id=1, guild_id=1, gender="F",
+    )
+    foal = await repo.create_racer(
+        session, name="Baby", owner_id=1, guild_id=1, gender="F",
+        sire_id=sire.id, dam_id=dam.id,
+    )
+
+    fetched = await repo.get_racer(session, foal.id)
+    assert fetched.sire_id == sire.id
+    assert fetched.dam_id == dam.id
+    assert fetched.gender == "F"
+    assert fetched.foal_count == 0
+    assert fetched.breed_cooldown == 0
+    assert fetched.training_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_stable_racers_includes_retired(session: AsyncSession):
+    """get_stable_racers returns ALL owned racers including retired."""
+    await repo.create_racer(
+        session, name="Active", owner_id=5, guild_id=1,
+    )
+    await repo.create_racer(
+        session, name="Retired", owner_id=5, guild_id=1, retired=True,
+    )
+    await repo.create_racer(
+        session, name="OtherOwner", owner_id=99, guild_id=1,
+    )
+
+    stable = await repo.get_stable_racers(session, owner_id=5, guild_id=1)
+    assert len(stable) == 2
+    assert {r.name for r in stable} == {"Active", "Retired"}
+
+    # Compare with get_owned_racers which excludes retired
+    active_only = await repo.get_owned_racers(session, owner_id=5, guild_id=1)
+    assert len(active_only) == 1
+    assert active_only[0].name == "Active"

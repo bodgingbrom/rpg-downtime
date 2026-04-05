@@ -18,6 +18,7 @@ from economy import repositories as wallet_repo
 
 _stat_band = logic.stat_band
 _mood_label = logic.mood_label
+_gender = logic.GENDER_LABELS.get
 
 TEMPERAMENT_CHOICES = [
     app_commands.Choice(name=t, value=t) for t in logic.TEMPERAMENTS
@@ -314,7 +315,8 @@ class Derby(commands.Cog, name="derby"):
             return
         phase = logic.career_phase(racer_obj)
         eff = logic.effective_stats(racer_obj)
-        embed = discord.Embed(title=racer_obj.name)
+        gender = _gender(getattr(racer_obj, "gender", "M"), "")
+        embed = discord.Embed(title=f"{gender} {racer_obj.name}")
         embed.add_field(name="Speed", value=_stat_band(eff["speed"]), inline=True)
         embed.add_field(
             name="Cornering", value=_stat_band(eff["cornering"]), inline=True
@@ -333,6 +335,22 @@ class Derby(commands.Cog, name="derby"):
         if racer_obj.injuries:
             injury_text = f"{racer_obj.injuries} ({racer_obj.injury_races_remaining} races remaining)"
         embed.add_field(name="Injuries", value=injury_text, inline=False)
+
+        # Lineage info
+        sire_id = getattr(racer_obj, "sire_id", None)
+        dam_id = getattr(racer_obj, "dam_id", None)
+        if sire_id or dam_id:
+            async with self.bot.scheduler.sessionmaker() as session:
+                sire = await repo.get_racer(session, sire_id) if sire_id else None
+                dam = await repo.get_racer(session, dam_id) if dam_id else None
+            sire_name = sire.name if sire else "Unknown"
+            dam_name = dam.name if dam else "Unknown"
+            embed.add_field(
+                name="Lineage",
+                value=f"Sire: {sire_name} | Dam: {dam_name}",
+                inline=False,
+            )
+
         await context.send(embed=embed)
 
     @commands.hybrid_group(name="derby", description="Derby admin commands")
@@ -1015,9 +1033,10 @@ class Stable(commands.Cog, name="stable"):
         for r in racers:
             phase = logic.career_phase(r)
             eff = logic.effective_stats(r)
+            gender = _gender(getattr(r, "gender", "M"), "")
             injury = f" | Injured: {r.injuries} ({r.injury_races_remaining}r)" if r.injuries else ""
             embed.add_field(
-                name=f"{r.name} (#{r.id})",
+                name=f"{gender} {r.name} (#{r.id})",
                 value=(
                     f"Spd {_stat_band(eff['speed'])} / "
                     f"Cor {_stat_band(eff['cornering'])} / "
@@ -1045,8 +1064,9 @@ class Stable(commands.Cog, name="stable"):
             price = logic.calculate_buy_price(r, base, mult)
             eff = logic.effective_stats(r)
             phase = logic.career_phase(r)
+            gender = _gender(getattr(r, "gender", "M"), "")
             embed.add_field(
-                name=f"{r.name} — {price} coins",
+                name=f"{gender} {r.name} — {price} coins",
                 value=(
                     f"Spd {_stat_band(eff['speed'])} / "
                     f"Cor {_stat_band(eff['cornering'])} / "
