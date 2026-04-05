@@ -182,6 +182,8 @@ class DerbyScheduler:
                 "breed_cooldown": ("INTEGER", "0"),
                 "training_count": ("INTEGER", "5"),
                 "rank": ("VARCHAR", "NULL"),
+                "tournament_wins": ("INTEGER", "0"),
+                "tournament_placements": ("INTEGER", "0"),
             }
             for name, (col_type, default) in racer_migrations.items():
                 if name not in racer_columns:
@@ -1067,10 +1069,11 @@ class DerbyScheduler:
         seed = int(datetime.now(timezone.utc).timestamp() * 1000) + guild_id
         result = logic.run_tournament(all_racers, seed)
 
-        # Store placements and eliminated rounds
+        # Store placements, eliminated rounds, and award prizes
         async with self.sessionmaker() as session:
             entries = await repo.get_tournament_entries(session, tournament.id)
             entry_by_racer = {e.racer_id: e for e in entries}
+            entry_by_racer_owner = {e.racer_id: e.owner_id for e in entries}
 
             for place_idx, racer_id in enumerate(result.final_placements):
                 entry = entry_by_racer.get(racer_id)
@@ -1093,6 +1096,17 @@ class DerbyScheduler:
                 status="finished",
                 finished_at=datetime.now(timezone.utc),
             )
+
+            # Award prizes and rewards
+            prize_awards = await logic.resolve_tournament_prizes(
+                session, rank, result.final_placements,
+                entry_by_racer_owner, guild_id,
+            )
+            await logic.apply_tournament_rewards(
+                session, rank, result.final_placements,
+                entry_by_racer_owner,
+            )
+            await session.commit()
 
         # Announce results
         await self._announce_tournament_results(guild_id, rank, result, all_racers)
