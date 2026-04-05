@@ -112,6 +112,29 @@ async def owned_racer_autocomplete(
     return choices
 
 
+async def guild_racer_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[int]]:
+    """Autocomplete showing all racers in the guild (for admin commands)."""
+    sessionmaker = interaction.client.scheduler.sessionmaker
+    guild_id = interaction.guild_id or 0
+    async with sessionmaker() as session:
+        racers = await repo.get_guild_racers(
+            session, guild_id, eligible_only=False
+        )
+    choices = []
+    current_lower = current.lower()
+    for r in racers:
+        if current_lower in r.name.lower():
+            label = f"{r.name} (#{r.id})"
+            if r.owner_id:
+                label += f" \u2014 owner:{r.owner_id}"
+            choices.append(app_commands.Choice(name=label[:100], value=r.id))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
 class Derby(commands.Cog, name="derby"):
     def __init__(self, bot) -> None:
         self.bot = bot
@@ -520,18 +543,20 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.describe(
         racer="Racer to edit",
         name="New name",
+        owner="New owner (mention or 0 for unowned)",
         speed="Speed stat",
         cornering="Cornering stat",
         stamina="Stamina stat",
         temperament="Temperament",
     )
-    @app_commands.autocomplete(racer=racer_autocomplete)
+    @app_commands.autocomplete(racer=guild_racer_autocomplete)
     @app_commands.choices(temperament=TEMPERAMENT_CHOICES)
     async def edit_racer(
         self,
         context: Context,
         racer: int,
         name: str | None = None,
+        owner: discord.Member | None = None,
         speed: app_commands.Range[int, 0, 31] | None = None,
         cornering: app_commands.Range[int, 0, 31] | None = None,
         stamina: app_commands.Range[int, 0, 31] | None = None,
@@ -540,6 +565,8 @@ class Derby(commands.Cog, name="derby"):
         updates: dict[str, int | str] = {}
         if name is not None:
             updates["name"] = name
+        if owner is not None:
+            updates["owner_id"] = owner.id
         if speed is not None:
             updates["speed"] = speed
         if cornering is not None:
