@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     breeding_cooldown: int = 6
     min_races_to_breed: int = 5
     max_foals_per_female: int = 3
+    tournament_enabled: bool = True
 
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":

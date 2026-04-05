@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timezone
 from typing import Any
 
 import discord
@@ -26,6 +26,19 @@ def _parse_race_times(time_strings: list[str]) -> list[dt_time]:
     return times
 
 
+# (weekday 0=Mon, hour, minute, rank)
+# Sat 00:00 D, Sat 00:10 C, Sun 00:00 B, Sun 00:10 A, Mon 00:00 S
+TOURNAMENT_SCHEDULE: list[tuple[int, int, int, str]] = [
+    (5, 0, 0, "D"),
+    (5, 0, 10, "C"),
+    (6, 0, 0, "B"),
+    (6, 0, 10, "A"),
+    (0, 0, 0, "S"),
+]
+
+TOURNAMENT_FIELD_SIZE = 8
+
+
 class DerbyScheduler:
     """Background task that runs races at configured times."""
 
@@ -37,8 +50,10 @@ class DerbyScheduler:
         self.sessionmaker = async_sessionmaker(self.engine, expire_on_commit=False)
         self._initialized = False
         self.task: tasks.Loop | None = None
+        self.tournament_task: tasks.Loop | None = None
         self.commentaries: dict[int, tasks.Loop] = {}
         self.active_races: set[int] = set()  # race IDs currently in progress
+        self._last_tournament_tick: str | None = None  # "weekday-hour-minute" debounce
 
     def _resolve(
         self,
@@ -78,6 +93,11 @@ class DerbyScheduler:
         )
         self.task = tasks.loop(time=race_times)(self._run)
         self.task.start()
+
+        # Tournament background tick — every 60 seconds
+        self.tournament_task = tasks.loop(seconds=60)(self._tournament_tick)
+        self.tournament_task.start()
+
         # Ensure pending races exist once the guild cache is ready.
         # This runs in the background so it doesn't block setup_hook.
         if hasattr(self.bot, "wait_until_ready"):
@@ -94,6 +114,8 @@ class DerbyScheduler:
     async def close(self) -> None:
         if self.task and self.task.is_running():
             self.task.cancel()
+        if self.tournament_task and self.tournament_task.is_running():
+            self.tournament_task.cancel()
         await self.engine.dispose()
 
     async def _init_db(self) -> None:
@@ -972,6 +994,243 @@ class DerbyScheduler:
             await channel.send(embed=embed)
         except (discord.Forbidden, discord.HTTPException):
             return
+
+    # ------------------------------------------------------------------
+    # Tournament scheduling & execution
+    # ------------------------------------------------------------------
+
+    async def _tournament_tick(self) -> None:
+        """Called every 60s.  Fire any scheduled tournaments whose time has come."""
+        settings = getattr(self.bot, "settings", None)
+        if settings and not getattr(settings, "tournament_enabled", True):
+            return
+
+        now = datetime.now(timezone.utc)
+        tick_key = f"{now.weekday()}-{now.hour}-{now.minute}"
+        if tick_key == self._last_tournament_tick:
+            return
+        self._last_tournament_tick = tick_key
+
+        for weekday, hour, minute, rank in TOURNAMENT_SCHEDULE:
+            if now.weekday() == weekday and now.hour == hour and now.minute == minute:
+                for guild in self.bot.guilds:
+                    try:
+                        await self._execute_tournament(guild.id, rank)
+                    except Exception:
+                        self.bot.logger.exception(
+                            "Tournament execution error",
+                            extra={"guild_id": guild.id, "rank": rank},
+                        )
+
+    async def _execute_tournament(self, guild_id: int, rank: str) -> bool:
+        """Run a tournament for a guild+rank.  Returns True if it fired."""
+        async with self.sessionmaker() as session:
+            tournament = await repo.get_pending_tournament(session, guild_id, rank)
+            if tournament is None:
+                return False
+
+            entries = await repo.get_tournament_entries(session, tournament.id)
+            player_entries = [e for e in entries if not e.is_pool_filler]
+            if not player_entries:
+                return False  # no players registered — skip
+
+            # Gather racer IDs already registered
+            registered_ids = {e.racer_id for e in entries}
+            registered_racers: list[models.Racer] = []
+            for entry in entries:
+                racer = await session.get(models.Racer, entry.racer_id)
+                if racer:
+                    registered_racers.append(racer)
+
+            # Fill to 8 with pool racers
+            all_racers = await self._fill_tournament_field(
+                session, tournament.id, guild_id, rank,
+                registered_racers, registered_ids,
+            )
+
+            if len(all_racers) < TOURNAMENT_FIELD_SIZE:
+                self.bot.logger.warning(
+                    "Could not fill tournament field to %d (got %d)",
+                    TOURNAMENT_FIELD_SIZE, len(all_racers),
+                    extra={"guild_id": guild_id, "rank": rank},
+                )
+                return False
+
+            # Mark tournament as running
+            await repo.update_tournament(
+                session, tournament.id,
+                status="running",
+                started_at=datetime.now(timezone.utc),
+            )
+
+        # Run the tournament engine
+        seed = int(datetime.now(timezone.utc).timestamp() * 1000) + guild_id
+        result = logic.run_tournament(all_racers, seed)
+
+        # Store placements and eliminated rounds
+        async with self.sessionmaker() as session:
+            entries = await repo.get_tournament_entries(session, tournament.id)
+            entry_by_racer = {e.racer_id: e for e in entries}
+
+            for place_idx, racer_id in enumerate(result.final_placements):
+                entry = entry_by_racer.get(racer_id)
+                if entry:
+                    placement = place_idx + 1
+                    # Determine which round they were eliminated
+                    elim_round = None
+                    for rnd in result.rounds:
+                        if racer_id in rnd.eliminated:
+                            elim_round = rnd.round_number
+                            break
+                    await repo.update_tournament_entry(
+                        session, entry.id,
+                        placement=placement,
+                        eliminated_round=elim_round,
+                    )
+
+            await repo.update_tournament(
+                session, tournament.id,
+                status="finished",
+                finished_at=datetime.now(timezone.utc),
+            )
+
+        # Announce results
+        await self._announce_tournament_results(guild_id, rank, result, all_racers)
+
+        self.bot.logger.info(
+            "Tournament completed: %s-Rank",
+            rank,
+            extra={"guild_id": guild_id, "tournament_id": tournament.id},
+        )
+        return True
+
+    async def _fill_tournament_field(
+        self,
+        session: AsyncSession,
+        tournament_id: int,
+        guild_id: int,
+        rank: str,
+        registered: list[models.Racer],
+        registered_ids: set[int],
+    ) -> list[models.Racer]:
+        """Fill the tournament to 8 racers with pool fillers."""
+        all_racers = list(registered)
+        needed = TOURNAMENT_FIELD_SIZE - len(all_racers)
+
+        if needed <= 0:
+            return all_racers[:TOURNAMENT_FIELD_SIZE]
+
+        # Try existing unowned pool racers of this rank first
+        pool = await repo.get_racers_by_rank(
+            session, guild_id, rank, unowned_only=True
+        )
+        available = [r for r in pool if r.id not in registered_ids]
+        random.shuffle(available)
+
+        # Gather taken names for generation
+        result = await session.execute(
+            select(models.Racer.name).where(
+                models.Racer.guild_id == guild_id,
+                models.Racer.retired.is_(False),
+            )
+        )
+        taken_names = {row[0] for row in result.all()}
+
+        for r in available:
+            if needed <= 0:
+                break
+            entry = await repo.create_tournament_entry(
+                session,
+                tournament_id=tournament_id,
+                racer_id=r.id,
+                owner_id=0,
+                is_pool_filler=True,
+            )
+            all_racers.append(r)
+            registered_ids.add(r.id)
+            needed -= 1
+
+        # Generate new pool racers if we still need more
+        while needed > 0:
+            kwargs = logic.generate_pool_racer_for_rank(rank, guild_id, taken_names)
+            taken_names.add(kwargs["name"])
+            new_racer = await repo.create_racer(session, **kwargs)
+            await repo.create_tournament_entry(
+                session,
+                tournament_id=tournament_id,
+                racer_id=new_racer.id,
+                owner_id=0,
+                is_pool_filler=True,
+            )
+            all_racers.append(new_racer)
+            needed -= 1
+
+        return all_racers
+
+    async def _announce_tournament_results(
+        self,
+        guild_id: int,
+        rank: str,
+        result: logic.TournamentResult,
+        racers: list[models.Racer],
+    ) -> None:
+        """Post tournament results to the guild channel."""
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        gs = await self._load_guild_settings(guild_id)
+        channel = self._get_channel(guild, gs)
+        if channel is None:
+            return
+
+        name_map = {r.id: r.name for r in racers}
+        owner_map = {r.id: r.owner_id for r in racers}
+
+        # Round-by-round results
+        for rnd in result.rounds:
+            round_lines = []
+            for i, rid in enumerate(rnd.race_result.placements):
+                name = name_map.get(rid, f"Racer {rid}")
+                owner = owner_map.get(rid, 0)
+                owner_tag = f" (<@{owner}>)" if owner else " (pool)"
+                medal = self.MEDAL_EMOJI.get(i + 1, f"#{i+1}")
+                status = " ✅" if rid in rnd.advancing else " ❌"
+                round_lines.append(f"{medal} **{name}**{owner_tag}{status}")
+
+            map_name = rnd.race_result.map_name
+            track_info = f" — *{map_name}*" if map_name else ""
+            embed = discord.Embed(
+                title=f"🏟️ {rank}-Rank Tournament — Round {rnd.round_number}{track_info}",
+                description="\n".join(round_lines),
+                color=0x9B59B6,
+            )
+            try:
+                await channel.send(embed=embed)
+            except (discord.Forbidden, discord.HTTPException):
+                return
+            await asyncio.sleep(3)
+
+        # Final standings
+        prizes = logic.TOURNAMENT_PRIZES.get(rank, [0, 0, 0, 0])
+        final_lines = []
+        place_labels = {1: "🥇", 2: "🥈", 3: "🥉", 4: "4th"}
+        for i, rid in enumerate(result.final_placements[:4]):
+            name = name_map.get(rid, f"Racer {rid}")
+            owner = owner_map.get(rid, 0)
+            owner_tag = f" (<@{owner}>)" if owner else " (pool)"
+            prize = prizes[i] if i < len(prizes) else 0
+            label = place_labels.get(i + 1, f"#{i+1}")
+            final_lines.append(f"{label} **{name}**{owner_tag} — **{prize}** coins")
+
+        embed = discord.Embed(
+            title=f"🏆 {rank}-Rank Tournament — Final Results!",
+            description="\n".join(final_lines),
+            color=0xF1C40F,
+        )
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
 
     async def _countdown(
         self,
