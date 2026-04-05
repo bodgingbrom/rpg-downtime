@@ -955,6 +955,7 @@ async def test_stable_train_success(tmp_path: Path) -> None:
         w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
         assert w.balance == 200 - 30
         assert r.mood == 3  # dropped from 4
+        assert r.training_count == 1  # incremented on success
 
 
 @pytest.mark.asyncio
@@ -1109,6 +1110,7 @@ async def test_stable_train_failure(tmp_path: Path) -> None:
         r = await repo.get_racer(session, racer.id)
         assert r.speed == 10  # unchanged
         assert r.mood == 1  # was 1, min is 1
+        assert r.training_count == 0  # NOT incremented on failure
         w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
         assert w.balance == 200 - 30  # cost = 10 + 10*2 = 30
 

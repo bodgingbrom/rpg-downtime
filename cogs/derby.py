@@ -912,6 +912,7 @@ class Derby(commands.Cog, name="derby"):
         "female_buy_multiplier",
         "retired_sell_penalty",
         "foal_sell_penalty",
+        "min_training_to_race",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -1033,6 +1034,7 @@ class Stable(commands.Cog, name="stable"):
             racers = await repo.get_owned_racers(
                 session, context.author.id, guild_id
             )
+            gs = await repo.get_guild_settings(session, guild_id)
         if not racers:
             await context.send(
                 "You don't own any racers yet! Use `/stable browse` to see "
@@ -1040,19 +1042,25 @@ class Stable(commands.Cog, name="stable"):
                 ephemeral=True,
             )
             return
+        min_train = self._resolve("min_training_to_race", gs)
         embed = discord.Embed(title=f"{context.author.display_name}'s Stable")
         for r in racers:
             phase = logic.career_phase(r)
             eff = logic.effective_stats(r)
             gender = _gender(getattr(r, "gender", "M"), "")
             injury = f" | Injured: {r.injuries} ({r.injury_races_remaining}r)" if r.injuries else ""
+            # Show training progress for foals (bred racers)
+            tc = r.training_count or 0
+            training = ""
+            if r.sire_id is not None and tc < min_train:
+                training = f" | Training: {tc}/{min_train} \U0001f3cb"
             embed.add_field(
                 name=f"{gender} {r.name} (#{r.id})",
                 value=(
                     f"Spd {_stat_band(eff['speed'])} / "
                     f"Cor {_stat_band(eff['cornering'])} / "
                     f"Sta {_stat_band(eff['stamina'])}\n"
-                    f"{r.temperament} | {_mood_label(r.mood)} | {phase}{injury}"
+                    f"{r.temperament} | {_mood_label(r.mood)} | {phase}{injury}{training}"
                 ),
                 inline=False,
             )
@@ -1370,6 +1378,7 @@ class Stable(commands.Cog, name="stable"):
             if not failed:
                 new_value = current_value + 1
                 await repo.update_racer(session, racer, **{stat_name: new_value})
+                racer_obj.training_count = (racer_obj.training_count or 0) + 1
             else:
                 new_value = current_value
 

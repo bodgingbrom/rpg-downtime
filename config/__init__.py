@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     female_buy_multiplier: float = 1.5
     retired_sell_penalty: float = 0.6
     foal_sell_penalty: float = 0.3
+    min_training_to_race: int = 5
 
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":
