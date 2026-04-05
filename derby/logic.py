@@ -335,6 +335,193 @@ def rank_label(rank: str | None) -> str:
     if rank is None:
         return "Unranked"
     return f"{rank}-Rank"
+
+
+# ---------------------------------------------------------------------------
+# Tournament system
+# ---------------------------------------------------------------------------
+
+TOURNAMENT_PRIZES: dict[str, list[int]] = {
+    "D": [150, 75, 37, 37],
+    "C": [400, 200, 100, 100],
+    "B": [1000, 500, 250, 250],
+    "A": [2500, 1250, 625, 625],
+    "S": [5000, 2500, 1250, 1250],
+}
+
+# Stat total ranges per rank (inclusive) for pool racer generation
+_RANK_STAT_RANGES: dict[str, tuple[int, int]] = {
+    "D": (0, 23),
+    "C": (24, 46),
+    "B": (47, 65),
+    "A": (66, 80),
+    "S": (81, 93),
+}
+
+TOURNAMENT_SELL_BONUS: dict[str, int] = {
+    "D": 50,
+    "C": 150,
+    "B": 400,
+    "A": 1000,
+    "S": 2500,
+}
+
+
+@dataclass
+class TournamentRoundResult:
+    """Results of a single tournament round."""
+
+    round_number: int  # 1, 2, or 3
+    race_result: "RaceResult"
+    advancing: list[int]  # racer IDs advancing to next round
+    eliminated: list[int]  # racer IDs eliminated this round
+
+
+@dataclass
+class TournamentResult:
+    """Full results of a 3-round tournament."""
+
+    rounds: list[TournamentRoundResult]
+    final_placements: list[int]  # racer IDs, 1st place first (all 8)
+
+
+def run_tournament(
+    racers: list[models.Racer],
+    seed: int,
+    race_map: "RaceMap | None" = None,
+) -> TournamentResult:
+    """Run a 3-round elimination tournament (8 → 4 → 2 → winner).
+
+    Each round uses ``simulate_race`` with a per-round seed derived from
+    the base seed.  Returns full placements for all 8 racers.
+
+    Parameters
+    ----------
+    racers:
+        Exactly 8 Racer objects to compete.
+    seed:
+        Base RNG seed; each round derives its own sub-seed.
+    race_map:
+        Optional map; if ``None``, a random map is picked per round.
+    """
+    if len(racers) != 8:
+        raise ValueError(f"Tournament requires exactly 8 racers, got {len(racers)}")
+
+    rng = random.Random(seed)
+    remaining = list(racers)
+    rounds: list[TournamentRoundResult] = []
+    all_eliminated: list[int] = []  # ordered from last eliminated to first
+
+    # Pre-load maps so we can pick deterministically with the seeded rng
+    available_maps = load_all_maps() if race_map is None else []
+
+    for round_num, cut_to in [(1, 4), (2, 2), (3, 1)]:
+        round_seed = rng.randint(0, 2**31)
+        if race_map is not None:
+            round_map = race_map
+        elif available_maps:
+            round_map = rng.choice(available_maps)
+        else:
+            round_map = None
+
+        # Build a pseudo-race dict for simulate_race
+        race_obj: Dict[str, list] = {"racers": remaining}
+        result = simulate_race(race_obj, round_seed, race_map=round_map)
+
+        # Split placements into advancing and eliminated
+        advancing_ids = result.placements[:cut_to]
+        eliminated_ids = result.placements[cut_to:]
+
+        # Eliminated are stored in reverse placement order (worst first)
+        # so final_placements ends up correct
+        all_eliminated = list(reversed(eliminated_ids)) + all_eliminated
+
+        rounds.append(
+            TournamentRoundResult(
+                round_number=round_num,
+                race_result=result,
+                advancing=advancing_ids,
+                eliminated=eliminated_ids,
+            )
+        )
+
+        # Build remaining racers list for next round
+        advancing_set = set(advancing_ids)
+        remaining = [r for r in remaining if r.id in advancing_set]
+
+    # Final placements: winner first, then all eliminated in reverse order
+    # (runner-up is the last one added to all_eliminated from round 3)
+    final_round = rounds[-1]
+    winner_id = final_round.race_result.placements[0]
+    final_placements = [winner_id] + all_eliminated
+
+    return TournamentResult(
+        rounds=rounds,
+        final_placements=final_placements,
+    )
+
+
+def generate_pool_racer_for_rank(
+    rank: str,
+    guild_id: int,
+    taken_names: Set[str],
+) -> dict:
+    """Generate a pool racer with stats within the given rank's range.
+
+    Returns kwargs suitable for ``create_racer()``.  The stat total is
+    uniformly distributed within the rank's range, then randomly split
+    across speed/cornering/stamina (each capped at 31).
+    """
+    stat_min, stat_max = _RANK_STAT_RANGES.get(rank, (0, 23))
+    total = random.randint(stat_min, stat_max)
+
+    # Distribute total across 3 stats, each capped at MAX_STAT (31)
+    speed, cornering, stamina = _distribute_stats(total)
+
+    name = pick_name(taken_names)
+    if name is None:
+        base = random.choice(_load_names())
+        name = f"{base}-{random.randint(100, 999)}"
+
+    career_length = random.randint(25, 40)
+    return {
+        "name": name,
+        "owner_id": 0,
+        "guild_id": guild_id,
+        "speed": speed,
+        "cornering": cornering,
+        "stamina": stamina,
+        "temperament": random.choice(list(TEMPERAMENTS.keys())),
+        "career_length": career_length,
+        "peak_end": int(career_length * 0.6),
+        "gender": random.choice(["M", "F"]),
+        "rank": rank,
+    }
+
+
+def _distribute_stats(total: int) -> tuple[int, int, int]:
+    """Randomly distribute *total* points across 3 stats, each capped at 31."""
+    cap = MAX_STAT
+    for _ in range(1000):
+        # a must leave a feasible remainder for b+c (each <= cap)
+        a_min = max(0, total - 2 * cap)
+        a_max = min(total, cap)
+        a = random.randint(a_min, a_max)
+        remainder = total - a
+        b_min = max(0, remainder - cap)
+        b_max = min(remainder, cap)
+        b = random.randint(b_min, b_max)
+        c = remainder - b
+        if 0 <= c <= cap:
+            stats = [a, b, c]
+            random.shuffle(stats)
+            return stats[0], stats[1], stats[2]
+    # Fallback: even distribution
+    base = total // 3
+    extra = total % 3
+    return base + (1 if extra > 0 else 0), base + (1 if extra > 1 else 0), base
+
+
 GENDER_LABELS = {"M": "\u2642", "F": "\u2640"}
 
 

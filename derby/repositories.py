@@ -5,9 +5,21 @@ from typing import Type, TypeVar
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Bet, CourseSegment, GuildSettings, PlayerData, Race, RaceEntry, Racer
+from .models import (
+    Bet,
+    CourseSegment,
+    GuildSettings,
+    PlayerData,
+    Race,
+    RaceEntry,
+    Racer,
+    Tournament,
+    TournamentEntry,
+)
 
-ModelT = TypeVar("ModelT", Racer, Race, Bet, CourseSegment, GuildSettings)
+ModelT = TypeVar(
+    "ModelT", Racer, Race, Bet, CourseSegment, GuildSettings, Tournament, TournamentEntry
+)
 
 
 async def _create(session: AsyncSession, model: Type[ModelT], **kwargs) -> ModelT:
@@ -380,3 +392,68 @@ async def create_player_data(
     await session.commit()
     await session.refresh(pd)
     return pd
+
+
+# Tournament
+async def create_tournament(session: AsyncSession, **kwargs) -> Tournament:
+    return await _create(session, Tournament, **kwargs)
+
+
+async def get_tournament(session: AsyncSession, tournament_id: int) -> Tournament | None:
+    return await _get(session, Tournament, tournament_id)
+
+
+async def update_tournament(
+    session: AsyncSession, tournament_id: int, **kwargs
+) -> Tournament | None:
+    return await _update(session, Tournament, tournament_id, **kwargs)
+
+
+async def get_pending_tournament(
+    session: AsyncSession, guild_id: int, rank: str
+) -> Tournament | None:
+    """Return the pending tournament for a guild+rank, if one exists."""
+    result = await session.execute(
+        select(Tournament).where(
+            Tournament.guild_id == guild_id,
+            Tournament.rank == rank,
+            Tournament.status == "pending",
+        )
+    )
+    return result.scalars().first()
+
+
+# TournamentEntry
+async def create_tournament_entry(session: AsyncSession, **kwargs) -> TournamentEntry:
+    return await _create(session, TournamentEntry, **kwargs)
+
+
+async def get_tournament_entries(
+    session: AsyncSession, tournament_id: int
+) -> list[TournamentEntry]:
+    """Return all entries for a given tournament."""
+    result = await session.execute(
+        select(TournamentEntry).where(
+            TournamentEntry.tournament_id == tournament_id
+        )
+    )
+    return result.scalars().all()
+
+
+async def update_tournament_entry(
+    session: AsyncSession, entry_id: int, **kwargs
+) -> TournamentEntry | None:
+    return await _update(session, TournamentEntry, entry_id, **kwargs)
+
+
+async def get_player_tournament_entry(
+    session: AsyncSession, tournament_id: int, owner_id: int
+) -> TournamentEntry | None:
+    """Return a player's entry in a specific tournament, if any."""
+    result = await session.execute(
+        select(TournamentEntry).where(
+            TournamentEntry.tournament_id == tournament_id,
+            TournamentEntry.owner_id == owner_id,
+        )
+    )
+    return result.scalars().first()
