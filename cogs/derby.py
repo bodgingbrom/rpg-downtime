@@ -887,6 +887,10 @@ class Derby(commands.Cog, name="derby"):
         finally:
             self.bot.scheduler.active_races.discard(race.id)
 
+        # Ensure the next scheduled race is queued so the timer loop
+        # doesn't stall after a force-start consumes the pending race.
+        await self.bot.scheduler._create_next_race(guild_id)
+
     @derby_group.group(name="debug", description="Debug commands")
     async def debug_group(self, context: Context) -> None:
         if context.invoked_subcommand is None:
