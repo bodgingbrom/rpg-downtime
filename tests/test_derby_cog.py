@@ -574,6 +574,40 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_edit_racer_owner(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="BotOwned", owner_id=999, guild_id=GUILD_ID
+        )
+
+    # Simulate a Member-like object for the owner parameter
+    new_owner = types.SimpleNamespace(id=0)
+    await cog.edit_racer(ctx, racer=racer.id, owner=new_owner)
+
+    async with sessionmaker() as session:
+        updated = await repo.get_racer(session, racer.id)
+
+    assert updated.owner_id == 0
+
+
+@pytest.mark.asyncio
 async def test_race_info_bands(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)

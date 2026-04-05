@@ -273,6 +273,12 @@ async def test_payout_dm_sent(tmp_path: Path) -> None:
     assert len(user1.dms) == 1
     assert len(user2.dms) == 1
 
+    # Channel should also have a "Betting Results" announcement
+    msgs = guild.system_channel.messages
+    assert any("Betting Results" in m or "coins" in m for m in msgs), (
+        f"No bet announcement found in channel messages: {msgs}"
+    )
+
 
 @pytest.mark.asyncio
 async def test_race_uses_max_six_racers(

@@ -540,6 +540,9 @@ class DerbyScheduler:
             delay=self._resolve("commentary_delay", gs),
         )
         await self._post_results(guild_id, result.placements, names)
+        await self._announce_bet_results(
+            guild_id, bets, winner_id, names
+        )
         await self._dm_payouts(bets, race_id, winner_id, names)
         if new_injuries:
             await self._announce_injuries(guild_id, new_injuries, names)
@@ -601,6 +604,65 @@ class DerbyScheduler:
             name="\U0001f3c6 Winner",
             value=f"**{winner_name}**",
             inline=False,
+        )
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            return
+
+    async def _announce_bet_results(
+        self,
+        guild_id: int,
+        bets: list[models.Bet],
+        winner_id: int | None,
+        names: dict[int, str] | None = None,
+    ) -> None:
+        """Announce bet outcomes to the race channel."""
+        if not bets or winner_id is None:
+            return
+        guild = self.bot.get_guild(guild_id)
+        if guild is None:
+            return
+        gs = await self._load_guild_settings(guild_id)
+        channel = self._get_channel(guild, gs)
+        if channel is None:
+            return
+
+        names = names or {}
+        winners: list[str] = []
+        losers: list[str] = []
+        for bet in bets:
+            racer_name = names.get(bet.racer_id, f"Racer {bet.racer_id}")
+            if bet.racer_id == winner_id:
+                payout = int(bet.amount * bet.payout_multiplier)
+                winners.append(
+                    f"<@{bet.user_id}> won **{payout} coins** "
+                    f"betting on **{racer_name}** "
+                    f"({bet.payout_multiplier:.1f}x)"
+                )
+            else:
+                losers.append(
+                    f"<@{bet.user_id}> lost **{bet.amount} coins** "
+                    f"on **{racer_name}**"
+                )
+
+        if not winners and not losers:
+            return
+
+        lines: list[str] = []
+        if winners:
+            lines.append("**Winners:**")
+            lines.extend(winners)
+        if losers:
+            if winners:
+                lines.append("")
+            lines.append("**Losers:**")
+            lines.extend(losers)
+
+        embed = discord.Embed(
+            title="\U0001f3b0 Betting Results",
+            description="\n".join(lines),
+            color=0x2ECC71 if winners else 0xE74C3C,
         )
         try:
             await channel.send(embed=embed)
