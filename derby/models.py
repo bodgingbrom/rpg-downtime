@@ -26,6 +26,12 @@ class Racer(Base):
     races_completed: Mapped[int] = mapped_column(Integer, default=0)
     career_length: Mapped[int] = mapped_column(Integer, default=30)
     peak_end: Mapped[int] = mapped_column(Integer, default=18)
+    gender: Mapped[str] = mapped_column(String, default="M")
+    sire_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    dam_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    foal_count: Mapped[int] = mapped_column(Integer, default=0)
+    breed_cooldown: Mapped[int] = mapped_column(Integer, default=0)
+    training_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Race(Base):

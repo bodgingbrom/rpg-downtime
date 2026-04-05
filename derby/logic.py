@@ -207,11 +207,13 @@ def generate_pool_racer(guild_id: int, taken_names: Set[str]) -> dict:
         "temperament": random.choice(list(TEMPERAMENTS.keys())),
         "career_length": career_length,
         "peak_end": int(career_length * 0.6),
+        "gender": random.choice(["M", "F"]),
     }
 
 
 MAX_STAT = 31
 TRAINABLE_STATS = {"speed", "cornering", "stamina"}
+GENDER_LABELS = {"M": "\u2642", "F": "\u2640"}
 
 
 def calculate_training_cost(current_stat: int, base: int, multiplier: int) -> int:

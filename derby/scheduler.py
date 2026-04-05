@@ -153,6 +153,12 @@ class DerbyScheduler:
                 "career_length": ("INTEGER", "30"),
                 "peak_end": ("INTEGER", "18"),
                 "guild_id": ("INTEGER", "0"),
+                "gender": ("VARCHAR", "'M'"),
+                "sire_id": ("INTEGER", "NULL"),
+                "dam_id": ("INTEGER", "NULL"),
+                "foal_count": ("INTEGER", "0"),
+                "breed_cooldown": ("INTEGER", "0"),
+                "training_count": ("INTEGER", "5"),
             }
             for name, (col_type, default) in racer_migrations.items():
                 if name not in racer_columns:
@@ -681,6 +687,7 @@ class DerbyScheduler:
                     temperament=random.choice(list(logic.TEMPERAMENTS.keys())),
                     career_length=career_length,
                     peak_end=int(career_length * 0.6),
+                    gender=random.choice(["M", "F"]),
                 )
                 retirements.append((racer, successor))
         return retirements
