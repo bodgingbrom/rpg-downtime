@@ -1530,10 +1530,24 @@ class Stable(commands.Cog, name="stable"):
                 inline=True,
             )
 
+        training_val = f"{racer_obj.training_count or 0} sessions"
+        if not racer_obj.retired:
+            train_base = self._resolve("training_base", gs)
+            train_mult = self._resolve("training_multiplier", gs)
+            cost_lines = []
+            for stat_name in ("speed", "cornering", "stamina"):
+                cur = getattr(racer_obj, stat_name)
+                if cur < 31:
+                    cost = logic.calculate_training_cost(cur, train_base, train_mult)
+                    cost_lines.append(
+                        f"{stat_name.capitalize()} {cur}\u2192{cur + 1}: {cost} coins"
+                    )
+            if cost_lines:
+                training_val += "\n" + "\n".join(cost_lines)
         embed.add_field(
             name="Training",
-            value=f"{racer_obj.training_count or 0} sessions",
-            inline=True,
+            value=training_val,
+            inline=False,
         )
 
         # Injury
@@ -1932,7 +1946,7 @@ class Stable(commands.Cog, name="stable"):
             embed.description = (embed.description or "") + f"\n*Failure chance was {pct}%*"
         await context.send(embed=embed)
 
-    @stable.command(name="rest", description="Rest a racer to improve their mood (+1)")
+    @stable.command(name="rest", description="Rest a racer for 15 coins to improve their mood (+1)")
     @app_commands.describe(racer="Your racer to rest")
     @app_commands.autocomplete(racer=owned_racer_autocomplete)
     async def stable_rest(self, context: Context, racer: int) -> None:
@@ -1999,7 +2013,7 @@ class Stable(commands.Cog, name="stable"):
         embed.set_footer(text=f"Balance: {wallet.balance} coins")
         await context.send(embed=embed)
 
-    @stable.command(name="feed", description="Feed a racer premium oats to boost mood (+2)")
+    @stable.command(name="feed", description="Feed a racer premium oats for 30 coins to boost mood (+2)")
     @app_commands.describe(racer="Your racer to feed")
     @app_commands.autocomplete(racer=owned_racer_autocomplete)
     async def stable_feed(self, context: Context, racer: int) -> None:
@@ -2155,7 +2169,7 @@ class Stable(commands.Cog, name="stable"):
         await context.send(embed=embed)
 
 
-    @stable.command(name="breed", description="Breed two of your racers to produce a foal")
+    @stable.command(name="breed", description="Breed two of your racers for 25 coins to produce a foal")
     @app_commands.describe(male="Male racer (sire)", female="Female racer (dam)")
     @app_commands.autocomplete(male=owned_racer_autocomplete, female=owned_racer_autocomplete)
     async def stable_breed(self, context: Context, male: int, female: int) -> None:

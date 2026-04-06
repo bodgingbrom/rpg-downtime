@@ -2113,6 +2113,30 @@ async def test_stable_view_own_racer(tmp_path):
     assert "Career" in field_names
     assert "Rank" in field_names
     assert "Description" in field_names
+    # Training costs should be shown for non-retired racer
+    assert "Training" in field_names
+    training_field = next(f for f in embed.fields if f.name == "Training")
+    assert "coins" in training_field.value
+    assert "Speed 20\u219221" in training_field.value
+    assert "Cornering 15\u219216" in training_field.value
+    assert "Stamina 10\u219211" in training_field.value
+
+
+@pytest.mark.asyncio
+async def test_stable_view_retired_no_training_costs(tmp_path):
+    """Retired racer should not show training cost lines."""
+    cog, ctx, racer, sessionmaker = await _make_view_env(tmp_path)
+
+    async with sessionmaker() as session:
+        await repo.update_racer(
+            session, racer.id, retired=True, races_completed=30
+        )
+
+    await cog.stable_view.callback(cog, ctx, racer.id)
+
+    embed = ctx.sent[0].get("embed")
+    training_field = next(f for f in embed.fields if f.name == "Training")
+    assert "coins" not in training_field.value
 
 
 @pytest.mark.asyncio
