@@ -507,6 +507,7 @@ async def test_guild_settings_max_racers_override(tmp_path: Path) -> None:
         countdown_total=0,
         commentary_delay=0,
         max_racers_per_race=6,
+        min_pool_size=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -831,3 +832,195 @@ async def test_replenish_replaces_expired(tmp_path: Path) -> None:
     async with scheduler.sessionmaker() as session:
         count = await repo.count_unowned_eligible_racers(session, GUILD_ID)
     assert count == 3
+
+
+@pytest.mark.asyncio
+async def test_competitive_window_picks_within_range(tmp_path: Path) -> None:
+    """Racers picked for a race should all be within the stat window."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+        race_stat_window=20,
+    )
+    bot = DummyBot(settings)
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    # Create racers spanning a wide range of stat totals
+    async with scheduler.sessionmaker() as session:
+        for i, total in enumerate([10, 15, 20, 50, 55, 60, 80, 85, 90]):
+            await repo.create_racer(
+                session, name=f"R{i}", owner_id=0, guild_id=GUILD_ID,
+                speed=total // 3, cornering=total // 3, stamina=total - 2 * (total // 3),
+            )
+
+    racers_list = []
+    async with scheduler.sessionmaker() as session:
+        racers_list = await repo.get_guild_racers(session, GUILD_ID)
+
+    field = DerbyScheduler._pick_competitive_field(racers_list, 6, 20)
+    assert field is not None
+    totals = [r.speed + r.cornering + r.stamina for r in field]
+    assert max(totals) - min(totals) <= 20
+
+
+@pytest.mark.asyncio
+async def test_competitive_window_owned_auto_included(tmp_path: Path) -> None:
+    """Owned racers in the window should be auto-included."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+        race_stat_window=93,  # wide enough to include everything
+    )
+    bot = DummyBot(settings)
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    async with scheduler.sessionmaker() as session:
+        owned = await repo.create_racer(
+            session, name="MyRacer", owner_id=42, guild_id=GUILD_ID,
+            speed=15, cornering=15, stamina=15,
+        )
+        for i in range(10):
+            await repo.create_racer(
+                session, name=f"Pool{i}", owner_id=0, guild_id=GUILD_ID,
+                speed=15, cornering=15, stamina=15,
+            )
+
+    async with scheduler.sessionmaker() as session:
+        racers_list = await repo.get_guild_racers(session, GUILD_ID)
+
+    # Run many times — owned racer should always be included
+    for _ in range(20):
+        field = DerbyScheduler._pick_competitive_field(racers_list, 6, 93)
+        assert field is not None
+        field_ids = {r.id for r in field}
+        assert owned.id in field_ids
+
+
+@pytest.mark.asyncio
+async def test_competitive_window_one_per_owner(tmp_path: Path) -> None:
+    """Each owner should have at most 1 racer in a race."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+        race_stat_window=93,
+    )
+    bot = DummyBot(settings)
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    async with scheduler.sessionmaker() as session:
+        # Owner 1 has 3 racers
+        for i in range(3):
+            await repo.create_racer(
+                session, name=f"Own1_{i}", owner_id=1, guild_id=GUILD_ID,
+                speed=15, cornering=15, stamina=15,
+            )
+        # Owner 2 has 2 racers
+        for i in range(2):
+            await repo.create_racer(
+                session, name=f"Own2_{i}", owner_id=2, guild_id=GUILD_ID,
+                speed=15, cornering=15, stamina=15,
+            )
+        # Pool racers
+        for i in range(5):
+            await repo.create_racer(
+                session, name=f"Pool{i}", owner_id=0, guild_id=GUILD_ID,
+                speed=15, cornering=15, stamina=15,
+            )
+
+    async with scheduler.sessionmaker() as session:
+        racers_list = await repo.get_guild_racers(session, GUILD_ID)
+
+    for _ in range(20):
+        field = DerbyScheduler._pick_competitive_field(racers_list, 6, 93)
+        assert field is not None
+        owners = [r.owner_id for r in field if r.owner_id != 0]
+        assert len(owners) == len(set(owners)), "Duplicate owner in field"
+
+
+@pytest.mark.asyncio
+async def test_competitive_window_fallback(tmp_path: Path) -> None:
+    """When not enough racers for 6, should fall back to 4, then 2."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+        race_stat_window=5,  # very narrow window
+    )
+    bot = DummyBot(settings)
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    # 4 racers clustered in a narrow range — enough for fallback to 4 but not 6
+    async with scheduler.sessionmaker() as session:
+        for i, total in enumerate([30, 31, 32, 33]):
+            await repo.create_racer(
+                session, name=f"R{i}", owner_id=0, guild_id=GUILD_ID,
+                speed=total // 3, cornering=total // 3,
+                stamina=total - 2 * (total // 3),
+            )
+
+    async with scheduler.sessionmaker() as session:
+        racers_list = await repo.get_guild_racers(session, GUILD_ID)
+
+    # Window of 5 can capture all 4, but not 6 — should fallback to 4
+    field = DerbyScheduler._pick_competitive_field(racers_list, 6, 5)
+    assert field is not None
+    assert 2 <= len(field) <= 4
+
+
+@pytest.mark.asyncio
+async def test_competitive_window_returns_none_when_impossible(
+    tmp_path: Path,
+) -> None:
+    """Returns None when fewer than 2 racers exist."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    async with scheduler.sessionmaker() as session:
+        await repo.create_racer(
+            session, name="Lonely", owner_id=0, guild_id=GUILD_ID,
+            speed=15, cornering=15, stamina=15,
+        )
+
+    async with scheduler.sessionmaker() as session:
+        racers_list = await repo.get_guild_racers(session, GUILD_ID)
+
+    field = DerbyScheduler._pick_competitive_field(racers_list, 6, 35)
+    assert field is None

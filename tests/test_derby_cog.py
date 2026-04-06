@@ -2674,3 +2674,110 @@ async def test_training_no_rank_change(tmp_path):
     embed = ctx.sent[0].get("embed")
     field_names = [f.name for f in embed.fields]
     assert not any("Rank" in name for name in field_names)
+
+
+@pytest.mark.asyncio
+async def test_stable_browse_rank_filter(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        await repo.create_racer(
+            session, name="Slow", owner_id=0, guild_id=GUILD_ID,
+            speed=5, cornering=5, stamina=5, rank="D",
+        )
+        await repo.create_racer(
+            session, name="Fast", owner_id=0, guild_id=GUILD_ID,
+            speed=20, cornering=20, stamina=20, rank="B",
+        )
+
+    await cog.stable_browse.callback(cog, ctx, rank="D")
+    embed = ctx.sent[0].get("embed")
+    assert "D-Rank" in embed.title
+    assert len(embed.fields) == 1
+    assert "Slow" in embed.fields[0].name
+
+
+@pytest.mark.asyncio
+async def test_stable_browse_gender_filter(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        await repo.create_racer(
+            session, name="Stallion", owner_id=0, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10, gender="M",
+        )
+        await repo.create_racer(
+            session, name="Mare", owner_id=0, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10, gender="F",
+        )
+
+    await cog.stable_browse.callback(cog, ctx, gender="F")
+    embed = ctx.sent[0].get("embed")
+    assert "Female" in embed.title
+    assert len(embed.fields) == 1
+    assert "Mare" in embed.fields[0].name
+
+
+@pytest.mark.asyncio
+async def test_stable_browse_no_filters(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        for i in range(3):
+            await repo.create_racer(
+                session, name=f"Racer{i}", owner_id=0, guild_id=GUILD_ID,
+                speed=10, cornering=10, stamina=10,
+            )
+
+    await cog.stable_browse.callback(cog, ctx)
+    embed = ctx.sent[0].get("embed")
+    assert embed.title == "Racers For Sale"
+    assert len(embed.fields) == 3

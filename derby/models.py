@@ -117,6 +117,7 @@ class GuildSettings(Base):
     min_races_to_breed: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     max_foals_per_female: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     racer_flavor: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    race_stat_window: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 class PlayerData(Base):

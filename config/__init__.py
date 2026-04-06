@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     racer_buy_multiplier: int = 2
     racer_sell_fraction: float = 0.5
     max_racers_per_owner: int = 3
-    min_pool_size: int = 20
+    min_pool_size: int = 40
     placement_prizes: str = "50,30,20"
     training_base: int = 10
     training_multiplier: int = 2
@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     min_races_to_breed: int = 5
     max_foals_per_female: int = 3
     racer_flavor: str | None = None
+    race_stat_window: int = 35
     tournament_enabled: bool = True
 
     @classmethod

@@ -35,6 +35,14 @@ Use `/stable browse` to see all unowned racers in the pool. The pool automatical
 
 Each pool racer has a **24-48 hour window** before they rotate out and are replaced by a fresh racer. This keeps the browse list from getting stale -- check back regularly for new options!
 
+#### Filters
+You can narrow down the browse list with optional filters:
+
+- `/stable browse rank:B-Rank` -- show only B-Rank racers
+- `/stable browse gender:Female` -- show only females
+- `/stable browse temperament:Agile` -- show only Agile racers
+- Combine filters: `/stable browse rank:A-Rank gender:Male`
+
 ### Pricing
 Buy price is based on total stats:
 
