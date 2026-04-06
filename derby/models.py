@@ -35,6 +35,7 @@ class Racer(Base):
     rank: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     tournament_wins: Mapped[int] = mapped_column(Integer, default=0)
     tournament_placements: Mapped[int] = mapped_column(Integer, default=0)
+    description: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class Race(Base):
@@ -114,6 +115,7 @@ class GuildSettings(Base):
     breeding_cooldown: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     min_races_to_breed: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     max_foals_per_female: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    racer_flavor: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class PlayerData(Base):

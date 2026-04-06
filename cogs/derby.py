@@ -21,6 +21,8 @@ _stat_band = logic.stat_band
 _mood_label = logic.mood_label
 _gender = logic.GENDER_LABELS.get
 
+MOOD_EMOJIS = {1: "\U0001f621", 2: "\U0001f61f", 3: "\U0001f610", 4: "\U0001f642", 5: "\U0001f604"}
+
 TEMPERAMENT_CHOICES = [
     app_commands.Choice(name=t, value=t) for t in logic.TEMPERAMENTS
 ]
@@ -1186,6 +1188,7 @@ class Derby(commands.Cog, name="derby"):
         "breeding_cooldown",
         "min_races_to_breed",
         "max_foals_per_female",
+        "racer_flavor",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -1209,9 +1212,10 @@ class Derby(commands.Cog, name="derby"):
                     inline=False,
                 )
             else:
+                display = global_val if global_val is not None else "not set"
                 embed.add_field(
                     name=key,
-                    value=f"{global_val} (default)",
+                    value=f"{display} (default)",
                     inline=False,
                 )
         await context.send(embed=embed, ephemeral=True)
@@ -1248,7 +1252,7 @@ class Derby(commands.Cog, name="derby"):
 
             # Parse value to the correct type
             try:
-                if key in ("channel_name", "placement_prizes", "stable_upgrade_costs"):
+                if key in ("channel_name", "placement_prizes", "stable_upgrade_costs", "racer_flavor"):
                     parsed: str | int | float = value
                 elif key in (
                     "commentary_delay",
@@ -1340,6 +1344,136 @@ class Stable(commands.Cog, name="stable"):
                 ),
                 inline=False,
             )
+        await context.send(embed=embed)
+
+    @stable.command(name="view", description="View a racer's full profile")
+    @app_commands.describe(racer="Racer to view")
+    @app_commands.autocomplete(racer=guild_racer_autocomplete)
+    async def stable_view(self, context: Context, racer: int) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+
+            # Look up lineage names
+            sire_name = "Unknown"
+            dam_name = "Unknown"
+            if racer_obj.sire_id:
+                sire = await repo.get_racer(session, racer_obj.sire_id)
+                if sire:
+                    sire_name = sire.name
+            if racer_obj.dam_id:
+                dam = await repo.get_racer(session, racer_obj.dam_id)
+                if dam:
+                    dam_name = dam.name
+
+            # Look up owner name
+            if racer_obj.owner_id and racer_obj.owner_id != 0:
+                member = context.guild.get_member(racer_obj.owner_id) if context.guild else None
+                owner_name = member.display_name if member else f"User #{racer_obj.owner_id}"
+            else:
+                owner_name = "Unowned"
+
+        # Build embed
+        gender_emoji = logic.GENDER_LABELS.get(racer_obj.gender, "")
+        if racer_obj.retired:
+            color = 0xF1C40F  # gold
+        elif racer_obj.injuries:
+            color = 0xE74C3C  # red
+        else:
+            color = 0x2ECC71  # green
+
+        embed = discord.Embed(
+            title=f"{racer_obj.name}  |  {gender_emoji} {racer_obj.gender}",
+            color=color,
+        )
+
+        eff = logic.effective_stats(racer_obj)
+        embed.add_field(
+            name="Stats",
+            value=(
+                f"Speed {eff['speed']} ({_stat_band(eff['speed'])}) / "
+                f"Cornering {eff['cornering']} ({_stat_band(eff['cornering'])}) / "
+                f"Stamina {eff['stamina']} ({_stat_band(eff['stamina'])})"
+            ),
+            inline=False,
+        )
+        embed.add_field(name="Temperament", value=racer_obj.temperament, inline=True)
+
+        mood_emoji = MOOD_EMOJIS.get(racer_obj.mood, "")
+        embed.add_field(
+            name="Mood",
+            value=f"{mood_emoji} {_mood_label(racer_obj.mood)} ({racer_obj.mood}/5)",
+            inline=True,
+        )
+
+        phase = logic.career_phase(racer_obj)
+        embed.add_field(
+            name="Career",
+            value=f"{racer_obj.races_completed}/{racer_obj.career_length} races | {phase}",
+            inline=True,
+        )
+
+        rank = logic.rank_label(getattr(racer_obj, "rank", None))
+        embed.add_field(name="Rank", value=rank, inline=True)
+
+        # Lineage
+        if racer_obj.sire_id or racer_obj.dam_id:
+            embed.add_field(
+                name="Lineage",
+                value=f"Sire: {sire_name} | Dam: {dam_name}",
+                inline=False,
+            )
+
+        # Foals
+        max_foals = self._resolve("max_foals_per_female", gs)
+        foal_val = str(racer_obj.foal_count)
+        if racer_obj.gender == "F":
+            foal_val += f"/{max_foals}"
+        embed.add_field(name="Foals", value=foal_val, inline=True)
+
+        # Tournament record
+        t_wins = getattr(racer_obj, "tournament_wins", 0) or 0
+        t_place = getattr(racer_obj, "tournament_placements", 0) or 0
+        if t_wins or t_place:
+            embed.add_field(
+                name="Tournament Record",
+                value=f"{t_wins}W / {t_place} top-3",
+                inline=True,
+            )
+
+        embed.add_field(
+            name="Training",
+            value=f"{racer_obj.training_count or 0} sessions",
+            inline=True,
+        )
+
+        # Injury
+        if racer_obj.injuries:
+            embed.add_field(
+                name="Injury",
+                value=f"\u26a0\ufe0f {racer_obj.injuries} ({racer_obj.injury_races_remaining} races left)",
+                inline=False,
+            )
+
+        # Breed cooldown
+        if racer_obj.breed_cooldown and racer_obj.breed_cooldown > 0:
+            embed.add_field(
+                name="Breed Cooldown",
+                value=f"{racer_obj.breed_cooldown} races",
+                inline=True,
+            )
+
+        # Description
+        desc = racer_obj.description or "No description yet."
+        embed.add_field(name="Description", value=desc, inline=False)
+
+        embed.set_footer(text=f"ID: {racer_obj.id} | Owner: {owner_name}")
         await context.send(embed=embed)
 
     @stable.command(name="browse", description="Browse racers available for purchase")
