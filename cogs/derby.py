@@ -1430,7 +1430,7 @@ class Stable(commands.Cog, name="stable"):
             await self._show_stable(context)
 
     async def _show_stable(self, context: Context) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             racers = await repo.get_owned_racers(
@@ -1475,7 +1475,7 @@ class Stable(commands.Cog, name="stable"):
     @app_commands.describe(racer="Racer to view")
     @app_commands.autocomplete(racer=viewable_racer_autocomplete)
     async def stable_view(self, context: Context, racer: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
@@ -1639,7 +1639,7 @@ class Stable(commands.Cog, name="stable"):
 
     @stable.command(name="browse", description="Browse racers available for purchase")
     async def stable_browse(self, context: Context) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             racers = await repo.get_unowned_guild_racers(session, guild_id)
@@ -1675,7 +1675,7 @@ class Stable(commands.Cog, name="stable"):
     @app_commands.describe(racer="Racer to purchase")
     @app_commands.autocomplete(racer=unowned_racer_autocomplete)
     async def stable_buy(self, context: Context, racer: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
@@ -1760,7 +1760,7 @@ class Stable(commands.Cog, name="stable"):
     @app_commands.describe(racer="Racer to sell")
     @app_commands.autocomplete(racer=owned_racer_autocomplete)
     async def stable_sell(self, context: Context, racer: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
@@ -1831,7 +1831,7 @@ class Stable(commands.Cog, name="stable"):
     async def stable_rename(
         self, context: Context, racer: int, new_name: str
     ) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         new_name = new_name.strip()
         if not new_name or len(new_name) > 32:
@@ -1877,7 +1877,7 @@ class Stable(commands.Cog, name="stable"):
     async def stable_train(
         self, context: Context, racer: int, stat: app_commands.Choice[str]
     ) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         stat_name = stat.value if isinstance(stat, app_commands.Choice) else stat
 
@@ -2009,7 +2009,7 @@ class Stable(commands.Cog, name="stable"):
     @app_commands.describe(racer="Your racer to rest")
     @app_commands.autocomplete(racer=owned_racer_autocomplete)
     async def stable_rest(self, context: Context, racer: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
 
         async with self.bot.scheduler.sessionmaker() as session:
@@ -2076,7 +2076,7 @@ class Stable(commands.Cog, name="stable"):
     @app_commands.describe(racer="Your racer to feed")
     @app_commands.autocomplete(racer=owned_racer_autocomplete)
     async def stable_feed(self, context: Context, racer: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
 
         async with self.bot.scheduler.sessionmaker() as session:
@@ -2142,7 +2142,7 @@ class Stable(commands.Cog, name="stable"):
 
     @stable.command(name="upgrade", description="Upgrade your stable to hold more racers")
     async def stable_upgrade(self, context: Context) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
 
         async with self.bot.scheduler.sessionmaker() as session:
@@ -2232,7 +2232,7 @@ class Stable(commands.Cog, name="stable"):
     @app_commands.describe(male="Male racer (sire)", female="Female racer (dam)")
     @app_commands.autocomplete(male=owned_racer_autocomplete, female=owned_racer_autocomplete)
     async def stable_breed(self, context: Context, male: int, female: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
 
         if male == female:
