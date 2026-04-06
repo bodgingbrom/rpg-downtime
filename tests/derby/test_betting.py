@@ -291,3 +291,74 @@ async def test_resolve_payouts_backward_compat(session: AsyncSession):
         select(Wallet).where(Wallet.user_id == 1, Wallet.guild_id == 1)
     )).scalars().first()
     assert w1.balance == 70
+
+
+@pytest.mark.asyncio
+async def test_resolve_free_bet_wins(session: AsyncSession):
+    """Free bet on the winner should pay out normally."""
+    r1 = Racer(name="A", owner_id=1, guild_id=1)
+    r2 = Racer(name="B", owner_id=2, guild_id=1)
+    session.add_all([r1, r2])
+    await session.commit()
+    await session.refresh(r1)
+    await session.refresh(r2)
+
+    race = Race(guild_id=1)
+    session.add(race)
+    await session.commit()
+    await session.refresh(race)
+
+    # Free bet: amount=10, is_free=True, nothing deducted from wallet
+    session.add(Bet(
+        race_id=race.id, user_id=1, racer_id=r1.id, amount=10,
+        payout_multiplier=3.0, bet_type="win", is_free=True,
+    ))
+    session.add(Wallet(user_id=1, guild_id=1, balance=0))
+    await session.commit()
+
+    results = await resolve_payouts(session, race.id, [r1.id, r2.id], guild_id=1)
+
+    assert len(results) == 1
+    assert results[0]["won"] is True
+    assert results[0]["payout"] == 30
+    assert results[0]["is_free"] is True
+
+    w1 = (await session.execute(
+        select(Wallet).where(Wallet.user_id == 1, Wallet.guild_id == 1)
+    )).scalars().first()
+    assert w1.balance == 30
+
+
+@pytest.mark.asyncio
+async def test_resolve_free_bet_loses(session: AsyncSession):
+    """Free bet on a loser should leave wallet at 0."""
+    r1 = Racer(name="A", owner_id=1, guild_id=1)
+    r2 = Racer(name="B", owner_id=2, guild_id=1)
+    session.add_all([r1, r2])
+    await session.commit()
+    await session.refresh(r1)
+    await session.refresh(r2)
+
+    race = Race(guild_id=1)
+    session.add(race)
+    await session.commit()
+    await session.refresh(race)
+
+    # Free bet on r2, but r1 wins
+    session.add(Bet(
+        race_id=race.id, user_id=1, racer_id=r2.id, amount=10,
+        payout_multiplier=3.0, bet_type="win", is_free=True,
+    ))
+    session.add(Wallet(user_id=1, guild_id=1, balance=0))
+    await session.commit()
+
+    results = await resolve_payouts(session, race.id, [r1.id, r2.id], guild_id=1)
+
+    assert len(results) == 1
+    assert results[0]["won"] is False
+    assert results[0]["is_free"] is True
+
+    w1 = (await session.execute(
+        select(Wallet).where(Wallet.user_id == 1, Wallet.guild_id == 1)
+    )).scalars().first()
+    assert w1.balance == 0

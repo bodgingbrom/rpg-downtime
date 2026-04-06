@@ -223,6 +223,8 @@ class Derby(commands.Cog, name="derby"):
             racers = await repo.get_race_participants(session, race.id)
         return race, racers
 
+    FREE_BET_AMOUNT = 10
+
     async def _place_bet(
         self,
         context: Context,
@@ -231,6 +233,10 @@ class Derby(commands.Cog, name="derby"):
         amount: int,
     ) -> None:
         """Shared logic for all bet commands."""
+        if amount < 0:
+            await context.send("Bet amount must be positive.", ephemeral=True)
+            return
+
         guild_id = context.guild.id if context.guild else 0
         race, racers = await self._find_next_race(guild_id)
         if race is None or not racers:
@@ -263,7 +269,6 @@ class Derby(commands.Cog, name="derby"):
             return
 
         multiplier = logic.calculate_bet_odds(racers, None, 0.1, bet_type, picks)
-        payout = int(amount * multiplier)
         racer_ids_json = json.dumps(picks)
         primary_racer_id = picks[0]
         pick_names = [
@@ -287,6 +292,35 @@ class Derby(commands.Cog, name="derby"):
                     guild_id=guild_id,
                     balance=default_bal,
                 )
+
+            # --- Free bet handling ---
+            is_free = False
+            if amount == 0:
+                if wallet.balance > 0:
+                    await context.send(
+                        "You can only place a free bet when your balance is 0.",
+                        ephemeral=True,
+                    )
+                    return
+                # One free bet per race (any type)
+                free_check = await session.execute(
+                    select(models.Bet).where(
+                        models.Bet.race_id == race.id,
+                        models.Bet.user_id == context.author.id,
+                        models.Bet.is_free.is_(True),
+                    )
+                )
+                if free_check.scalars().first() is not None:
+                    await context.send(
+                        "You already have a free bet on this race.",
+                        ephemeral=True,
+                    )
+                    return
+                is_free = True
+                amount = self.FREE_BET_AMOUNT
+
+            payout = int(amount * multiplier)
+
             # Check for existing bet of the SAME type
             bet_result = await session.execute(
                 select(models.Bet)
@@ -300,12 +334,15 @@ class Derby(commands.Cog, name="derby"):
             old_amount = 0
             if existing_bet is not None:
                 old_amount = existing_bet.amount
-                wallet.balance += existing_bet.amount
-            if wallet.balance < amount:
+                # Only refund to wallet if the old bet was paid (not free)
+                if not existing_bet.is_free:
+                    wallet.balance += existing_bet.amount
+            if not is_free and wallet.balance < amount:
                 await session.commit()
                 await context.send("Insufficient balance.", ephemeral=True)
                 return
-            wallet.balance -= amount
+            if not is_free:
+                wallet.balance -= amount
             await session.commit()
             if existing_bet is None:
                 await repo.create_bet(
@@ -317,6 +354,7 @@ class Derby(commands.Cog, name="derby"):
                     payout_multiplier=multiplier,
                     bet_type=bet_type,
                     racer_ids=racer_ids_json,
+                    is_free=is_free,
                 )
             else:
                 await repo.update_bet(
@@ -326,6 +364,7 @@ class Derby(commands.Cog, name="derby"):
                     amount=amount,
                     payout_multiplier=multiplier,
                     racer_ids=racer_ids_json,
+                    is_free=is_free,
                 )
 
         # Build pick description
@@ -334,7 +373,14 @@ class Derby(commands.Cog, name="derby"):
         else:
             pick_desc = " \u2192 ".join(f"**{n}**" for n in pick_names)
 
-        if old_amount > 0:
+        free_tag = " (Free House Bet)" if is_free else ""
+        if is_free:
+            await context.send(
+                f"\U0001f3b0 **{label}**{free_tag} \u2014 Race {race.id}\n"
+                f"The house backs you on {pick_desc} for {amount} coins "
+                f"({multiplier:.1f}x \u2014 win pays {payout})"
+            )
+        elif old_amount > 0:
             await context.send(
                 f"\U0001f3b0 **{label}** \u2014 Race {race.id}\n"
                 f"Bet changed ({old_amount} coins refunded) to {pick_desc} "
@@ -586,6 +632,54 @@ class Derby(commands.Cog, name="derby"):
             if len(choices) >= 25:
                 break
         return choices
+
+    # -- Economy commands -----------------------------------------------
+
+    @derby_group.command(
+        name="give-coins", description="Give or remove coins from a player"
+    )
+    @checks.has_role("Race Admin")
+    @app_commands.describe(
+        user="Player to give coins to",
+        amount="Amount of coins (negative to remove)",
+    )
+    async def give_coins(
+        self, context: Context, user: discord.User, amount: int
+    ) -> None:
+        await context.defer()
+        if amount == 0:
+            await context.send("Amount must not be zero.", ephemeral=True)
+            return
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            wallet = await wallet_repo.get_wallet(session, user.id, guild_id)
+            if wallet is None:
+                gs = await repo.get_guild_settings(session, guild_id)
+                default_bal = resolve_guild_setting(
+                    gs, self.bot.settings, "default_wallet"
+                )
+                wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=user.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            new_balance = wallet.balance + amount
+            if new_balance < 0:
+                await context.send(
+                    f"Cannot remove {abs(amount)} coins \u2014 "
+                    f"{user.mention} only has {wallet.balance}.",
+                    ephemeral=True,
+                )
+                return
+            wallet.balance = new_balance
+            await session.commit()
+        action = "Gave" if amount > 0 else "Removed"
+        await context.send(
+            f"{action} **{abs(amount)}** coins "
+            f"{'to' if amount > 0 else 'from'} {user.mention}. "
+            f"New balance: **{new_balance}**."
+        )
 
     # -- Racer commands -------------------------------------------------
 

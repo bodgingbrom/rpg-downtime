@@ -36,6 +36,14 @@ The bot posts race announcements to a channel matching the `channel_name` settin
 
 **Note:** Force-starting a race automatically queues the next scheduled race, so the schedule continues uninterrupted. Force-starts are "bonus" races.
 
+### Economy
+
+| Command | Description |
+|---------|-------------|
+| `/derby give-coins <user> <amount>` | Give coins to a player (use negative amount to remove) |
+
+Cannot remove more coins than a player has (balance floor is 0). If the player doesn't have a wallet yet, one is created with the default starting balance before applying the amount.
+
 ### Debug
 
 | Command | Description |

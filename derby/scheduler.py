@@ -294,6 +294,7 @@ class DerbyScheduler:
             bet_migrations = {
                 "bet_type": ("VARCHAR", "'win'"),
                 "racer_ids": ("VARCHAR", "'[]'"),
+                "is_free": ("BOOLEAN", "0"),
             }
             for name, (col_type, default) in bet_migrations.items():
                 if name not in bet_columns:
@@ -702,11 +703,17 @@ class DerbyScheduler:
         losers: list[str] = []
         for br in bet_results:
             label = self.BET_TYPE_LABELS.get(br["bet_type"], br["bet_type"])
+            free_tag = " \U0001f193" if br.get("is_free") else ""
             racer_name = names.get(br["racer_id"], f"Racer {br['racer_id']}")
             if br["won"]:
                 winners.append(
                     f"<@{br['user_id']}> won **{br['payout']} coins** "
-                    f"({label} on **{racer_name}**)"
+                    f"({label}{free_tag} on **{racer_name}**)"
+                )
+            elif br.get("is_free"):
+                losers.append(
+                    f"<@{br['user_id']}> \u2014 free bet on "
+                    f"**{racer_name}** (no coins lost)"
                 )
             else:
                 losers.append(
@@ -752,12 +759,25 @@ class DerbyScheduler:
                 continue
             label = self.BET_TYPE_LABELS.get(br["bet_type"], br["bet_type"])
             racer_name = names.get(br["racer_id"], f"Racer {br['racer_id']}")
-            if br["won"]:
+            free_tag = " (Free)" if br.get("is_free") else ""
+            if br["won"] and br.get("is_free"):
+                msg = (
+                    f"\U0001f3b0 **{label} Bet**{free_tag} \u2014 Race #{race_id}\n"
+                    f"\u2705 The house backed you and you won! "
+                    f"**{br['payout']} coins** earned"
+                )
+            elif br["won"]:
                 msg = (
                     f"\U0001f3b0 **{label} Bet** \u2014 Race #{race_id}\n"
                     f"\u2705 Won! {br['amount']} \u00d7 "
                     f"{br['payout'] / br['amount']:.1f}x = "
                     f"**{br['payout']} coins**"
+                )
+            elif br.get("is_free"):
+                msg = (
+                    f"\U0001f3b0 **{label} Bet**{free_tag} \u2014 Race #{race_id}\n"
+                    f"No luck this time \u2014 but no coins lost. "
+                    f"The house covered you."
                 )
             else:
                 msg = (

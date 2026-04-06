@@ -59,6 +59,7 @@ class Bet(Base):
     payout_multiplier: Mapped[float] = mapped_column(Float, default=2.0)
     bet_type: Mapped[str] = mapped_column(String, default="win")
     racer_ids: Mapped[str] = mapped_column(String, default="[]")
+    is_free: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class RaceEntry(Base):
