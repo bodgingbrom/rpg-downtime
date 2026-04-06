@@ -2288,3 +2288,256 @@ async def test_flavor_shows_in_settings(tmp_path):
     assert "racer_flavor" in field_names
     flavor_field = next(f for f in embed.fields if f.name == "racer_flavor")
     assert "enchanted warhorses" in flavor_field.value
+
+
+# ---------------------------------------------------------------------------
+# LLM description integration tests
+# ---------------------------------------------------------------------------
+
+
+async def _make_view_env_with_flavor(tmp_path, flavor="cyberpunk lizards", **racer_kwargs):
+    """Set up env with flavor set for description tests."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    stable_cog = derby_cog.Stable(bot)
+    derby_cog_inst = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        # Set flavor
+        if flavor:
+            await repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor=flavor)
+        defaults = dict(
+            name="Thunderhoof", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=20, cornering=15, stamina=10,
+        )
+        defaults.update(racer_kwargs)
+        racer = await repo.create_racer(session, **defaults)
+    return stable_cog, derby_cog_inst, ctx, racer, sessionmaker
+
+
+@pytest.mark.asyncio
+async def test_stable_view_triggers_description_gen(tmp_path):
+    """View racer with no desc + flavor → generates description."""
+    cog, _, ctx, racer, sessionmaker = await _make_view_env_with_flavor(tmp_path)
+
+    with patch("cogs.derby.descriptions.generate_description", return_value="A sleek blue lizard.") as mock_gen:
+        await cog.stable_view.callback(cog, ctx, racer.id)
+
+    mock_gen.assert_called_once()
+    embed = ctx.sent[0].get("embed")
+    desc_field = next(f for f in embed.fields if f.name == "Description")
+    assert "sleek blue lizard" in desc_field.value
+
+    # Verify saved to DB
+    async with sessionmaker() as session:
+        r = await repo.get_racer(session, racer.id)
+    assert r.description == "A sleek blue lizard."
+
+
+@pytest.mark.asyncio
+async def test_stable_view_no_flavor_no_gen(tmp_path):
+    """No flavor set → no LLM call, shows hint."""
+    cog, _, ctx, racer, _ = await _make_view_env_with_flavor(tmp_path, flavor=None)
+
+    with patch("cogs.derby.descriptions.generate_description") as mock_gen:
+        await cog.stable_view.callback(cog, ctx, racer.id)
+
+    mock_gen.assert_not_called()
+    embed = ctx.sent[0].get("embed")
+    desc_field = next(f for f in embed.fields if f.name == "Description")
+    assert "set a racer flavor" in desc_field.value.lower()
+
+
+@pytest.mark.asyncio
+async def test_stable_view_existing_description_no_regen(tmp_path):
+    """Racer already has description → no LLM call."""
+    cog, _, ctx, racer, _ = await _make_view_env_with_flavor(
+        tmp_path, description="Already described."
+    )
+
+    with patch("cogs.derby.descriptions.generate_description") as mock_gen:
+        await cog.stable_view.callback(cog, ctx, racer.id)
+
+    mock_gen.assert_not_called()
+    embed = ctx.sent[0].get("embed")
+    desc_field = next(f for f in embed.fields if f.name == "Description")
+    assert "Already described." in desc_field.value
+
+
+@pytest.mark.asyncio
+async def test_stable_view_gen_failure_graceful(tmp_path):
+    """LLM fails → racer still shown, desc says 'No description yet.'"""
+    cog, _, ctx, racer, _ = await _make_view_env_with_flavor(tmp_path)
+
+    with patch("cogs.derby.descriptions.generate_description", return_value=None):
+        await cog.stable_view.callback(cog, ctx, racer.id)
+
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    desc_field = next(f for f in embed.fields if f.name == "Description")
+    assert "No description yet." in desc_field.value
+
+
+@pytest.mark.asyncio
+async def test_add_racer_generates_description(tmp_path):
+    """Admin add_racer with flavor set → description generated."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+    owner = types.SimpleNamespace(id=42, mention="@TestUser")
+
+    async with sessionmaker() as session:
+        await repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="enchanted warhorses")
+
+    with patch("cogs.derby.descriptions.generate_description", return_value="A golden stallion.") as mock_gen:
+        await cog.add_racer.callback(cog, ctx, owner, "Goldie", False, 20, 15, 10, "Bold")
+
+    mock_gen.assert_called_once()
+
+    # Verify saved
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(models.Racer).where(models.Racer.name == "Goldie")
+        )
+        racer = result.scalars().first()
+    assert racer is not None
+    assert racer.description == "A golden stallion."
+
+
+@pytest.mark.asyncio
+async def test_add_racer_no_flavor_no_description(tmp_path):
+    """Admin add_racer without flavor → no description generated."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+    owner = types.SimpleNamespace(id=42, mention="@TestUser")
+
+    with patch("cogs.derby.descriptions.generate_description") as mock_gen:
+        await cog.add_racer.callback(cog, ctx, owner, "Shadowmere", False, 20, 15, 10, "Bold")
+
+    mock_gen.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_breed_generates_foal_description(tmp_path):
+    """Breeding with parent descriptions + flavor → foal gets blended description."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        await repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="racing lizards")
+        sire = await repo.create_racer(
+            session, name="Papa", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="M", speed=20, cornering=15, stamina=10,
+            description="A cobalt-scaled lizard with chrome implants.",
+        )
+        dam = await repo.create_racer(
+            session, name="Mama", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="F", speed=15, cornering=20, stamina=15,
+            description="A lithe amber-eyed lizard with bioluminescent markings.",
+        )
+        await repo.update_racer(session, sire.id, races_completed=10)
+        await repo.update_racer(session, dam.id, races_completed=10)
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+        )
+
+    with patch("cogs.derby.descriptions.generate_description", return_value="A small lizard blending both parents.") as mock_gen:
+        await cog.stable_breed.callback(cog, ctx, sire.id, dam.id)
+
+    mock_gen.assert_called_once()
+    call_kwargs = mock_gen.call_args
+    assert call_kwargs.kwargs.get("sire_desc") is not None
+    assert call_kwargs.kwargs.get("dam_desc") is not None
+    assert "cobalt" in call_kwargs.kwargs["sire_desc"]
+    assert "amber" in call_kwargs.kwargs["dam_desc"]
+
+
+@pytest.mark.asyncio
+async def test_breed_no_parent_desc_no_foal_desc(tmp_path):
+    """Parents lack descriptions → no foal description generated."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        await repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="racing lizards")
+        sire = await repo.create_racer(
+            session, name="Papa", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="M", speed=20, cornering=15, stamina=10,
+        )
+        dam = await repo.create_racer(
+            session, name="Mama", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            gender="F", speed=15, cornering=20, stamina=15,
+        )
+        await repo.update_racer(session, sire.id, races_completed=10)
+        await repo.update_racer(session, dam.id, races_completed=10)
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+        )
+
+    with patch("cogs.derby.descriptions.generate_description") as mock_gen:
+        await cog.stable_breed.callback(cog, ctx, sire.id, dam.id)
+
+    mock_gen.assert_not_called()
