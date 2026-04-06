@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Type, TypeVar
 
-from sqlalchemy import func, select
+from datetime import datetime
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -81,6 +83,7 @@ async def create_racer(
     training_count: int = 0,
     rank: str | None = None,
     description: str | None = None,
+    pool_expires_at: datetime | None = None,
 ) -> Racer:
     return await _create(
         session,
@@ -105,6 +108,7 @@ async def create_racer(
         training_count=training_count,
         rank=rank,
         description=description,
+        pool_expires_at=pool_expires_at,
     )
 
 
@@ -161,6 +165,7 @@ async def get_unowned_guild_racers(
         stmt = stmt.where(
             Racer.retired.is_(False),
             Racer.injury_races_remaining == 0,
+            or_(Racer.pool_expires_at.is_(None), Racer.pool_expires_at > func.now()),
         )
     result = await session.execute(stmt)
     return result.scalars().all()
@@ -218,13 +223,14 @@ async def get_stable_racers(
 async def count_unowned_eligible_racers(
     session: AsyncSession, guild_id: int
 ) -> int:
-    """Count unowned, non-retired, non-injured racers for a guild."""
+    """Count unowned, non-retired, non-injured, non-expired racers for a guild."""
     result = await session.execute(
         select(func.count(Racer.id)).where(
             Racer.guild_id == guild_id,
             Racer.owner_id == 0,
             Racer.retired.is_(False),
             Racer.injury_races_remaining == 0,
+            or_(Racer.pool_expires_at.is_(None), Racer.pool_expires_at > func.now()),
         )
     )
     return result.scalar() or 0

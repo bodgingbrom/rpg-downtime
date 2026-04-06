@@ -6,6 +6,7 @@ import glob
 import os
 import random
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Dict, List, Sequence, Set, Tuple
 
 import yaml
@@ -291,6 +292,7 @@ def generate_pool_racer(guild_id: int, taken_names: Set[str]) -> dict:
         "peak_end": int(career_length * 0.6),
         "gender": random.choice(["M", "F"]),
         "rank": calculate_rank(speed, cornering, stamina),
+        "pool_expires_at": datetime.utcnow() + timedelta(hours=random.uniform(24, 48)),
     }
 
 

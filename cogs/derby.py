@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import discord
 from discord import app_commands
@@ -1818,7 +1818,12 @@ class Stable(commands.Cog, name="stable"):
                     balance=default_bal,
                 )
             wallet.balance += sell_price
-            await repo.update_racer(session, racer, owner_id=0)
+            pool_expiry = datetime.utcnow() + timedelta(
+                hours=random.uniform(24, 48)
+            )
+            await repo.update_racer(
+                session, racer, owner_id=0, pool_expires_at=pool_expiry,
+            )
             await session.commit()
 
         await context.send(

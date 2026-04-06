@@ -33,6 +33,8 @@ This is free-text -- it could be "enchanted warhorses", "clockwork beetles", "se
 ### Browsing
 Use `/stable browse` to see all unowned racers in the pool. The pool automatically replenishes so there's always racers available.
 
+Each pool racer has a **24-48 hour window** before they rotate out and are replaced by a fresh racer. This keeps the browse list from getting stale -- check back regularly for new options!
+
 ### Pricing
 Buy price is based on total stats:
 

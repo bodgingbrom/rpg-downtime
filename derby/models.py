@@ -36,6 +36,7 @@ class Racer(Base):
     tournament_wins: Mapped[int] = mapped_column(Integer, default=0)
     tournament_placements: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    pool_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
 
 class Race(Base):

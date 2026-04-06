@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import discord
@@ -741,3 +742,92 @@ async def test_breed_cooldown_stops_at_zero(tmp_path: Path) -> None:
     async with scheduler.sessionmaker() as session:
         racer = await repo.get_racer(session, r3.id)
         assert racer.breed_cooldown == 0  # 1 → 0, not negative
+
+
+@pytest.mark.asyncio
+async def test_expire_pool_racers(tmp_path: Path) -> None:
+    """Expired pool racers are deleted; non-expired ones survive."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    past = datetime.utcnow() - timedelta(hours=1)
+    future = datetime.utcnow() + timedelta(hours=24)
+
+    async with scheduler.sessionmaker() as session:
+        expired = await repo.create_racer(
+            session, name="Expired", owner_id=0, guild_id=GUILD_ID,
+            pool_expires_at=past,
+        )
+        alive = await repo.create_racer(
+            session, name="Alive", owner_id=0, guild_id=GUILD_ID,
+            pool_expires_at=future,
+        )
+        owned = await repo.create_racer(
+            session, name="Owned", owner_id=1, guild_id=GUILD_ID,
+            pool_expires_at=past,  # owned racers should NOT be deleted
+        )
+
+    deleted = await scheduler._expire_pool_racers(GUILD_ID)
+    assert deleted == 1
+
+    async with scheduler.sessionmaker() as session:
+        assert await repo.get_racer(session, expired.id) is None
+        assert await repo.get_racer(session, alive.id) is not None
+        assert await repo.get_racer(session, owned.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_replenish_replaces_expired(tmp_path: Path) -> None:
+    """After expiry, replenish fills the gap back to min_pool_size."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=3,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    past = datetime.utcnow() - timedelta(hours=1)
+    async with scheduler.sessionmaker() as session:
+        for i in range(3):
+            await repo.create_racer(
+                session, name=f"Old{i}", owner_id=0, guild_id=GUILD_ID,
+                pool_expires_at=past,
+            )
+
+    # Expire them
+    await scheduler._expire_pool_racers(GUILD_ID)
+    async with scheduler.sessionmaker() as session:
+        count = await repo.count_unowned_eligible_racers(session, GUILD_ID)
+    assert count == 0
+
+    # Replenish should create new ones (up to 5 per call)
+    created = await scheduler._replenish_pool(GUILD_ID)
+    assert created == 3
+
+    async with scheduler.sessionmaker() as session:
+        count = await repo.count_unowned_eligible_racers(session, GUILD_ID)
+    assert count == 3
