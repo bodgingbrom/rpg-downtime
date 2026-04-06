@@ -61,21 +61,44 @@ A brutal mixed course through city streets. Tests every stat with straights, cor
 
 ## Betting
 
-### Placing Bets
-Use `/race upcoming` to see the next race and odds, then `/race bet <racer> <amount>` to wager.
+### Bet Types
 
-- You can only have **one bet per race**
-- Placing a new bet **refunds** your previous one
-- You must have enough coins in your wallet
+There are 5 bet types, from safe to moon-shot. You can place **one bet of each type per race** (up to 5 bets total).
+
+| Command | What You Pick | Win Condition | Typical Odds |
+|---------|--------------|---------------|-------------|
+| `/race bet-win <racer> <amount>` | 1 racer | Finishes 1st | 2x--10x |
+| `/race bet-place <racer> <amount>` | 1 racer | Finishes 1st or 2nd | 1.5x--4x |
+| `/race bet-exacta <1st> <2nd> <amount>` | 2 racers in order | Exact 1st and 2nd | 8x--50x |
+| `/race bet-trifecta <1st> <2nd> <3rd> <amount>` | 3 racers in order | Exact 1st, 2nd, 3rd | 30x--300x |
+| `/race bet-superfecta <1st> ... <6th> <amount>` | All 6 racers in order | Exact finish order | 200x--5000x |
+
+### How Betting Works
+
+1. Use `/race upcoming` to see the next race, the racers, and their win odds
+2. Place bets during the betting window (default 2 minutes) using any of the commands above
+3. If you change your mind, placing a new bet **of the same type** refunds the old one
+4. You can have a Win bet **and** a Place bet **and** an Exacta etc. all on the same race
+5. You must have enough coins in your wallet
+
+**Superfecta** requires a full field of 6 racers. If the race has fewer, the bet is rejected.
 
 ### Odds
-Odds are calculated based on each racer's power score relative to the field. The house takes a **10% edge**.
 
-- **Favorites** have low multipliers (e.g., 1.5x) -- safer but lower payout
-- **Longshots** have high multipliers (e.g., 8x) -- risky but huge payout
+Odds are calculated based on each racer's power score relative to the field using conditional probability. The house takes a **10% edge**.
+
+- **Win/Place** odds are based on each racer's chance of finishing in the top positions
+- **Exacta/Trifecta/Superfecta** odds use conditional probability chains -- the probability of your 1st pick winning, times the probability of your 2nd pick winning from the remaining field, and so on
+- The more positions you predict, the harder it is to hit, but the bigger the payout
 - Maps affect odds -- a racer's power is weighted by the map's segment types
+- No bet pays less than 1.1x
 
-If your racer wins, you receive `bet amount x payout multiplier`.
+### Examples
+
+- **Win bet**: Bet 100 on Thunderhoof at 3.2x. If Thunderhoof wins, you get 320 coins
+- **Place bet**: Bet 100 on Thunderhoof at 1.8x. If Thunderhoof finishes 1st or 2nd, you get 180 coins
+- **Exacta**: Bet 50 on Thunderhoof 1st, Blazeclaw 2nd at 12.5x. If they finish in that exact order, you get 625 coins
+- **Superfecta**: Bet 20 on the entire field in order at 1500x. If you nail every position, you get 30,000 coins
 
 ### Viewing Results
 Use `/race history` to see the last 5 race results (or specify a count).

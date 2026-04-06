@@ -875,7 +875,18 @@ class DerbyScheduler:
                 value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}",
                 inline=False,
             )
-        embed.set_footer(text="Use /race bet to place your bet!")
+        embed.add_field(
+            name="\U0001f3b0 Bet Types",
+            value=(
+                "**/race bet-win** \u2014 pick the winner\n"
+                "**/race bet-place** \u2014 pick 1st or 2nd\n"
+                "**/race bet-exacta** \u2014 exact 1st & 2nd\n"
+                "**/race bet-trifecta** \u2014 exact 1st, 2nd & 3rd\n"
+                "**/race bet-superfecta** \u2014 all 6 in exact order"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="One bet per type \u2014 up to 5 bets per race!")
         try:
             await channel.send(embed=embed)
         except (discord.Forbidden, discord.HTTPException):
