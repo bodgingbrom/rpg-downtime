@@ -36,6 +36,9 @@ class DummyGuild:
     def __init__(self, id: int = GUILD_ID) -> None:
         self.id = id
 
+    def get_member(self, member_id: int):
+        return types.SimpleNamespace(display_name=f"User#{member_id}")
+
 
 class DummyContext:
     def __init__(self, bot: commands.Bot) -> None:
@@ -2058,3 +2061,230 @@ async def test_stable_breed_validation_error(tmp_path: Path) -> None:
 
     assert ctx.sent
     assert "not female" in str(ctx.sent[0].get("content", "")).lower()
+
+
+# ---------------------------------------------------------------------------
+# /stable view
+# ---------------------------------------------------------------------------
+
+
+async def _make_view_env(tmp_path, **racer_kwargs):
+    """Set up bot, cog, session, racer for view tests."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    defaults = dict(
+        name="Thunderhoof", owner_id=ctx.author.id, guild_id=GUILD_ID,
+        speed=20, cornering=15, stamina=10,
+    )
+    defaults.update(racer_kwargs)
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(session, **defaults)
+    return cog, ctx, racer, sessionmaker
+
+
+@pytest.mark.asyncio
+async def test_stable_view_own_racer(tmp_path):
+    cog, ctx, racer, _ = await _make_view_env(tmp_path)
+
+    await cog.stable_view.callback(cog, ctx, racer.id)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Thunderhoof" in embed.title
+    field_names = [f.name for f in embed.fields]
+    assert "Stats" in field_names
+    assert "Temperament" in field_names
+    assert "Mood" in field_names
+    assert "Career" in field_names
+    assert "Rank" in field_names
+    assert "Description" in field_names
+
+
+@pytest.mark.asyncio
+async def test_stable_view_other_racer(tmp_path):
+    """Non-owner should be able to view any guild racer."""
+    cog, ctx, racer, _ = await _make_view_env(tmp_path, owner_id=999)
+
+    await cog.stable_view.callback(cog, ctx, racer.id)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Thunderhoof" in embed.title
+
+
+@pytest.mark.asyncio
+async def test_stable_view_not_found(tmp_path):
+    cog, ctx, _, _ = await _make_view_env(tmp_path)
+
+    await cog.stable_view.callback(cog, ctx, 99999)
+
+    assert ctx.sent
+    msg = str(ctx.sent[0].get("content", ""))
+    assert "not found" in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_stable_view_injured_racer(tmp_path):
+    cog, ctx, racer, sessionmaker = await _make_view_env(tmp_path)
+
+    async with sessionmaker() as session:
+        await repo.update_racer(
+            session, racer.id, injuries="Twisted ankle", injury_races_remaining=3
+        )
+
+    await cog.stable_view.callback(cog, ctx, racer.id)
+
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    # Red color for injured
+    assert embed.color.value == 0xE74C3C
+    field_names = [f.name for f in embed.fields]
+    assert "Injury" in field_names
+    injury_field = next(f for f in embed.fields if f.name == "Injury")
+    assert "Twisted ankle" in injury_field.value
+    assert "3" in injury_field.value
+
+
+@pytest.mark.asyncio
+async def test_stable_view_retired_racer(tmp_path):
+    cog, ctx, racer, sessionmaker = await _make_view_env(tmp_path)
+
+    async with sessionmaker() as session:
+        await repo.update_racer(
+            session, racer.id, retired=True, races_completed=30
+        )
+
+    await cog.stable_view.callback(cog, ctx, racer.id)
+
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    # Gold color for retired
+    assert embed.color.value == 0xF1C40F
+    career_field = next(f for f in embed.fields if f.name == "Career")
+    assert "Retired" in career_field.value
+
+
+@pytest.mark.asyncio
+async def test_stable_view_with_lineage(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    async with sessionmaker() as session:
+        sire = await repo.create_racer(
+            session, name="Papa", owner_id=1, guild_id=GUILD_ID
+        )
+        dam = await repo.create_racer(
+            session, name="Mama", owner_id=2, guild_id=GUILD_ID, gender="F"
+        )
+        foal = await repo.create_racer(
+            session, name="Baby", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            sire_id=sire.id, dam_id=dam.id,
+        )
+
+    await cog.stable_view.callback(cog, ctx, foal.id)
+
+    embed = ctx.sent[0].get("embed")
+    field_names = [f.name for f in embed.fields]
+    assert "Lineage" in field_names
+    lineage_field = next(f for f in embed.fields if f.name == "Lineage")
+    assert "Papa" in lineage_field.value
+    assert "Mama" in lineage_field.value
+
+
+# ---------------------------------------------------------------------------
+# /derby set-flavor (via settings set)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_set_flavor(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    await cog.settings_set.callback(cog, ctx, "racer_flavor", "cyberpunk racing lizards")
+
+    assert ctx.sent
+    msg = str(ctx.sent[0].get("content", ""))
+    assert "racer_flavor" in msg
+    assert "cyberpunk racing lizards" in msg
+
+    # Verify it was persisted
+    async with sessionmaker() as session:
+        gs = await repo.get_guild_settings(session, GUILD_ID)
+    assert gs is not None
+    assert gs.racer_flavor == "cyberpunk racing lizards"
+
+
+@pytest.mark.asyncio
+async def test_flavor_shows_in_settings(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    # Set the flavor first
+    await cog.settings_set.callback(cog, ctx, "racer_flavor", "enchanted warhorses")
+    ctx.sent.clear()
+
+    # View settings
+    await cog._show_settings(ctx)
+
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    field_names = [f.name for f in embed.fields]
+    assert "racer_flavor" in field_names
+    flavor_field = next(f for f in embed.fields if f.name == "racer_flavor")
+    assert "enchanted warhorses" in flavor_field.value

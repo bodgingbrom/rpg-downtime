@@ -2,6 +2,32 @@
 
 Your stable is where you manage all your owned racers. View it anytime with `/stable`.
 
+## Viewing Racer Profiles
+
+Use `/stable view <racer>` to see a racer's full profile. This works for **any** racer in the guild, not just your own. The profile shows:
+
+- **Stats** -- speed, cornering, and stamina with quality labels and decline penalties
+- **Temperament & Mood** -- current temperament and mood level
+- **Career** -- races completed, career length, and current phase (Peak, Declining, Retiring Soon, Retired)
+- **Rank** -- competitive tier (D through S)
+- **Lineage** -- sire and dam names (for bred racers)
+- **Foals** -- foal count (and maximum for females)
+- **Tournament Record** -- wins and top-3 placements
+- **Training** -- total sessions completed
+- **Injury** -- current injury and remaining recovery time (if any)
+- **Breed Cooldown** -- races remaining before eligible to breed again (if any)
+- **Description** -- a physical description of the racer (requires `racer_flavor` to be set by an admin)
+
+### Racer Flavor
+
+Admins can set what kind of creatures the racers are with the `racer_flavor` guild setting:
+
+```
+/derby settings set racer_flavor cyberpunk racing lizards
+```
+
+This is free-text -- it could be "enchanted warhorses", "clockwork beetles", "sentient go-karts", or whatever fits your server's theme. Once set, racer descriptions will be generated based on this flavor.
+
 ## Buying Racers
 
 ### Browsing

@@ -95,6 +95,12 @@ View current settings with `/derby settings`. Override any setting for your serv
 | `min_races_to_breed` | 5 | Races a racer needs before it can breed |
 | `max_foals_per_female` | 3 | Maximum foals a female can produce |
 
+### Flavor Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `racer_flavor` | (none) | Free-text creature theme for racer descriptions (e.g., "cyberpunk racing lizards") |
+
 ### Tournament Settings
 
 | Setting | Default | Description |
