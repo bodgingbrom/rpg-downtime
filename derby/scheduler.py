@@ -368,6 +368,7 @@ class DerbyScheduler:
                 "min_races_to_breed": ("INTEGER", "NULL"),
                 "max_foals_per_female": ("INTEGER", "NULL"),
                 "racer_flavor": ("TEXT", "NULL"),
+                "race_stat_window": ("INTEGER", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:
@@ -414,6 +415,68 @@ class DerbyScheduler:
             # Create the next race with pre-picked participants
             await self._create_next_race(guild.id)
 
+    @staticmethod
+    def _pick_competitive_field(
+        racers: list[models.Racer],
+        max_racers: int,
+        window_size: int,
+    ) -> list[models.Racer] | None:
+        """Pick a competitive field of racers within a stat-total window.
+
+        Owned racers in the window are auto-included (max 1 per owner).
+        Remaining slots are filled with unowned pool racers.
+
+        Tries three times with decreasing minimums (max_racers, 4, 2).
+        Returns ``None`` if even 2 racers can't be found.
+        """
+        totals = {r.id: r.speed + r.cornering + r.stamina for r in racers}
+        min_total = min(totals.values())
+        max_total = max(totals.values())
+
+        # Clamp window so it doesn't exceed the stat spread
+        effective_window = min(window_size, max_total - min_total)
+
+        thresholds = [max_racers, 4, 2]
+        for minimum in thresholds:
+            # Pick a random window start
+            if max_total - min_total <= effective_window:
+                window_start = min_total
+            else:
+                window_start = random.randint(
+                    min_total, max_total - effective_window
+                )
+            window_end = window_start + effective_window
+
+            in_window = [
+                r for r in racers
+                if window_start <= totals[r.id] <= window_end
+            ]
+
+            # Separate owned vs unowned
+            owned = [r for r in in_window if r.owner_id != 0]
+            unowned = [r for r in in_window if r.owner_id == 0]
+
+            # Deduplicate owners: pick 1 racer per owner
+            by_owner: dict[int, list[models.Racer]] = {}
+            for r in owned:
+                by_owner.setdefault(r.owner_id, []).append(r)
+            owner_picks = [random.choice(rs) for rs in by_owner.values()]
+
+            # If owned alone exceed max, randomly trim (still 1 per owner)
+            if len(owner_picks) > max_racers:
+                owner_picks = random.sample(owner_picks, max_racers)
+
+            remaining_slots = max_racers - len(owner_picks)
+            pool_picks = random.sample(
+                unowned, min(remaining_slots, len(unowned))
+            )
+
+            field = owner_picks + pool_picks
+            if len(field) >= minimum:
+                return field
+
+        return None
+
     async def _create_next_race(self, guild_id: int) -> models.Race | None:
         """Create a pending race for a guild and pre-pick its participants."""
         gs = await self._load_guild_settings(guild_id)
@@ -427,11 +490,20 @@ class DerbyScheduler:
             return None
 
         max_racers = self._resolve("max_racers_per_race", gs)
+        window_size = self._resolve("race_stat_window", gs)
+        participants = self._pick_competitive_field(
+            racers, max_racers, window_size
+        )
+
+        if participants is None:
+            self.bot.logger.warning(
+                "Not enough racers for a competitive race",
+                extra={"guild_id": guild_id},
+            )
+            return None
+
         async with self.sessionmaker() as session:
             race = await repo.create_race(session, guild_id=guild_id)
-            participants = random.sample(
-                racers, min(max_racers, len(racers))
-            )
             await repo.create_race_entries(
                 session, race.id, [r.id for r in participants]
             )
@@ -541,15 +613,18 @@ class DerbyScheduler:
         gs = await self._load_guild_settings(race.guild_id)
         max_racers = self._resolve("max_racers_per_race", gs)
         min_train = self._resolve("min_training_to_race", gs)
+        window_size = self._resolve("race_stat_window", gs)
         async with self.sessionmaker() as session:
             racers = await repo.get_guild_racers(
                 session, race.guild_id, min_training=min_train,
             )
             if len(racers) < 2:
                 return
-            participants = random.sample(
-                racers, min(max_racers, len(racers))
+            participants = self._pick_competitive_field(
+                racers, max_racers, window_size
             )
+            if participants is None:
+                return
             await repo.create_race_entries(
                 session, race.id, [r.id for r in participants]
             )

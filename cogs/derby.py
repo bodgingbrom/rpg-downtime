@@ -1315,6 +1315,7 @@ class Derby(commands.Cog, name="derby"):
         "min_races_to_breed",
         "max_foals_per_female",
         "racer_flavor",
+        "race_stat_window",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -1639,27 +1640,64 @@ class Stable(commands.Cog, name="stable"):
         await context.send(embed=embed)
 
     @stable.command(name="browse", description="Browse racers available for purchase")
-    async def stable_browse(self, context: Context) -> None:
+    @app_commands.describe(
+        rank="Filter by rank (D/C/B/A/S)",
+        gender="Filter by gender",
+        temperament="Filter by temperament",
+    )
+    @app_commands.choices(
+        rank=[app_commands.Choice(name=f"{r}-Rank", value=r) for r in ["D", "C", "B", "A", "S"]],
+        gender=[
+            app_commands.Choice(name="Male", value="M"),
+            app_commands.Choice(name="Female", value="F"),
+        ],
+        temperament=TEMPERAMENT_CHOICES,
+    )
+    async def stable_browse(
+        self,
+        context: Context,
+        rank: str | None = None,
+        gender: str | None = None,
+        temperament: str | None = None,
+    ) -> None:
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             racers = await repo.get_unowned_guild_racers(session, guild_id)
             gs = await repo.get_guild_settings(session, guild_id)
+        # Apply filters
+        if rank is not None:
+            racers = [r for r in racers if getattr(r, "rank", None) == rank]
+        if gender is not None:
+            racers = [r for r in racers if getattr(r, "gender", "M") == gender]
+        if temperament is not None:
+            racers = [r for r in racers if r.temperament == temperament]
         base = self._resolve("racer_buy_base", gs)
         mult = self._resolve("racer_buy_multiplier", gs)
         fem_mult = self._resolve("female_buy_multiplier", gs)
         if not racers:
-            await context.send("No racers available for purchase right now.", ephemeral=True)
+            await context.send("No racers match your filters.", ephemeral=True)
             return
-        embed = discord.Embed(title="Racers For Sale")
+        # Build title with active filters
+        filters = []
+        if rank:
+            filters.append(f"{rank}-Rank")
+        if gender:
+            filters.append("Male" if gender == "M" else "Female")
+        if temperament:
+            filters.append(temperament)
+        title = "Racers For Sale"
+        if filters:
+            title += f" — {' '.join(filters)}"
+        embed = discord.Embed(title=title)
         for r in racers[:25]:  # Discord embed limit
             price = logic.calculate_buy_price(r, base, mult, fem_mult)
             eff = logic.effective_stats(r)
             phase = logic.career_phase(r)
-            gender = _gender(getattr(r, "gender", "M"), "")
-            rank = logic.rank_label(getattr(r, "rank", None))
+            g = _gender(getattr(r, "gender", "M"), "")
+            rlabel = logic.rank_label(getattr(r, "rank", None))
             embed.add_field(
-                name=f"{gender} {r.name} [{rank}] — {price} coins",
+                name=f"{g} {r.name} [{rlabel}] — {price} coins",
                 value=(
                     f"Spd {_stat_band(eff['speed'])} / "
                     f"Cor {_stat_band(eff['cornering'])} / "

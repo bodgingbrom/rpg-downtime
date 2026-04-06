@@ -16,6 +16,14 @@ Races fire at configured times (default: 9:00 AM, 3:00 PM, and 9:00 PM UTC). You
 ### Participants
 Each race has up to **6 racers** drawn from the guild's pool (both owned and unowned). Racers must have completed enough training sessions to be eligible (default: 5).
 
+#### Competitive Matching
+Racers are selected from a **stat-total window** (default: 35 points) to ensure competitive races. The system picks a random window within the stat range, so you might see high B-ranks racing low A-ranks, but never D-ranks against S-ranks.
+
+- **Owned racers in range are auto-included** -- if your racer's stats fall in the window, they'll race
+- **One racer per owner** -- if you have multiple racers in range, one is chosen randomly
+- **Remaining slots** are filled from unowned pool racers in the same range
+- If 6 racers can't be found, the system retries for 4, then 2. If still not enough, the race is cancelled
+
 ### Race Simulation
 
 Races play out on a randomly selected **map** with multiple segments. Each segment type favors different stats:

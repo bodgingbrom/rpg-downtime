@@ -66,7 +66,8 @@ View current settings with `/derby settings`. Override any setting for your serv
 | `placement_prizes` | 50,30,20 | Coins for 1st, 2nd, 3rd place owners |
 | `channel_name` | (none) | Channel name for race announcements |
 | `min_training_to_race` | 5 | Training sessions required before a bred foal can race |
-| `min_pool_size` | 20 | Minimum unowned racers maintained in the pool |
+| `min_pool_size` | 40 | Minimum unowned racers maintained in the pool |
+| `race_stat_window` | 35 | Stat-total range for competitive race matching |
 
 ### Economy Settings
 
