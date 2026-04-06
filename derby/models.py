@@ -45,6 +45,7 @@ class Race(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished: Mapped[bool] = mapped_column(Boolean, default=False)
     winner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    placements: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class Bet(Base):
@@ -56,6 +57,8 @@ class Bet(Base):
     racer_id: Mapped[int] = mapped_column(ForeignKey("racers.id"), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     payout_multiplier: Mapped[float] = mapped_column(Float, default=2.0)
+    bet_type: Mapped[str] = mapped_column(String, default="win")
+    racer_ids: Mapped[str] = mapped_column(String, default="[]")
 
 
 class RaceEntry(Base):

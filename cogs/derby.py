@@ -798,13 +798,14 @@ class Derby(commands.Cog, name="derby"):
                 {"racers": participants}, seed=race.id, race_map=race_map
             )
             winner_id = result.placements[0] if result.placements else None
+            placements_json = json.dumps(result.placements)
             await repo.update_race(
-                session, race.id, finished=True, winner_id=winner_id
+                session, race.id, finished=True, winner_id=winner_id,
+                placements=placements_json,
             )
-            if winner_id is not None:
-                await logic.resolve_payouts(
-                    session, race.id, winner_id, guild_id=guild_id
-                )
+            await logic.resolve_payouts(
+                session, race.id, result.placements, guild_id=guild_id
+            )
             gs = await repo.get_guild_settings(session, guild_id)
             prize_list = logic.parse_placement_prizes(
                 resolve_guild_setting(gs, self.bot.settings, "placement_prizes")

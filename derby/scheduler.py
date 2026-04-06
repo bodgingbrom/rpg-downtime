@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 from datetime import datetime, time as dt_time, timezone
@@ -290,6 +291,28 @@ class DerbyScheduler:
                         "ALTER TABLE bets ADD COLUMN payout_multiplier FLOAT DEFAULT 2.0"
                     )
                 )
+            bet_migrations = {
+                "bet_type": ("VARCHAR", "'win'"),
+                "racer_ids": ("VARCHAR", "'[]'"),
+            }
+            for name, (col_type, default) in bet_migrations.items():
+                if name not in bet_columns:
+                    await conn.execute(
+                        text(
+                            f"ALTER TABLE bets ADD COLUMN {name} {col_type} DEFAULT {default}"
+                        )
+                    )
+
+            race_migrations = {
+                "placements": ("VARCHAR", "NULL"),
+            }
+            for name, (col_type, default) in race_migrations.items():
+                if name not in race_columns:
+                    await conn.execute(
+                        text(
+                            f"ALTER TABLE races ADD COLUMN {name} {col_type} DEFAULT {default}"
+                        )
+                    )
 
             # Add ownership/pool columns to guild_settings
             gs_columns = await conn.run_sync(
@@ -508,9 +531,11 @@ class DerbyScheduler:
             {"racers": participants}, race_id, race_map=race_map
         )
         winner_id = result.placements[0] if result.placements else None
+        placements_json = json.dumps(result.placements)
         async with self.sessionmaker() as session:
             await repo.update_race(
-                session, race_id, finished=True, winner_id=winner_id
+                session, race_id, finished=True, winner_id=winner_id,
+                placements=placements_json,
             )
             bets = (
                 (
@@ -521,10 +546,9 @@ class DerbyScheduler:
                 .scalars()
                 .all()
             )
-            if winner_id is not None:
-                await logic.resolve_payouts(
-                    session, race_id, winner_id, guild_id=guild_id
-                )
+            bet_results = await logic.resolve_payouts(
+                session, race_id, result.placements, guild_id=guild_id
+            )
             prize_list = logic.parse_placement_prizes(
                 self._resolve("placement_prizes", gs)
             )
@@ -579,9 +603,9 @@ class DerbyScheduler:
         )
         await self._post_results(guild_id, result.placements, names)
         await self._announce_bet_results(
-            guild_id, bets, winner_id, names
+            guild_id, bet_results, names
         )
-        await self._dm_payouts(bets, race_id, winner_id, names)
+        await self._dm_payouts(bet_results, race_id, names)
         if new_injuries:
             await self._announce_injuries(guild_id, new_injuries, names)
         if retirements:
@@ -648,15 +672,22 @@ class DerbyScheduler:
         except (discord.Forbidden, discord.HTTPException):
             return
 
+    BET_TYPE_LABELS = {
+        "win": "Win",
+        "place": "Place",
+        "exacta": "Exacta",
+        "trifecta": "Trifecta",
+        "superfecta": "Superfecta",
+    }
+
     async def _announce_bet_results(
         self,
         guild_id: int,
-        bets: list[models.Bet],
-        winner_id: int | None,
+        bet_results: list[dict],
         names: dict[int, str] | None = None,
     ) -> None:
         """Announce bet outcomes to the race channel."""
-        if not bets or winner_id is None:
+        if not bet_results:
             return
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -669,19 +700,18 @@ class DerbyScheduler:
         names = names or {}
         winners: list[str] = []
         losers: list[str] = []
-        for bet in bets:
-            racer_name = names.get(bet.racer_id, f"Racer {bet.racer_id}")
-            if bet.racer_id == winner_id:
-                payout = int(bet.amount * bet.payout_multiplier)
+        for br in bet_results:
+            label = self.BET_TYPE_LABELS.get(br["bet_type"], br["bet_type"])
+            racer_name = names.get(br["racer_id"], f"Racer {br['racer_id']}")
+            if br["won"]:
                 winners.append(
-                    f"<@{bet.user_id}> won **{payout} coins** "
-                    f"betting on **{racer_name}** "
-                    f"({bet.payout_multiplier:.1f}x)"
+                    f"<@{br['user_id']}> won **{br['payout']} coins** "
+                    f"({label} on **{racer_name}**)"
                 )
             else:
                 losers.append(
-                    f"<@{bet.user_id}> lost **{bet.amount} coins** "
-                    f"on **{racer_name}**"
+                    f"<@{br['user_id']}> lost **{br['amount']} coins** "
+                    f"({label} on **{racer_name}**)"
                 )
 
         if not winners and not losers:
@@ -709,30 +739,31 @@ class DerbyScheduler:
 
     async def _dm_payouts(
         self,
-        bets: list[models.Bet],
+        bet_results: list[dict],
         race_id: int,
-        winner_id: int | None,
         names: dict[int, str] | None = None,
     ) -> None:
-        if not bets or winner_id is None:
+        if not bet_results:
             return
         names = names or {}
-        for bet in bets:
-            user = self.bot.get_user(bet.user_id)
+        for br in bet_results:
+            user = self.bot.get_user(br["user_id"])
             if user is None:
                 continue
-            racer_name = names.get(bet.racer_id, f"Racer {bet.racer_id}")
-            if bet.racer_id == winner_id:
-                payout = int(bet.amount * bet.payout_multiplier)
+            label = self.BET_TYPE_LABELS.get(br["bet_type"], br["bet_type"])
+            racer_name = names.get(br["racer_id"], f"Racer {br['racer_id']}")
+            if br["won"]:
                 msg = (
-                    f"You won {payout} coins betting on "
-                    f"**{racer_name}** in race {race_id}! "
-                    f"({bet.payout_multiplier:.1f}x odds)"
+                    f"\U0001f3b0 **{label} Bet** \u2014 Race #{race_id}\n"
+                    f"\u2705 Won! {br['amount']} \u00d7 "
+                    f"{br['payout'] / br['amount']:.1f}x = "
+                    f"**{br['payout']} coins**"
                 )
             else:
                 msg = (
-                    f"You lost your bet of {bet.amount} coins on "
-                    f"**{racer_name}** in race {race_id}."
+                    f"\U0001f3b0 **{label} Bet** \u2014 Race #{race_id}\n"
+                    f"\u274c Lost **{br['amount']} coins** "
+                    f"on **{racer_name}**"
                 )
             try:
                 await user.send(msg)
