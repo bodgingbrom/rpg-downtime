@@ -41,7 +41,7 @@ One stat is randomly chosen to be **inherited** -- the foal's value for that sta
 The foal's career length is the **average of both parents' career lengths, plus or minus up to 5 races**, clamped between 25 and 40. Peak period is ~60% of career length.
 
 ### Rank
-The foal's rank is calculated from its base stats at creation and is **permanent** -- it never changes even if you train the foal's stats higher.
+The foal's rank is calculated from its base stats at creation. Rank is **recalculated whenever stats change**, so training a foal's stats can promote it into a higher tournament bracket.
 
 ## Training Requirement
 

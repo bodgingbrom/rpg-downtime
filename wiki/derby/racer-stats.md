@@ -79,11 +79,11 @@ During decline, effective stats drop by 1 for each race past peak. A racer with 
 
 Racers can get injured during races. Each stumble during a race gives a **5% chance** (nat 1 on d20) of injury. Last place gets one extra injury roll.
 
-Injuries last 2-4 races and give a **25% training failure chance** while active. Injuries heal automatically as races complete. The racer still participates in races while injured.
+Injuries last **2-8 races** (2d4) and give a **25% training failure chance** while active. Injuries heal automatically as races complete. The racer still participates in races while injured.
 
-## Rank (Permanent)
+## Rank
 
-Every racer is assigned a rank based on their **base stat total** (speed + cornering + stamina) at creation. Rank never changes, even if stats change through training.
+Every racer's rank is based on their **base stat total** (speed + cornering + stamina). Rank is **recalculated whenever stats change** -- through training or admin edits -- so a racer can climb into higher tournament brackets by training up their stats.
 
 | Rank | Stat Total | Description |
 |------|-----------|-------------|

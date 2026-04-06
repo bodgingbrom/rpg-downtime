@@ -31,7 +31,15 @@ You start with **3 stable slots**. You can buy more later with `/stable upgrade`
 
 Races happen automatically on a schedule (your server admin sets the times). Use `/race upcoming` to see the next race and the odds for each racer.
 
-Place a bet with `/race bet <racer> <amount>`. Higher odds mean a bigger payout but a lower chance of winning. You can only have one bet per race -- placing a new one refunds the old.
+Place bets using one of 5 bet types -- from simple win bets to moon-shot superfectas:
+
+- `/race bet-win <racer> <amount>` -- bet on a racer to finish 1st
+- `/race bet-place <racer> <amount>` -- bet on a racer to finish 1st or 2nd
+- `/race bet-exacta <1st> <2nd> <amount>` -- predict exact 1st and 2nd
+- `/race bet-trifecta <1st> <2nd> <3rd> <amount>` -- predict exact top 3
+- `/race bet-superfecta <1st> ... <6th> <amount>` -- predict the entire finish order
+
+You can place **one of each type** per race (up to 5 bets total). Placing a new bet of the same type refunds the old. See [Racing & Betting](racing.md) for full details and odds.
 
 ## Step 4: Train Your Racer
 

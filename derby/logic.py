@@ -323,13 +323,23 @@ def calculate_rank(speed: int, cornering: int, stamina: int) -> str:
 def assign_rank_if_needed(racer: models.Racer) -> str | None:
     """Set the racer's rank if not already assigned.  Returns the rank if
     newly assigned, or ``None`` if the racer already had one.
-
-    Rank is permanent — once set it never changes, even if stats change.
     """
     if racer.rank is not None:
         return None
     racer.rank = calculate_rank(racer.speed, racer.cornering, racer.stamina)
     return racer.rank
+
+
+def recalculate_rank(racer: models.Racer) -> str | None:
+    """Recalculate and update a racer's rank based on current stats.
+
+    Returns the new rank if it changed, or ``None`` if unchanged.
+    """
+    new_rank = calculate_rank(racer.speed, racer.cornering, racer.stamina)
+    if new_rank != racer.rank:
+        racer.rank = new_rank
+        return new_rank
+    return None
 
 
 def rank_label(rank: str | None) -> str:

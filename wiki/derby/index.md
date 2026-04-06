@@ -6,7 +6,7 @@ Downtime Derby is a fantasy racing game where players own, train, breed, and rac
 
 1. **Browse & Buy** a racer from the pool with `/stable browse` and `/stable buy`
 2. **Train** your racer's stats with `/stable train` to make them competitive
-3. **Bet** on daily races with `/race bet` to earn coins
+3. **Bet** on daily races with `/race bet-win` (and 4 other bet types) to earn coins
 4. **Breed** your racers to produce foals that can inherit the best traits
 5. **Enter Tournaments** with `/tournament register` for big prizes and accolades
 
@@ -28,8 +28,12 @@ Downtime Derby is a fantasy racing game where players own, train, breed, and rac
 | Command | Description |
 |---------|-------------|
 | `/race upcoming` | See the next race, odds, and racers |
-| `/race bet <racer> <amount>` | Bet on a racer in the next race |
-| `/race info <racer>` | Inspect a racer's full stats |
+| `/race bet-win <racer> <amount>` | Bet on a racer to win |
+| `/race bet-place <racer> <amount>` | Bet on a racer to finish top 2 |
+| `/race bet-exacta <1st> <2nd> <amount>` | Predict exact 1st and 2nd |
+| `/race bet-trifecta <1st> <2nd> <3rd> <amount>` | Predict exact top 3 |
+| `/race bet-superfecta <1st>...<6th> <amount>` | Predict entire finish order |
+| `/stable view <racer>` | View a racer's full profile |
 | `/race history` | View recent race results |
 | `/stable` | View your owned racers |
 | `/stable browse` | See racers available for purchase |
