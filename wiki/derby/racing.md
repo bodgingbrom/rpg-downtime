@@ -100,6 +100,21 @@ Odds are calculated based on each racer's power score relative to the field usin
 - **Exacta**: Bet 50 on Thunderhoof 1st, Blazeclaw 2nd at 12.5x. If they finish in that exact order, you get 625 coins
 - **Superfecta**: Bet 20 on the entire field in order at 1500x. If you nail every position, you get 30,000 coins
 
+### Free Bets (Broke Protection)
+
+If your balance hits **0 coins**, you can place one free house bet per race using any bet command with `amount=0`:
+```
+/race bet-win <racer> 0
+```
+
+- The house stakes 10 coins on your behalf
+- If you **win**, you get the full payout (10 x multiplier)
+- If you **lose**, nothing happens -- your balance stays at 0
+- Only **one free bet per race** (any type)
+- Only available when your balance is exactly 0
+
+This ensures you're never completely locked out of the game.
+
 ### Viewing Results
 Use `/race history` to see the last 5 race results (or specify a count).
 

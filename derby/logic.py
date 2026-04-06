@@ -1474,6 +1474,7 @@ async def resolve_payouts(
             "won": won,
             "racer_id": bet.racer_id,
             "racer_ids": racer_ids_json,
+            "is_free": getattr(bet, "is_free", False) or False,
         })
         await session.delete(bet)
 

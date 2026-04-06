@@ -287,6 +287,174 @@ async def test_race_bet_same_type_replaces(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_free_bet_when_broke(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+    # Create wallet with 0 balance
+    async with sessionmaker() as session:
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=0
+        )
+
+    await cog.race_bet_win(ctx, racer=racers[0].id, amount=0)
+
+    async with sessionmaker() as session:
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+        wallet = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
+
+    assert bet is not None
+    assert bet.is_free is True
+    assert bet.amount == 10
+    assert bet.bet_type == "win"
+    assert wallet.balance == 0  # Nothing deducted
+
+
+@pytest.mark.asyncio
+async def test_free_bet_rejected_with_coins(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+    # Default wallet has 100 coins
+
+    await cog.race_bet_win(ctx, racer=racers[0].id, amount=0)
+
+    async with sessionmaker() as session:
+        bets = (await session.execute(select(models.Bet))).scalars().all()
+
+    assert len(bets) == 0
+    assert any("balance is 0" in str(m.get("content", "")) for m in ctx.sent)
+
+
+@pytest.mark.asyncio
+async def test_free_bet_one_per_race(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+    async with sessionmaker() as session:
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=0
+        )
+
+    # First free bet succeeds
+    await cog.race_bet_win(ctx, racer=racers[0].id, amount=0)
+    # Second free bet (different type) should be rejected
+    ctx.sent.clear()
+    await cog.race_bet_place(ctx, racer=racers[0].id, amount=0)
+
+    async with sessionmaker() as session:
+        bets = (await session.execute(select(models.Bet))).scalars().all()
+
+    assert len(bets) == 1  # Only the first free bet
+    assert any("already have a free bet" in str(m.get("content", "")) for m in ctx.sent)
+
+
+@pytest.mark.asyncio
+async def test_negative_amount_rejected(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+
+    await cog.race_bet_win(ctx, racer=racers[0].id, amount=-5)
+
+    async with sessionmaker() as session:
+        bets = (await session.execute(select(models.Bet))).scalars().all()
+
+    assert len(bets) == 0
+    assert any("positive" in str(m.get("content", "")).lower() for m in ctx.sent)
+
+
+@pytest.mark.asyncio
+async def test_give_coins_positive(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=100,
+        retirement_threshold=65, bet_window=0, countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+    target = types.SimpleNamespace(id=99, mention="@TestTarget")
+
+    await cog.give_coins(ctx, user=target, amount=50)
+
+    async with sessionmaker() as session:
+        wallet = await wallet_repo.get_wallet(session, 99, GUILD_ID)
+    # Default 100 + 50 given = 150
+    assert wallet.balance == 150
+    assert any("150" in str(m.get("content", "")) for m in ctx.sent)
+
+
+@pytest.mark.asyncio
+async def test_give_coins_negative(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=100,
+        retirement_threshold=65, bet_window=0, countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+    target = types.SimpleNamespace(id=99, mention="@TestTarget")
+
+    await cog.give_coins(ctx, user=target, amount=-30)
+
+    async with sessionmaker() as session:
+        wallet = await wallet_repo.get_wallet(session, 99, GUILD_ID)
+    assert wallet.balance == 70
+
+
+@pytest.mark.asyncio
+async def test_give_coins_overdraft_rejected(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=100,
+        retirement_threshold=65, bet_window=0, countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+    target = types.SimpleNamespace(id=99, mention="@TestTarget")
+
+    await cog.give_coins(ctx, user=target, amount=-200)
+
+    async with sessionmaker() as session:
+        wallet = await wallet_repo.get_wallet(session, 99, GUILD_ID)
+    # Wallet was created with default 100, removal rejected, balance unchanged
+    assert wallet.balance == 100
+    assert any("Cannot remove" in str(m.get("content", "")) for m in ctx.sent)
+
+
+@pytest.mark.asyncio
+async def test_give_coins_zero_rejected(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"], default_wallet=100,
+        retirement_threshold=65, bet_window=0, countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Derby(bot)
+    await bot.add_cog(cog)
+    ctx = DummyContext(bot)
+    target = types.SimpleNamespace(id=99, mention="@TestTarget")
+
+    await cog.give_coins(ctx, user=target, amount=0)
+
+    assert any("must not be zero" in str(m.get("content", "")).lower() for m in ctx.sent)
+
+
+@pytest.mark.asyncio
 async def test_admin_check_requires_role() -> None:
     import checks as checks_module
 
