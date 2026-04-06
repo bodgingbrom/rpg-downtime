@@ -138,6 +138,42 @@ async def guild_racer_autocomplete(
     return choices
 
 
+async def viewable_racer_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[int]]:
+    """Autocomplete for /stable view — user's racers first, then others."""
+    sessionmaker = interaction.client.scheduler.sessionmaker
+    guild_id = interaction.guild_id or 0
+    user_id = interaction.user.id
+    guild = interaction.guild
+    async with sessionmaker() as session:
+        racers = await repo.get_guild_racers(
+            session, guild_id, eligible_only=False
+        )
+    # Split into owned vs others, filter by search
+    current_lower = current.lower()
+    owned = []
+    others = []
+    for r in racers:
+        if current_lower and current_lower not in r.name.lower():
+            continue
+        # Build a friendly label
+        if r.owner_id == user_id:
+            label = f"\u2b50 {r.name} (#{r.id})"
+            owned.append(app_commands.Choice(name=label[:100], value=r.id))
+        else:
+            if r.owner_id and r.owner_id != 0 and guild:
+                member = guild.get_member(r.owner_id)
+                owner_tag = member.display_name if member else "Owned"
+            elif r.owner_id and r.owner_id != 0:
+                owner_tag = "Owned"
+            else:
+                owner_tag = "Unowned"
+            label = f"{r.name} (#{r.id}) \u2014 {owner_tag}"
+            others.append(app_commands.Choice(name=label[:100], value=r.id))
+    return (owned + others)[:25]
+
+
 class Derby(commands.Cog, name="derby"):
     def __init__(self, bot) -> None:
         self.bot = bot
@@ -1378,7 +1414,7 @@ class Stable(commands.Cog, name="stable"):
 
     @stable.command(name="view", description="View a racer's full profile")
     @app_commands.describe(racer="Racer to view")
-    @app_commands.autocomplete(racer=guild_racer_autocomplete)
+    @app_commands.autocomplete(racer=viewable_racer_autocomplete)
     async def stable_view(self, context: Context, racer: int) -> None:
         await context.defer()
         guild_id = context.guild.id if context.guild else 0
