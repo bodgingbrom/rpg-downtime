@@ -186,6 +186,7 @@ class DerbyScheduler:
                 "tournament_wins": ("INTEGER", "0"),
                 "tournament_placements": ("INTEGER", "0"),
                 "description": ("TEXT", "NULL"),
+                "pool_expires_at": ("DATETIME", "NULL"),
             }
             for name, (col_type, default) in racer_migrations.items():
                 if name not in racer_columns:
@@ -223,6 +224,16 @@ class DerbyScheduler:
                         "WHERE ABS(RANDOM()) % 2 = 0"
                     )
                 )
+
+            # Backfill pool_expires_at for existing pool racers so they
+            # don't all expire at once — stagger across the next 24-48h.
+            await conn.execute(
+                text(
+                    "UPDATE racers SET pool_expires_at = "
+                    "datetime('now', '+' || (ABS(RANDOM()) % 1440 + 1440) || ' minutes') "
+                    "WHERE owner_id = 0 AND pool_expires_at IS NULL AND retired = 0"
+                )
+            )
 
             # Migrate guild_id=0 racers: duplicate per guild and fix references
             if "guild_id" not in racer_columns:
@@ -376,6 +387,7 @@ class DerbyScheduler:
         await self._init_db()
 
         for guild in self.bot.guilds:
+            await self._expire_pool_racers(guild.id)
             await self._replenish_pool(guild.id)
             # Find the pending race (created after the last race finished)
             async with self.sessionmaker() as session:
@@ -457,6 +469,28 @@ class DerbyScheduler:
                 continue
 
             await self._create_next_race(guild.id)
+
+    async def _expire_pool_racers(self, guild_id: int) -> int:
+        """Delete unowned pool racers whose expiry time has passed."""
+        async with self.sessionmaker() as session:
+            result = await session.execute(
+                select(models.Racer).where(
+                    models.Racer.guild_id == guild_id,
+                    models.Racer.owner_id == 0,
+                    models.Racer.pool_expires_at <= func.now(),
+                )
+            )
+            expired = result.scalars().all()
+            for racer in expired:
+                await session.delete(racer)
+            if expired:
+                await session.commit()
+                self.bot.logger.info(
+                    "Expired %d pool racers",
+                    len(expired),
+                    extra={"guild_id": guild_id},
+                )
+        return len(expired)
 
     async def _replenish_pool(self, guild_id: int) -> int:
         """Ensure the guild has at least ``min_pool_size`` unowned eligible racers.
