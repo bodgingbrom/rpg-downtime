@@ -174,9 +174,68 @@ async def viewable_racer_autocomplete(
     return (owned + others)[:25]
 
 
+HELP_CATEGORIES = {
+    "Getting Started": (
+        "New here? Start with these:\n"
+        "`/wallet` — Check your balance (auto-creates on first use)\n"
+        "`/stable browse` — See racers for sale\n"
+        "`/stable buy <racer>` — Purchase a racer\n"
+        "`/race upcoming` — See the next race and odds"
+    ),
+    "Racing & Betting": (
+        "Races run on a schedule. Bet before they start!\n"
+        "`/race upcoming` — See next race, racers, and odds\n"
+        "`/race bet-win <racer> <amount>` — Bet on 1st place\n"
+        "`/race bet-place <racer> <amount>` — Bet on top 2\n"
+        "`/race bet-exacta <1st> <2nd> <amount>` — Predict exact 1st & 2nd\n"
+        "`/race bet-trifecta <1st> <2nd> <3rd> <amount>` — Predict exact top 3\n"
+        "`/race bet-superfecta <1st>...<6th> <amount>` — Predict entire finish\n"
+        "`/race history` — Recent race results\n"
+        "*Broke? Bet with amount 0 for a free house bet!*"
+    ),
+    "Your Stable": (
+        "Manage your racers and make them competitive.\n"
+        "`/stable` — View your owned racers\n"
+        "`/stable view <racer>` — Full profile with training costs\n"
+        "`/stable train <racer> <stat>` — Boost a stat (+1)\n"
+        "`/stable rest <racer>` — Improve mood (+1, 15 coins)\n"
+        "`/stable feed <racer>` — Improve mood (+2, 30 coins)\n"
+        "`/stable sell <racer>` — Sell back to the pool\n"
+        "`/stable rename <racer> <name>` — Rename a racer\n"
+        "`/stable upgrade` — Buy an extra stable slot"
+    ),
+    "Breeding": (
+        "Breed racers to produce foals with inherited traits.\n"
+        "`/stable breed <male> <female>` — Breed two racers (25 coins)\n"
+        "Foals inherit 1 stat from parents, 2 are random.\n"
+        "Females can produce up to 3 foals. Males have no limit.\n"
+        "Foals need training sessions before they can race."
+    ),
+    "Tournaments": (
+        "Weekly brackets by rank with big prizes.\n"
+        "`/tournament register <racer>` — Enter next tournament\n"
+        "`/tournament cancel <racer>` — Withdraw registration\n"
+        "`/tournament list` — See pending tournaments\n"
+        "Ranks: D, C, B, A, S — train stats to rank up!"
+    ),
+}
+
+
 class Derby(commands.Cog, name="derby"):
     def __init__(self, bot) -> None:
         self.bot = bot
+
+    @commands.hybrid_command(name="help", description="Show Downtime Derby commands and tips")
+    async def help_command(self, context: Context) -> None:
+        embed = discord.Embed(
+            title="\U0001f3c7 Downtime Derby — Help",
+            description="Everything you need to race, bet, train, breed, and compete.",
+            color=0x3498DB,
+        )
+        for category, text in HELP_CATEGORIES.items():
+            embed.add_field(name=category, value=text, inline=False)
+        embed.set_footer(text="Use /stable view <racer> for detailed racer info and training costs.")
+        await context.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_group(name="race", description="Race commands")
     async def race(

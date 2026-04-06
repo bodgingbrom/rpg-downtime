@@ -58,10 +58,30 @@ class DummyContext:
 
 @pytest.mark.asyncio
 async def test_setup_adds_cog():
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     await derby_cog.setup(bot)
     assert "derby" in bot.cogs
     assert "stable" in bot.cogs
+
+
+@pytest.mark.asyncio
+async def test_help_command():
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    await cog.help_command.callback(cog, ctx)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Downtime Derby" in embed.title
+    field_names = [f.name for f in embed.fields]
+    assert "Getting Started" in field_names
+    assert "Racing & Betting" in field_names
+    assert "Your Stable" in field_names
+    assert "Breeding" in field_names
+    assert "Tournaments" in field_names
 
 
 @pytest.mark.asyncio
@@ -70,7 +90,7 @@ async def test_race_upcoming(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -106,7 +126,7 @@ async def _make_bet_env(tmp_path, num_racers=2):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -365,7 +385,7 @@ async def test_give_coins_positive(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=100,
         retirement_threshold=65, bet_window=0, countdown_total=0,
@@ -391,7 +411,7 @@ async def test_give_coins_negative(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=100,
         retirement_threshold=65, bet_window=0, countdown_total=0,
@@ -415,7 +435,7 @@ async def test_give_coins_overdraft_rejected(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=100,
         retirement_threshold=65, bet_window=0, countdown_total=0,
@@ -441,7 +461,7 @@ async def test_give_coins_zero_rejected(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=100,
         retirement_threshold=65, bet_window=0, countdown_total=0,
@@ -478,7 +498,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -509,7 +529,7 @@ async def test_racer_delete(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -541,7 +561,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -630,7 +650,7 @@ async def test_debug_race(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -664,7 +684,7 @@ async def test_race_history(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -716,7 +736,7 @@ async def test_add_racer_with_stats(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -754,7 +774,7 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -794,7 +814,7 @@ async def test_add_racer_default_name(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -825,7 +845,7 @@ async def test_add_racer_default_name_avoids_taken(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -858,7 +878,7 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -890,7 +910,7 @@ async def test_edit_racer_owner(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -924,7 +944,7 @@ async def test_race_info_bands(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -962,7 +982,7 @@ async def test_race_info_mood_label(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -993,7 +1013,7 @@ async def test_guild_settings_override_default_wallet(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -1028,7 +1048,7 @@ async def test_settings_show(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -1062,7 +1082,7 @@ async def test_stable_buy(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=200,
@@ -1106,7 +1126,7 @@ async def test_stable_buy_insufficient_funds(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=5,
@@ -1144,7 +1164,7 @@ async def test_stable_sell(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -1184,7 +1204,7 @@ async def test_stable_sell_not_owner(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=100)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1207,7 +1227,7 @@ async def test_stable_rename(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=100)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1234,7 +1254,7 @@ async def test_stable_rename_taken(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=100)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1265,7 +1285,7 @@ async def test_stable_train_success(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=200,
@@ -1309,7 +1329,7 @@ async def test_stable_train_not_owner(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1333,7 +1353,7 @@ async def test_stable_train_insufficient_funds(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=5,
         training_base=10, training_multiplier=2,
@@ -1368,7 +1388,7 @@ async def test_stable_train_max_stat(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1392,7 +1412,7 @@ async def test_stable_train_retired(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1417,7 +1437,7 @@ async def test_stable_train_failure(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=200,
         training_base=10, training_multiplier=2,
@@ -1467,7 +1487,7 @@ async def test_stable_train_mood_floor(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=200,
         training_base=10, training_multiplier=2,
@@ -1506,7 +1526,7 @@ async def test_stable_rest_success(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, rest_cost=15)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1541,7 +1561,7 @@ async def test_stable_rest_not_owner(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, rest_cost=15)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1565,7 +1585,7 @@ async def test_stable_rest_already_max(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, rest_cost=15)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1589,7 +1609,7 @@ async def test_stable_rest_insufficient_funds(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=5, rest_cost=15)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1621,7 +1641,7 @@ async def test_stable_feed_success(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, feed_cost=30)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1656,7 +1676,7 @@ async def test_stable_feed_caps_at_5(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, feed_cost=30)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1686,7 +1706,7 @@ async def test_stable_feed_retired(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, feed_cost=30)
     bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
     cog = derby_cog.Stable(bot)
@@ -1715,7 +1735,7 @@ async def test_stable_upgrade_success(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=200,
         max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
@@ -1750,7 +1770,7 @@ async def test_stable_upgrade_at_max(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=200,
         max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
@@ -1777,7 +1797,7 @@ async def test_stable_upgrade_insufficient_funds(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=50,
         max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
@@ -1804,7 +1824,7 @@ async def test_buy_respects_upgraded_slots(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=2000,
         racer_buy_base=20, racer_buy_multiplier=2,
@@ -1849,7 +1869,7 @@ async def test_stable_counts_retired_toward_limit(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=2000,
         racer_buy_base=20, racer_buy_multiplier=2,
@@ -1902,7 +1922,7 @@ async def test_stable_breed_success(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=200,
         max_racers_per_owner=6, breeding_fee=25,
@@ -1966,7 +1986,7 @@ async def test_stable_breed_insufficient_funds(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=10,
         max_racers_per_owner=6, breeding_fee=25,
@@ -2003,7 +2023,7 @@ async def test_stable_breed_same_racer_rejected(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=200,
         max_racers_per_owner=6, breeding_fee=25,
@@ -2032,7 +2052,7 @@ async def test_stable_breed_validation_error(tmp_path: Path) -> None:
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"], default_wallet=200,
         max_racers_per_owner=6, breeding_fee=25,
@@ -2074,7 +2094,7 @@ async def _make_view_env(tmp_path, **racer_kwargs):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2210,7 +2230,7 @@ async def test_stable_view_with_lineage(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2255,7 +2275,7 @@ async def test_set_flavor(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2287,7 +2307,7 @@ async def test_flavor_shows_in_settings(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2325,7 +2345,7 @@ async def _make_view_env_with_flavor(tmp_path, flavor="cyberpunk lizards", **rac
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2421,7 +2441,7 @@ async def test_add_racer_generates_description(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2459,7 +2479,7 @@ async def test_add_racer_no_flavor_no_description(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2485,7 +2505,7 @@ async def test_breed_generates_foal_description(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2533,7 +2553,7 @@ async def test_breed_no_parent_desc_no_foal_desc(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2579,7 +2599,7 @@ async def test_training_recalculates_rank(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,
@@ -2625,7 +2645,7 @@ async def test_training_no_rank_change(tmp_path):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(
         race_times=["12:00"],
         default_wallet=100,

@@ -38,7 +38,7 @@ class Economy(commands.Cog, name="economy"):
                 title="Welcome!",
                 description=(
                     f"You've been given **{wallet.balance} coins** to start.\n"
-                    f"Use `/race upcoming` to see the next race and `/race bet` to wager!"
+                    f"Use `/race upcoming` to see the next race and `/race bet-win` to wager!"
                 ),
             )
             await context.send(embed=embed)
