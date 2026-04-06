@@ -97,7 +97,7 @@ Keep your racers happy to avoid training failures and improve race performance.
 
 | Action | Command | Mood Change | Cost |
 |--------|---------|------------|------|
-| Rest | `/stable rest <racer>` | +1 | 15 coins |
+| Rest | `/stable rest <racer>` | +1 | Free |
 | Feed | `/stable feed <racer>` | +2 | 30 coins |
 
 Mood is capped at 5 (Great). If already at max, the command is rejected and you aren't charged.

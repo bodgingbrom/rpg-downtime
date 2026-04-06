@@ -198,7 +198,7 @@ HELP_CATEGORIES = {
         "`/stable` — View your owned racers\n"
         "`/stable view <racer>` — Full profile with training costs\n"
         "`/stable train <racer> <stat>` — Boost a stat (+1)\n"
-        "`/stable rest <racer>` — Improve mood (+1, 15 coins)\n"
+        "`/stable rest <racer>` — Improve mood (+1, free)\n"
         "`/stable feed <racer>` — Improve mood (+2, 30 coins)\n"
         "`/stable sell <racer>` — Sell back to the pool\n"
         "`/stable rename <racer> <name>` — Rename a racer\n"
@@ -2005,7 +2005,7 @@ class Stable(commands.Cog, name="stable"):
             embed.description = (embed.description or "") + f"\n*Failure chance was {pct}%*"
         await context.send(embed=embed)
 
-    @stable.command(name="rest", description="Rest a racer for 15 coins to improve their mood (+1)")
+    @stable.command(name="rest", description="Rest a racer to improve their mood (+1)")
     @app_commands.describe(racer="Your racer to rest")
     @app_commands.autocomplete(racer=owned_racer_autocomplete)
     async def stable_rest(self, context: Context, racer: int) -> None:

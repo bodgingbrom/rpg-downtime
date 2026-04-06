@@ -81,7 +81,7 @@ View current settings with `/derby settings`. Override any setting for your serv
 | `foal_sell_penalty` | 0.3 | Sell price floor multiplier at max foals |
 | `training_base` | 10 | Base cost for training |
 | `training_multiplier` | 2 | Per-stat-point training cost multiplier |
-| `rest_cost` | 15 | Cost to rest a racer (+1 mood) |
+| `rest_cost` | 0 | Cost to rest a racer (+1 mood) |
 | `feed_cost` | 30 | Cost to feed a racer (+2 mood) |
 
 ### Stable & Breeding Settings
