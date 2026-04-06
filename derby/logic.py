@@ -196,10 +196,13 @@ def _load_names() -> list[str]:
         return [line.strip() for line in f if line.strip()]
 
 
-def pick_name(taken: Set[str]) -> str | None:
-    """Pick a random name from the pool that isn't already taken."""
+def pick_name(taken: Set[str], guild_id: int = 0) -> str | None:
+    """Pick a random name from the base + flavor pool that isn't taken."""
+    from . import flavor_names as fn
+
     taken_lower = {n.lower() for n in taken}
-    available = [n for n in _load_names() if n.lower() not in taken_lower]
+    pool = _load_names() + fn.load_flavor_names(guild_id)
+    available = [n for n in pool if n.lower() not in taken_lower]
     if not available:
         return None
     return random.choice(available)
@@ -271,9 +274,9 @@ def generate_pool_racer(guild_id: int, taken_names: Set[str]) -> dict:
     Generates random stats, temperament, and a name from the name pool.
     Falls back to a numbered name if all pool names are taken.
     """
-    name = pick_name(taken_names)
+    name = pick_name(taken_names, guild_id)
     if name is None:
-        # All 100 names exhausted — use a fallback
+        # All names exhausted — use a fallback
         base = random.choice(_load_names())
         name = f"{base}-{random.randint(100, 999)}"
     career_length = random.randint(25, 40)

@@ -1401,6 +1401,28 @@ class Derby(commands.Cog, name="derby"):
             await repo.update_guild_settings(
                 session, guild_id, **{key: parsed}
             )
+
+        # Regenerate flavor names when racer_flavor changes
+        if key == "racer_flavor":
+            from derby import flavor_names
+            flavor_names.delete_flavor_names(guild_id)
+            if parsed != "reset" and parsed:
+                names = await flavor_names.generate_flavor_names(str(parsed))
+                if names:
+                    flavor_names.save_flavor_names(guild_id, names)
+                    await context.send(
+                        f"`{key}` set to **{parsed}** for this server. "
+                        f"Generated **{len(names)}** themed names.",
+                        ephemeral=True,
+                    )
+                    return
+                await context.send(
+                    f"`{key}` set to **{parsed}** for this server. "
+                    f"Flavor name generation failed — using base names only.",
+                    ephemeral=True,
+                )
+                return
+
         await context.send(
             f"`{key}` set to **{parsed}** for this server.", ephemeral=True
         )

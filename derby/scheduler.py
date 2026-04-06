@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from config import resolve_guild_setting
 from db_base import Base
-from . import commentary, logic, models
+from . import commentary, flavor_names, logic, models
 from . import repositories as repo
 
 
@@ -515,12 +515,47 @@ class DerbyScheduler:
         )
         return race
 
+    async def _ensure_flavor_names(self, guild_id: int) -> None:
+        """Generate flavor-specific racer names if needed.
+
+        If the guild has a ``racer_flavor`` set and no flavor names file
+        exists yet, call the LLM to generate themed names.
+        """
+        gs = await self._load_guild_settings(guild_id)
+        racer_flavor = self._resolve("racer_flavor", gs)
+        if not racer_flavor:
+            return
+
+        existing = flavor_names.load_flavor_names(guild_id)
+        if existing:
+            return  # already generated
+
+        self.bot.logger.info(
+            "Generating flavor names for theme: %s",
+            racer_flavor,
+            extra={"guild_id": guild_id},
+        )
+        names = await flavor_names.generate_flavor_names(racer_flavor)
+        if names:
+            flavor_names.save_flavor_names(guild_id, names)
+            self.bot.logger.info(
+                "Saved %d flavor names",
+                len(names),
+                extra={"guild_id": guild_id},
+            )
+        else:
+            self.bot.logger.warning(
+                "Failed to generate flavor names — using base names only",
+                extra={"guild_id": guild_id},
+            )
+
     async def _ensure_pending_races(self) -> None:
         """Ensure each guild has a pending race with participants.
 
         Called on startup so there's always something for /race upcoming.
         """
         for guild in self.bot.guilds:
+            await self._ensure_flavor_names(guild.id)
             await self._replenish_pool(guild.id)
 
             async with self.sessionmaker() as session:
