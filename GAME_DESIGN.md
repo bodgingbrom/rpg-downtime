@@ -122,13 +122,13 @@ Players can own up to 3 racers (configurable) and manage them through `/stable` 
 
 **Pool replenishment**: The system automatically generates unowned racers (from a pool of 200 names with random stats) to maintain at least 20 available for purchase per guild.
 
-### Retirement & Succession
+### Retirement
 
 Racers have a career length (25-40 races) and a peak phase (first 60%). After peak, stats decline linearly. When `races_completed >= career_length`, a racer retires:
 
 - Flagged as `retired` and removed from the active pool
-- A successor is created with the name `"{Original Name} II"`, the same owner, and randomized stats
-- Career length and peak are re-rolled for the successor
+- A channel announcement celebrates the racer's career
+- No successor is created -- owners must buy or breed new racers
 
 ### Odds
 
@@ -151,7 +151,7 @@ Odds are calculated from each racer's effective power score (stats + temperament
 | Mood system | **Working** | D20 rolls per segment, post-race drift, rest/feed commands |
 | Injury mechanics | **Working** | Injury risk from stumbles, recovery timer, race exclusion, training penalty |
 | Odds calculation | **Working** | Map-weighted power scores with mood bonus, 10% house edge |
-| Retirement & succession | **Working** | Career length system with peak/decline, successor creation on retirement |
+| Retirement | **Working** | Career length system with peak/decline, retirement announcement |
 | Racer ownership | **Working** | Buy/sell/rename, stat-based pricing, ownership limit |
 | Placement prizes | **Working** | Owners earn 50/30/20 coins for 1st/2nd/3rd place finishes |
 | Training | **Working** | `/stable train` — spend coins to improve stats, mood cost, failure chance |
@@ -167,7 +167,7 @@ Odds are calculated from each racer's effective power score (stats + temperament
 ### Planned Features
 
 - **Tournaments** — Multi-race events with cumulative scoring and bigger prize pools. Players enter racers into a tournament bracket spanning multiple races, with points awarded per placement.
-- **Lineage & breeding** — Track racer family trees beyond single-parent succession. Cross-breed two racers to create offspring with inherited stat tendencies from both parents.
+- **Lineage & breeding** — Track racer family trees. Cross-breed two racers to create offspring with inherited stat tendencies from both parents.
 
 ---
 

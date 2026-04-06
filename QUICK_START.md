@@ -103,11 +103,11 @@ When the scheduler (or force-start) runs a race, here's what happens:
 4. **Commentary** -- Live race events streamed to the channel
 5. **Results** -- Final placements with racer names
 6. **Payouts** -- Winners and losers get DMs with racer names and amounts
-7. **Retirements** -- If any racer retires (~5% chance per race), a channel announcement introduces their successor with stats
+7. **Retirements** -- If any racer retires (career complete), a channel announcement celebrates their career
 
 ### Tips
 
 - **Force-start for testing:** `/derby race force-start` skips the 2-minute bet window -- great for verifying setup
 - **Autocomplete everywhere:** All racer fields have searchable dropdowns -- no memorizing IDs
 - **Debug mode:** `/derby debug race [id]` dumps full JSON (bets, participants) as an ephemeral message only you can see
-- **Retirement rate:** ~5% per race per racer. Successors inherit 50-75% of parent stats and their temperament
+- **Retirement:** Racers retire when their career ends (25-40 races). No successors -- buy or breed replacements

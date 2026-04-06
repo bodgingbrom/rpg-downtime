@@ -156,9 +156,8 @@ async def test_retirement(tmp_path: Path) -> None:
             )
         ).scalars().all()
         retired = [r for r in racers if r.retired]
-        active = [r for r in racers if not r.retired]
         assert len(retired) == 2  # both original racers retired
-        assert len(active) == 2  # two successors created
+        assert len(racers) == 2  # no successors created
 
 
 @pytest.mark.asyncio

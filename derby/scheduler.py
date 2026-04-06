@@ -208,6 +208,22 @@ class DerbyScheduler:
                 )
             )
 
+            # One-time fix: randomly assign gender to pool racers that all
+            # defaulted to 'M' from the gender migration.  Only runs if
+            # zero females exist (the telltale sign of the default).
+            female_count = (
+                await conn.execute(
+                    text("SELECT COUNT(*) FROM racers WHERE gender = 'F'")
+                )
+            ).scalar()
+            if female_count == 0:
+                await conn.execute(
+                    text(
+                        "UPDATE racers SET gender = 'F' "
+                        "WHERE ABS(RANDOM()) % 2 = 0"
+                    )
+                )
+
             # Migrate guild_id=0 racers: duplicate per guild and fix references
             if "guild_id" not in racer_columns:
                 guild_rows = await conn.execute(
@@ -834,31 +850,13 @@ class DerbyScheduler:
         session: AsyncSession,
         racers: list[models.Racer],
         guild_id: int = 0,
-    ) -> list[tuple[models.Racer, models.Racer]]:
-        """Retire racers that have reached their career_length.
-
-        For each retired racer, create a new house racer with random
-        stats to keep the roster populated.
-        """
-        retirements: list[tuple[models.Racer, models.Racer]] = []
+    ) -> list[models.Racer]:
+        """Retire racers that have reached their career_length."""
+        retirements: list[models.Racer] = []
         for racer in racers:
             if racer.races_completed >= racer.career_length:
                 await repo.update_racer(session, racer.id, retired=True)
-                career_length = random.randint(25, 40)
-                successor = await repo.create_racer(
-                    session,
-                    name=f"{racer.name} II",
-                    owner_id=racer.owner_id,
-                    guild_id=guild_id,
-                    speed=random.randint(0, 31),
-                    cornering=random.randint(0, 31),
-                    stamina=random.randint(0, 31),
-                    temperament=random.choice(list(logic.TEMPERAMENTS.keys())),
-                    career_length=career_length,
-                    peak_end=int(career_length * 0.6),
-                    gender=random.choice(["M", "F"]),
-                )
-                retirements.append((racer, successor))
+                retirements.append(racer)
         return retirements
 
     async def _announce_race_start(
@@ -917,7 +915,7 @@ class DerbyScheduler:
     async def _announce_retirements(
         self,
         guild_id: int,
-        retirements: list[tuple[models.Racer, models.Racer]],
+        retirements: list[models.Racer],
     ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -925,25 +923,12 @@ class DerbyScheduler:
         channel = self._get_channel(guild)
         if channel is None:
             return
-        for old, new in retirements:
+        for racer in retirements:
             embed = discord.Embed(
-                title=f"Retirement: {old.name}",
+                title=f"\U0001f3c6 Retirement: {racer.name}",
                 description=(
-                    f"**{old.name}** retires after {old.races_completed} races! "
-                    f"A new racer, **{new.name}**, joins the roster."
+                    f"**{racer.name}** retires after {racer.races_completed} races!"
                 ),
-            )
-            embed.add_field(
-                name="Speed", value=logic.stat_band(new.speed), inline=True
-            )
-            embed.add_field(
-                name="Cornering", value=logic.stat_band(new.cornering), inline=True
-            )
-            embed.add_field(
-                name="Stamina", value=logic.stat_band(new.stamina), inline=True
-            )
-            embed.add_field(
-                name="Temperament", value=new.temperament, inline=True
             )
             try:
                 await channel.send(embed=embed)
