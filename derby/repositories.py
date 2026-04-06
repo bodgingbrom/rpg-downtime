@@ -80,6 +80,7 @@ async def create_racer(
     breed_cooldown: int = 0,
     training_count: int = 0,
     rank: str | None = None,
+    description: str | None = None,
 ) -> Racer:
     return await _create(
         session,
@@ -103,6 +104,7 @@ async def create_racer(
         breed_cooldown=breed_cooldown,
         training_count=training_count,
         rank=rank,
+        description=description,
     )
 
 

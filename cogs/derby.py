@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 import checks
 from config import resolve_guild_setting
-from derby import commentary, logic, models
+from derby import commentary, descriptions, logic, models
 from derby import repositories as repo
 from economy import repositories as wallet_repo
 
@@ -755,6 +755,23 @@ class Derby(commands.Cog, name="derby"):
                 rank=rank,
                 **stats,
             )
+            # Generate description if flavor is set
+            gs = await repo.get_guild_settings(session, guild_id)
+            flavor = getattr(gs, "racer_flavor", None) if gs else None
+            if flavor:
+                desc = await descriptions.generate_description(
+                    name=racer.name,
+                    speed=racer.speed,
+                    cornering=racer.cornering,
+                    stamina=racer.stamina,
+                    temperament=racer.temperament,
+                    gender=racer.gender,
+                    flavor=flavor,
+                )
+                if desc:
+                    racer.description = desc
+                    await session.commit()
+                    await session.refresh(racer)
         embed = discord.Embed(title=f"New Racer: {racer.name} (#{racer.id})")
         embed.add_field(
             name="Owner",
@@ -1379,6 +1396,23 @@ class Stable(commands.Cog, name="stable"):
             else:
                 owner_name = "Unowned"
 
+            # Lazy-generate description if missing and flavor is set
+            flavor = getattr(gs, "racer_flavor", None) if gs else None
+            if racer_obj.description is None and flavor:
+                desc = await descriptions.generate_description(
+                    name=racer_obj.name,
+                    speed=racer_obj.speed,
+                    cornering=racer_obj.cornering,
+                    stamina=racer_obj.stamina,
+                    temperament=racer_obj.temperament,
+                    gender=racer_obj.gender,
+                    flavor=flavor,
+                )
+                if desc:
+                    racer_obj.description = desc
+                    await session.commit()
+                    await session.refresh(racer_obj)
+
         # Build embed
         gender_emoji = logic.GENDER_LABELS.get(racer_obj.gender, "")
         if racer_obj.retired:
@@ -1470,7 +1504,12 @@ class Stable(commands.Cog, name="stable"):
             )
 
         # Description
-        desc = racer_obj.description or "No description yet."
+        if racer_obj.description:
+            desc = racer_obj.description
+        elif flavor:
+            desc = "No description yet."
+        else:
+            desc = "Set a racer flavor with `/derby settings set racer_flavor <text>` to generate descriptions."
         embed.add_field(name="Description", value=desc, inline=False)
 
         embed.set_footer(text=f"ID: {racer_obj.id} | Owner: {owner_name}")
@@ -2130,6 +2169,23 @@ class Stable(commands.Cog, name="stable"):
             # Breed!
             kwargs = logic.breed_racer(sire, dam, guild_id)
             foal = await repo.create_racer(session, **kwargs)
+
+            # Generate foal description if both parents have descriptions and flavor is set
+            flavor = getattr(gs, "racer_flavor", None) if gs else None
+            if flavor and sire.description and dam.description:
+                foal_desc = await descriptions.generate_description(
+                    name=foal.name,
+                    speed=foal.speed,
+                    cornering=foal.cornering,
+                    stamina=foal.stamina,
+                    temperament=foal.temperament,
+                    gender=foal.gender,
+                    flavor=flavor,
+                    sire_desc=sire.description,
+                    dam_desc=dam.description,
+                )
+                if foal_desc:
+                    foal.description = foal_desc
 
             wallet.balance -= fee
             sire.breed_cooldown = cooldown
