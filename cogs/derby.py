@@ -676,7 +676,7 @@ class Derby(commands.Cog, name="derby"):
 
     @map_group.command(name="list", description="List available race maps")
     async def map_list(self, context: Context) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         maps = logic.load_all_maps()
         if not maps:
             await context.send("No maps available.", ephemeral=True)
@@ -695,7 +695,7 @@ class Derby(commands.Cog, name="derby"):
     @map_group.command(name="view", description="View a race map's segments")
     @app_commands.describe(name="Map name")
     async def map_view(self, context: Context, name: str) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         maps = logic.load_all_maps()
         race_map = next((m for m in maps if m.name.lower() == name.lower()), None)
         if race_map is None:
@@ -803,7 +803,7 @@ class Derby(commands.Cog, name="derby"):
         stamina: app_commands.Range[int, 0, 31] | None = None,
         temperament: str | None = None,
     ) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         if name is None:
             async with self.bot.scheduler.sessionmaker() as session:
@@ -913,6 +913,7 @@ class Derby(commands.Cog, name="derby"):
         stamina: app_commands.Range[int, 0, 31] | None = None,
         temperament: str | None = None,
     ) -> None:
+        await context.defer(ephemeral=True)
         updates: dict[str, int | str] = {}
         if name is not None:
             updates["name"] = name
@@ -972,7 +973,7 @@ class Derby(commands.Cog, name="derby"):
     )
     @checks.has_role("Race Admin")
     async def start_schedule(self, context: Context) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         scheduler = self.bot.scheduler
         if scheduler.task and scheduler.task.is_running():
             await context.send("Race schedule is already running.", ephemeral=True)
@@ -988,7 +989,7 @@ class Derby(commands.Cog, name="derby"):
     )
     @checks.has_role("Race Admin")
     async def stop_schedule(self, context: Context) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         scheduler = self.bot.scheduler
         if not scheduler.task or not scheduler.task.is_running():
             await context.send("Race schedule is not running.", ephemeral=True)
@@ -999,7 +1000,7 @@ class Derby(commands.Cog, name="derby"):
     @derby_group.command(name="cancel_race", description="Cancel the next race")
     @checks.has_role("Race Admin")
     async def cancel_race(self, context: Context) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             result = await session.execute(
@@ -1026,7 +1027,7 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.describe(racer="Racer to delete")
     @app_commands.autocomplete(racer=racer_autocomplete)
     async def racer_delete(self, context: Context, racer: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
             if racer_obj is None:
@@ -1041,7 +1042,7 @@ class Derby(commands.Cog, name="derby"):
     async def racer_injure(
         self, context: Context, racer: int, description: str = "Injured"
     ) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         recovery = random.randint(1, 4) + random.randint(1, 4)  # 2d4
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
@@ -1065,7 +1066,7 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.describe(racer="Racer to heal")
     @app_commands.autocomplete(racer=racer_autocomplete)
     async def racer_heal(self, context: Context, racer: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
             if racer_obj is None:
@@ -1098,7 +1099,7 @@ class Derby(commands.Cog, name="derby"):
     async def race_force_start(
         self, context: Context, race_id: int | None = None
     ) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             if race_id is None:
@@ -1349,7 +1350,7 @@ class Derby(commands.Cog, name="derby"):
     @checks.has_role("Race Admin")
     @app_commands.describe(key="Setting name", value="New value (use 'reset' to clear)")
     async def settings_set(self, context: Context, key: str, value: str) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         if key not in self.SETTING_KEYS:
             await context.send(
                 f"Unknown setting `{key}`. Valid: {', '.join(self.SETTING_KEYS)}",
