@@ -56,7 +56,7 @@ Mood affects race performance through a hidden **Race Day Form** modifier and d2
 
 - **After a race:** Winner gets +1 mood, last place gets -1 mood, everyone else drifts toward Normal (3)
 - **Training** lowers mood by 1
-- **Resting** (`/stable rest`) raises mood by 1 (costs 15 coins)
+- **Resting** (`/stable rest`) raises mood by 1 (free)
 - **Feeding** (`/stable feed`) raises mood by 2 (costs 30 coins)
 - **Winning a tournament:** 1st place gets mood set to 5, 2nd-4th get +1
 
