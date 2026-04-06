@@ -97,9 +97,8 @@ async def test_race_upcoming(tmp_path: Path) -> None:
     assert fields[0].name == "Race ID" and fields[0].value == str(race.id)
 
 
-@pytest.mark.asyncio
-async def test_race_bet(tmp_path: Path) -> None:
-
+async def _make_bet_env(tmp_path, num_racers=2):
+    """Helper: create a bot, cog, context, race, and racers for bet tests."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path/'db.sqlite'}")
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as conn:
@@ -118,33 +117,173 @@ async def test_race_bet(tmp_path: Path) -> None:
     ctx = DummyContext(bot)
     ctx.author = types.SimpleNamespace(id=5)
 
+    racers = []
     async with sessionmaker() as session:
         race = await repo.create_race(session, guild_id=GUILD_ID)
-        racer1 = await repo.create_racer(
-            session, name="A", owner_id=1, guild_id=GUILD_ID
-        )
-        racer2 = await repo.create_racer(
-            session, name="B", owner_id=2, guild_id=GUILD_ID
-        )
-        await repo.create_race_entries(session, race.id, [racer1.id, racer2.id])
+        for i in range(num_racers):
+            r = await repo.create_racer(
+                session, name=chr(65 + i), owner_id=i + 1, guild_id=GUILD_ID,
+                speed=20 - i * 3, cornering=15, stamina=15,
+            )
+            racers.append(r)
+        await repo.create_race_entries(session, race.id, [r.id for r in racers])
 
-    await cog.race_bet(ctx, racer=racer1.id, amount=20)
+    return cog, ctx, sessionmaker, race, racers
+
+
+@pytest.mark.asyncio
+async def test_race_bet_win(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+
+    await cog.race_bet_win(ctx, racer=racers[0].id, amount=20)
 
     async with sessionmaker() as session:
         wallet = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
         bet = (await session.execute(select(models.Bet))).scalars().first()
 
     assert wallet.balance == 80
-    assert bet.racer_id == racer1.id and bet.amount == 20
+    assert bet.racer_id == racers[0].id and bet.amount == 20
+    assert bet.bet_type == "win"
 
-    await cog.race_bet(ctx, racer=racer2.id, amount=30)
+    # Replacing a win bet refunds the old one
+    await cog.race_bet_win(ctx, racer=racers[1].id, amount=30)
 
     async with sessionmaker() as session:
         wallet = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
         bet = (await session.execute(select(models.Bet))).scalars().first()
 
     assert wallet.balance == 70
-    assert bet.racer_id == racer2.id and bet.amount == 30
+    assert bet.racer_id == racers[1].id and bet.amount == 30
+
+
+@pytest.mark.asyncio
+async def test_race_bet_place(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+
+    await cog.race_bet_place(ctx, racer=racers[0].id, amount=25)
+
+    async with sessionmaker() as session:
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+
+    assert bet.bet_type == "place"
+    assert bet.amount == 25
+
+
+@pytest.mark.asyncio
+async def test_race_bet_exacta(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+
+    await cog.race_bet_exacta(ctx, first=racers[0].id, second=racers[1].id, amount=15)
+
+    async with sessionmaker() as session:
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+
+    assert bet.bet_type == "exacta"
+    import json
+    picks = json.loads(bet.racer_ids)
+    assert picks == [racers[0].id, racers[1].id]
+
+
+@pytest.mark.asyncio
+async def test_race_bet_trifecta(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path, num_racers=4)
+
+    await cog.race_bet_trifecta(
+        ctx, first=racers[0].id, second=racers[1].id,
+        third=racers[2].id, amount=10,
+    )
+
+    async with sessionmaker() as session:
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+
+    assert bet.bet_type == "trifecta"
+    import json
+    picks = json.loads(bet.racer_ids)
+    assert picks == [racers[0].id, racers[1].id, racers[2].id]
+
+
+@pytest.mark.asyncio
+async def test_race_bet_superfecta(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path, num_racers=6)
+
+    await cog.race_bet_superfecta(
+        ctx,
+        first=racers[0].id, second=racers[1].id, third=racers[2].id,
+        fourth=racers[3].id, fifth=racers[4].id, sixth=racers[5].id,
+        amount=5,
+    )
+
+    async with sessionmaker() as session:
+        bet = (await session.execute(select(models.Bet))).scalars().first()
+
+    assert bet.bet_type == "superfecta"
+
+
+@pytest.mark.asyncio
+async def test_race_bet_superfecta_rejected_small_field(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path, num_racers=4)
+
+    await cog.race_bet_superfecta(
+        ctx,
+        first=racers[0].id, second=racers[1].id, third=racers[2].id,
+        fourth=racers[3].id, fifth=999, sixth=998,
+        amount=5,
+    )
+
+    # Field size check fires before pick validation
+    async with sessionmaker() as session:
+        bets = (await session.execute(select(models.Bet))).scalars().all()
+    assert len(bets) == 0
+    assert any("6 racers" in str(m.get("content", "")) for m in ctx.sent)
+
+
+@pytest.mark.asyncio
+async def test_race_bet_duplicate_picks_rejected(tmp_path: Path) -> None:
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+
+    await cog.race_bet_exacta(
+        ctx, first=racers[0].id, second=racers[0].id, amount=10,
+    )
+
+    async with sessionmaker() as session:
+        bets = (await session.execute(select(models.Bet))).scalars().all()
+    assert len(bets) == 0
+    assert any("once" in str(m.get("content", "")).lower() for m in ctx.sent)
+
+
+@pytest.mark.asyncio
+async def test_race_bet_one_per_type_allowed(tmp_path: Path) -> None:
+    """Players can have a win AND a place bet simultaneously."""
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+
+    await cog.race_bet_win(ctx, racer=racers[0].id, amount=10)
+    await cog.race_bet_place(ctx, racer=racers[0].id, amount=10)
+
+    async with sessionmaker() as session:
+        bets = (await session.execute(select(models.Bet))).scalars().all()
+
+    assert len(bets) == 2
+    bet_types = {b.bet_type for b in bets}
+    assert bet_types == {"win", "place"}
+
+
+@pytest.mark.asyncio
+async def test_race_bet_same_type_replaces(tmp_path: Path) -> None:
+    """Placing a second win bet refunds the first and replaces it."""
+    cog, ctx, sessionmaker, race, racers = await _make_bet_env(tmp_path)
+
+    await cog.race_bet_win(ctx, racer=racers[0].id, amount=20)
+    await cog.race_bet_win(ctx, racer=racers[1].id, amount=30)
+
+    async with sessionmaker() as session:
+        bets = (await session.execute(select(models.Bet))).scalars().all()
+        wallet = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
+
+    assert len(bets) == 1
+    assert bets[0].racer_id == racers[1].id
+    assert bets[0].amount == 30
+    # Started with 100, first bet took 20, refund gave back 20, second took 30
+    assert wallet.balance == 70
 
 
 @pytest.mark.asyncio

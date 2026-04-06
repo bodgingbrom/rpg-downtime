@@ -196,12 +196,16 @@ class Derby(commands.Cog, name="derby"):
         embed.set_footer(text="Use /race bet to place your bet!")
         await context.send(embed=embed)
 
-    @race.command(name="bet", description="Bet on the next race")
-    @app_commands.describe(racer="Racer to bet on", amount="Amount to bet")
-    @app_commands.autocomplete(racer=racer_autocomplete)
-    async def race_bet(self, context: Context, racer: int, amount: int) -> None:
-        await context.defer()
-        guild_id = context.guild.id if context.guild else 0
+    BET_TYPE_LABELS = {
+        "win": "Win",
+        "place": "Place",
+        "exacta": "Exacta",
+        "trifecta": "Trifecta",
+        "superfecta": "Superfecta",
+    }
+
+    async def _find_next_race(self, guild_id: int):
+        """Return (race, racers) for the next bettable race, or (None, [])."""
         async with self.bot.scheduler.sessionmaker() as session:
             race_result = await session.execute(
                 select(models.Race)
@@ -212,26 +216,62 @@ class Derby(commands.Cog, name="derby"):
                 .order_by(models.Race.id)
             )
             races = race_result.scalars().all()
-            # Skip races already being run by the scheduler so the bet
-            # lands on the same race that force-start would pick.
             active = self.bot.scheduler.active_races
             race = next((r for r in races if r.id not in active), None)
             if race is None:
-                await context.send("No race available.", ephemeral=True)
-                return
+                return None, []
             racers = await repo.get_race_participants(session, race.id)
-        if not racers:
+        return race, racers
+
+    async def _place_bet(
+        self,
+        context: Context,
+        bet_type: str,
+        picks: list[int],
+        amount: int,
+    ) -> None:
+        """Shared logic for all bet commands."""
+        guild_id = context.guild.id if context.guild else 0
+        race, racers = await self._find_next_race(guild_id)
+        if race is None or not racers:
             await context.send("No race available.", ephemeral=True)
             return
-        if racer not in [r.id for r in racers]:
+
+        # Superfecta requires exactly 6 racers in the field
+        if bet_type == "superfecta" and len(racers) < 6:
             await context.send(
-                "That racer isn't in the next race.", ephemeral=True
+                "Superfecta requires exactly 6 racers in the field.",
+                ephemeral=True,
             )
             return
-        racer_name = next((r.name for r in racers if r.id == racer), f"Racer {racer}")
-        odds = logic.calculate_odds(racers, [], 0.1)
-        multiplier = odds.get(racer, 0)
+
+        racer_ids_in_race = [r.id for r in racers]
+
+        # Validate all picks are in the race
+        for pick in picks:
+            if pick not in racer_ids_in_race:
+                await context.send(
+                    "That racer isn't in the next race.", ephemeral=True
+                )
+                return
+
+        # Validate no duplicate picks
+        if len(picks) != len(set(picks)):
+            await context.send(
+                "Each racer can only appear once in your picks.", ephemeral=True
+            )
+            return
+
+        multiplier = logic.calculate_bet_odds(racers, None, 0.1, bet_type, picks)
         payout = int(amount * multiplier)
+        racer_ids_json = json.dumps(picks)
+        primary_racer_id = picks[0]
+        pick_names = [
+            next((r.name for r in racers if r.id == p), f"Racer {p}")
+            for p in picks
+        ]
+        label = self.BET_TYPE_LABELS.get(bet_type, bet_type)
+
         async with self.bot.scheduler.sessionmaker() as session:
             wallet = await wallet_repo.get_wallet(
                 session, context.author.id, guild_id
@@ -247,19 +287,18 @@ class Derby(commands.Cog, name="derby"):
                     guild_id=guild_id,
                     balance=default_bal,
                 )
+            # Check for existing bet of the SAME type
             bet_result = await session.execute(
                 select(models.Bet)
-                .where(models.Bet.race_id == race.id)
-                .where(models.Bet.user_id == context.author.id)
+                .where(
+                    models.Bet.race_id == race.id,
+                    models.Bet.user_id == context.author.id,
+                    models.Bet.bet_type == bet_type,
+                )
             )
             existing_bet = bet_result.scalars().first()
-            old_name = None
             old_amount = 0
             if existing_bet is not None:
-                old_name = next(
-                    (r.name for r in racers if r.id == existing_bet.racer_id),
-                    f"Racer {existing_bet.racer_id}",
-                )
                 old_amount = existing_bet.amount
                 wallet.balance += existing_bet.amount
             if wallet.balance < amount:
@@ -273,29 +312,108 @@ class Derby(commands.Cog, name="derby"):
                     session,
                     race_id=race.id,
                     user_id=context.author.id,
-                    racer_id=racer,
+                    racer_id=primary_racer_id,
                     amount=amount,
                     payout_multiplier=multiplier,
+                    bet_type=bet_type,
+                    racer_ids=racer_ids_json,
                 )
             else:
                 await repo.update_bet(
                     session,
                     existing_bet.id,
-                    racer_id=racer,
+                    racer_id=primary_racer_id,
                     amount=amount,
                     payout_multiplier=multiplier,
+                    racer_ids=racer_ids_json,
                 )
-        if old_name is not None:
+
+        # Build pick description
+        if bet_type in ("win", "place"):
+            pick_desc = f"**{pick_names[0]}**"
+        else:
+            pick_desc = " \u2192 ".join(f"**{n}**" for n in pick_names)
+
+        if old_amount > 0:
             await context.send(
-                f"**Race {race.id}** \u2014 Bet changed from **{old_name}** "
-                f"({old_amount} coins refunded) to **{racer_name}** for "
-                f"{amount} coins ({multiplier:.1f}x odds \u2014 win pays {payout})"
+                f"\U0001f3b0 **{label}** \u2014 Race {race.id}\n"
+                f"Bet changed ({old_amount} coins refunded) to {pick_desc} "
+                f"for {amount} coins ({multiplier:.1f}x \u2014 win pays {payout})"
             )
         else:
             await context.send(
-                f"**Race {race.id}** \u2014 Bet placed on **{racer_name}** for "
-                f"{amount} coins ({multiplier:.1f}x odds \u2014 win pays {payout})"
+                f"\U0001f3b0 **{label}** \u2014 Race {race.id}\n"
+                f"Bet placed on {pick_desc} for {amount} coins "
+                f"({multiplier:.1f}x \u2014 win pays {payout})"
             )
+
+    @race.command(name="bet-win", description="Bet on a racer to win (1st place)")
+    @app_commands.describe(racer="Racer to bet on", amount="Amount to bet")
+    @app_commands.autocomplete(racer=racer_autocomplete)
+    async def race_bet_win(self, context: Context, racer: int, amount: int) -> None:
+        await context.defer()
+        await self._place_bet(context, "win", [racer], amount)
+
+    @race.command(name="bet-place", description="Bet on a racer to place (1st or 2nd)")
+    @app_commands.describe(racer="Racer to bet on", amount="Amount to bet")
+    @app_commands.autocomplete(racer=racer_autocomplete)
+    async def race_bet_place(self, context: Context, racer: int, amount: int) -> None:
+        await context.defer()
+        await self._place_bet(context, "place", [racer], amount)
+
+    @race.command(name="bet-exacta", description="Bet on exact 1st and 2nd place")
+    @app_commands.describe(
+        first="Racer to finish 1st", second="Racer to finish 2nd",
+        amount="Amount to bet",
+    )
+    @app_commands.autocomplete(first=racer_autocomplete, second=racer_autocomplete)
+    async def race_bet_exacta(
+        self, context: Context, first: int, second: int, amount: int
+    ) -> None:
+        await context.defer()
+        await self._place_bet(context, "exacta", [first, second], amount)
+
+    @race.command(name="bet-trifecta", description="Bet on exact 1st, 2nd, and 3rd place")
+    @app_commands.describe(
+        first="Racer to finish 1st", second="Racer to finish 2nd",
+        third="Racer to finish 3rd", amount="Amount to bet",
+    )
+    @app_commands.autocomplete(
+        first=racer_autocomplete, second=racer_autocomplete,
+        third=racer_autocomplete,
+    )
+    async def race_bet_trifecta(
+        self, context: Context, first: int, second: int, third: int, amount: int
+    ) -> None:
+        await context.defer()
+        await self._place_bet(context, "trifecta", [first, second, third], amount)
+
+    @race.command(
+        name="bet-superfecta",
+        description="Bet on the exact finish order of all 6 racers",
+    )
+    @app_commands.describe(
+        first="Racer to finish 1st", second="Racer to finish 2nd",
+        third="Racer to finish 3rd", fourth="Racer to finish 4th",
+        fifth="Racer to finish 5th", sixth="Racer to finish 6th",
+        amount="Amount to bet",
+    )
+    @app_commands.autocomplete(
+        first=racer_autocomplete, second=racer_autocomplete,
+        third=racer_autocomplete, fourth=racer_autocomplete,
+        fifth=racer_autocomplete, sixth=racer_autocomplete,
+    )
+    async def race_bet_superfecta(
+        self, context: Context,
+        first: int, second: int, third: int,
+        fourth: int, fifth: int, sixth: int,
+        amount: int,
+    ) -> None:
+        await context.defer()
+        await self._place_bet(
+            context, "superfecta",
+            [first, second, third, fourth, fifth, sixth], amount,
+        )
 
     @race.command(name="history", description="Show recent race results")
     @app_commands.describe(count="Number of races to display")
