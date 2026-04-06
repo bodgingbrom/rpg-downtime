@@ -2541,3 +2541,92 @@ async def test_breed_no_parent_desc_no_foal_desc(tmp_path):
         await cog.stable_breed.callback(cog, ctx, sire.id, dam.id)
 
     mock_gen.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Rank recalculation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_training_recalculates_rank(tmp_path):
+    """Training a stat past a rank threshold should promote the racer."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    # Create a racer right at the C/B boundary: total=46 (C-Rank), training +1 → 47 (B-Rank)
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Climber", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=16, cornering=15, stamina=15, rank="C",
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=500,
+        )
+
+    stat_choice = discord.app_commands.Choice(name="Speed", value="speed")
+    # Patch random to prevent training failure
+    with patch("cogs.derby.random.random", return_value=1.0):
+        await cog.stable_train.callback(cog, ctx, racer.id, stat_choice)
+
+    # Check rank was updated
+    async with sessionmaker() as session:
+        updated = await repo.get_racer(session, racer.id)
+    assert updated.speed == 17
+    assert updated.rank == "B"
+
+    # Check embed shows rank up
+    embed = ctx.sent[0].get("embed")
+    field_names = [f.name for f in embed.fields]
+    assert any("Rank" in name for name in field_names)
+
+
+@pytest.mark.asyncio
+async def test_training_no_rank_change(tmp_path):
+    """Training that doesn't cross a threshold shouldn't show rank change."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    bot.settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=65,
+        bet_window=0,
+        countdown_total=0,
+    )
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    cog = derby_cog.Stable(bot)
+    ctx = DummyContext(bot)
+
+    # Total=30 (C-Rank), training +1 → 31 still C-Rank
+    async with sessionmaker() as session:
+        racer = await repo.create_racer(
+            session, name="Steady", owner_id=ctx.author.id, guild_id=GUILD_ID,
+            speed=10, cornering=10, stamina=10, rank="C",
+        )
+        await wallet_repo.create_wallet(
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=500,
+        )
+
+    stat_choice = discord.app_commands.Choice(name="Speed", value="speed")
+    with patch("cogs.derby.random.random", return_value=1.0):
+        await cog.stable_train.callback(cog, ctx, racer.id, stat_choice)
+
+    embed = ctx.sent[0].get("embed")
+    field_names = [f.name for f in embed.fields]
+    assert not any("Rank" in name for name in field_names)

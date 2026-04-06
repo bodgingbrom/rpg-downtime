@@ -1329,13 +1329,36 @@ def test_assign_rank_if_needed_sets_once():
 
 
 def test_assign_rank_preserves_existing():
-    """A D-rank racer with S-level stats should keep D rank."""
+    """assign_rank_if_needed skips racers that already have a rank."""
     from derby.logic import assign_rank_if_needed
 
     r = Racer(id=1, name="Test", owner_id=0, speed=31, cornering=31, stamina=31, rank="D")
     result = assign_rank_if_needed(r)
     assert result is None
-    assert r.rank == "D"
+    assert r.rank == "D"  # not recalculated — use recalculate_rank for updates
+
+
+def test_recalculate_rank_promotes():
+    """recalculate_rank should update rank when stats cross a threshold."""
+    from derby.logic import recalculate_rank
+
+    r = Racer(id=1, name="Test", owner_id=0, speed=16, cornering=15, stamina=15, rank="C")
+    # Total = 46 → C-Rank. Bump speed to cross into B (47+)
+    r.speed = 17
+    result = recalculate_rank(r)
+    assert result == "B"
+    assert r.rank == "B"
+
+
+def test_recalculate_rank_no_change():
+    """recalculate_rank returns None if rank stays the same."""
+    from derby.logic import recalculate_rank
+
+    r = Racer(id=1, name="Test", owner_id=0, speed=10, cornering=10, stamina=10, rank="C")
+    r.speed = 11  # Total = 31, still C-Rank
+    result = recalculate_rank(r)
+    assert result is None
+    assert r.rank == "C"
 
 
 def test_rank_label():

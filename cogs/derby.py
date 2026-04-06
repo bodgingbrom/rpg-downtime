@@ -841,6 +841,13 @@ class Derby(commands.Cog, name="derby"):
                 return
             old_values = {k: getattr(old, k) for k in updates}
             updated = await repo.update_racer(session, racer, **updates)
+            # Recalculate rank if any stat changed
+            if any(k in updates for k in ("speed", "cornering", "stamina")):
+                rank_change = logic.recalculate_rank(updated)
+                if rank_change:
+                    await session.commit()
+            else:
+                rank_change = None
         embed = discord.Embed(title=f"Racer Updated: {updated.name}")
         for key, new_val in updates.items():
             old_val = old_values[key]
@@ -856,6 +863,12 @@ class Derby(commands.Cog, name="derby"):
                     value=f"{old_val} \u2192 {new_val}",
                     inline=True,
                 )
+        if rank_change:
+            embed.add_field(
+                name="Rank Changed",
+                value=f"Now **{logic.rank_label(rank_change)}**",
+                inline=False,
+            )
         await context.send(embed=embed)
 
     @derby_group.command(
@@ -1831,8 +1844,12 @@ class Stable(commands.Cog, name="stable"):
                 new_value = current_value + 1
                 await repo.update_racer(session, racer, **{stat_name: new_value})
                 racer_obj.training_count = (racer_obj.training_count or 0) + 1
+                # Recalculate rank after stat change
+                setattr(racer_obj, stat_name, new_value)
+                rank_change = logic.recalculate_rank(racer_obj)
             else:
                 new_value = current_value
+                rank_change = None
 
             await session.commit()
 
@@ -1866,6 +1883,12 @@ class Stable(commands.Cog, name="stable"):
                 name="Mood",
                 value=f"{_mood_label(old_mood)} \u2192 {_mood_label(new_mood)}",
                 inline=True,
+            )
+        if rank_change:
+            embed.add_field(
+                name="\u2b06\ufe0f Rank Up!",
+                value=f"Promoted to **{logic.rank_label(rank_change)}**",
+                inline=False,
             )
         embed.set_footer(text=f"Balance: {wallet.balance} coins")
         if fail_chance > 0:
