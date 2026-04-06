@@ -970,6 +970,92 @@ def _map_weighted_power(
     return base + _mood_expected_bonus(getattr(racer, "mood", 3))
 
 
+def _win_probabilities(
+    racers: Sequence[models.Racer],
+    race_map: RaceMap | None = None,
+) -> Dict[int, float]:
+    """Return P(racer finishes 1st) for each racer, summing to 1.0."""
+    if not racers:
+        return {}
+    NOISE_BASELINE = 5.0
+    weights: Dict[int, float] = {}
+    for racer in racers:
+        if race_map and race_map.segments:
+            power = _map_weighted_power(racer, race_map)
+        else:
+            power = _racer_power(racer)
+        weights[racer.id] = power + NOISE_BASELINE
+    total = sum(weights.values())
+    return {rid: w / total for rid, w in weights.items()}
+
+
+def _place_probability(racer_id: int, probs: Dict[int, float]) -> float:
+    """P(racer finishes 1st or 2nd) using conditional probability.
+
+    P(1st) + sum over all others A: P(A 1st) * P(racer 1st of remaining).
+    """
+    p_first = probs.get(racer_id, 0.0)
+    p_second = 0.0
+    for other_id, p_other in probs.items():
+        if other_id == racer_id:
+            continue
+        # If other finishes 1st, racer's probability among remaining
+        remaining_total = 1.0 - p_other
+        if remaining_total <= 0:
+            continue
+        p_second += p_other * (p_first / remaining_total)
+    return p_first + p_second
+
+
+def _exact_order_probability(picks: List[int], probs: Dict[int, float]) -> float:
+    """P(picks[0] 1st AND picks[1] 2nd AND ...) via conditional chain.
+
+    Each step removes the placed racer and re-normalizes among the rest.
+    """
+    prob = 1.0
+    remaining = dict(probs)
+    for pick in picks:
+        total = sum(remaining.values())
+        if total <= 0 or pick not in remaining:
+            return 0.0
+        prob *= remaining[pick] / total
+        del remaining[pick]
+    return prob
+
+
+BET_TYPES = {"win", "place", "exacta", "trifecta", "superfecta"}
+
+# Minimum payout multiplier — no bet should pay less than this
+MIN_PAYOUT_MULTIPLIER = 1.1
+
+
+def calculate_bet_odds(
+    racers: Sequence[models.Racer],
+    race_map: RaceMap | None,
+    house_edge: float,
+    bet_type: str,
+    picks: List[int],
+) -> float:
+    """Return payout multiplier for a specific bet type and picks."""
+    probs = _win_probabilities(racers, race_map)
+    if not probs:
+        return 0.0
+
+    if bet_type == "win":
+        p = probs.get(picks[0], 0.0)
+    elif bet_type == "place":
+        p = _place_probability(picks[0], probs)
+    elif bet_type in ("exacta", "trifecta", "superfecta"):
+        p = _exact_order_probability(picks, probs)
+    else:
+        return 0.0
+
+    if p <= 0:
+        return 0.0
+    multiplier = (1.0 - house_edge) / p
+    return round(max(multiplier, MIN_PAYOUT_MULTIPLIER), 2)
+
+
 def calculate_odds(
     racers: Sequence[models.Racer] | Sequence[int],
     course_segments: Sequence | None,
@@ -990,20 +1076,10 @@ def calculate_odds(
         payout = (1.0 - house_edge) / base_prob
         return {(r.id if hasattr(r, "id") else int(r)): payout for r in racers}
 
-    NOISE_BASELINE = 5.0  # small floor so zero-stat racers get non-zero odds
-    weights: List[float] = []
-    for racer in racers:
-        if race_map and race_map.segments:
-            power = _map_weighted_power(racer, race_map)
-        else:
-            power = _racer_power(racer)
-        weights.append(power + NOISE_BASELINE)
-
-    total_weight = sum(weights)
+    probs = _win_probabilities(racers, race_map)
     result: Dict[int, float] = {}
-    for racer, weight in zip(racers, weights):
-        prob = weight / total_weight
-        result[racer.id] = round((1.0 - house_edge) / prob, 2)
+    for racer_id, prob in probs.items():
+        result[racer_id] = round((1.0 - house_edge) / prob, 2)
     return result
 
 
@@ -1320,14 +1396,43 @@ async def resolve_placement_prizes(
     return awarded
 
 
+def _bet_wins(
+    bet_type: str,
+    racer_id: int,
+    racer_ids_json: str,
+    placements: List[int],
+) -> bool:
+    """Return whether a bet is a winner given the final placements."""
+    import json
+
+    if not placements:
+        return False
+    if bet_type == "win":
+        return placements[0] == racer_id
+    if bet_type == "place":
+        return racer_id in placements[:2]
+    if bet_type == "exacta":
+        picks = json.loads(racer_ids_json) if racer_ids_json else []
+        return picks == placements[:2]
+    if bet_type == "trifecta":
+        picks = json.loads(racer_ids_json) if racer_ids_json else []
+        return picks == placements[:3]
+    if bet_type == "superfecta":
+        picks = json.loads(racer_ids_json) if racer_ids_json else []
+        return picks == placements[: len(picks)]
+    return False
+
+
 async def resolve_payouts(
-    session: AsyncSession, race_id: int, winner_id: int, guild_id: int = 0
-) -> None:
+    session: AsyncSession,
+    race_id: int,
+    placements: List[int],
+    guild_id: int = 0,
+) -> List[Dict]:
     """Resolve all bets for ``race_id`` and update wallets.
 
-    Winning bets pay ``amount * payout_multiplier`` (the multiplier stored
-    at bet time based on the racer's odds). All processed bets are removed
-    from the database.
+    *placements* is the ordered list of racer IDs from 1st to last.
+    Returns a list of dicts describing each bet outcome for announcements.
     """
 
     bet_rows = await session.execute(
@@ -1335,8 +1440,9 @@ async def resolve_payouts(
     )
     bets = bet_rows.scalars().all()
 
+    results: List[Dict] = []
     if not bets:
-        return
+        return results
 
     for bet in bets:
         wallet = (
@@ -1353,9 +1459,23 @@ async def resolve_payouts(
             await session.commit()
             await session.refresh(wallet)
 
-        if bet.racer_id == winner_id:
-            payout = int(bet.amount * bet.payout_multiplier)
+        bet_type = getattr(bet, "bet_type", "win") or "win"
+        racer_ids_json = getattr(bet, "racer_ids", "[]") or "[]"
+        won = _bet_wins(bet_type, bet.racer_id, racer_ids_json, placements)
+        payout = int(bet.amount * bet.payout_multiplier) if won else 0
+        if won:
             wallet.balance += payout
+
+        results.append({
+            "user_id": bet.user_id,
+            "bet_type": bet_type,
+            "amount": bet.amount,
+            "payout": payout,
+            "won": won,
+            "racer_id": bet.racer_id,
+            "racer_ids": racer_ids_json,
+        })
         await session.delete(bet)
 
     await session.commit()
+    return results

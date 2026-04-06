@@ -114,7 +114,7 @@ async def test_resolve_payouts(session: AsyncSession):
     session.add(Wallet(user_id=1, guild_id=1, balance=50))
     await session.commit()
 
-    await resolve_payouts(session, race.id, winner_id=r1.id, guild_id=1)
+    results = await resolve_payouts(session, race.id, [r1.id, r2.id], guild_id=1)
 
     w1 = (
         await session.execute(
@@ -130,7 +130,10 @@ async def test_resolve_payouts(session: AsyncSession):
     assert w2.balance == 0
 
     bets = (await session.execute(select(Bet))).scalars().all()
-    assert bets == []
+    assert bets == [], "Bets should be deleted after resolve_payouts"
+    assert len(results) == 2
+    assert results[0]["won"] is True
+    assert results[1]["won"] is False
 
 
 def test_simulate_race_stat_influence():
