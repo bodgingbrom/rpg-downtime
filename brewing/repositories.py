@@ -215,3 +215,46 @@ async def get_brew_ingredients(
         .order_by(BrewIngredient.add_order)
     )
     return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Brew history / journal
+# ---------------------------------------------------------------------------
+
+
+async def get_brew_history(
+    session: AsyncSession, user_id: int, guild_id: int, limit: int = 20
+) -> list[BrewSession]:
+    result = await session.execute(
+        select(BrewSession)
+        .where(
+            BrewSession.user_id == user_id,
+            BrewSession.guild_id == guild_id,
+            BrewSession.status != "active",
+        )
+        .order_by(BrewSession.completed_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_brews_with_ingredient(
+    session: AsyncSession,
+    user_id: int,
+    guild_id: int,
+    ingredient_id: int,
+    limit: int = 20,
+) -> list[BrewSession]:
+    result = await session.execute(
+        select(BrewSession)
+        .join(BrewIngredient, BrewIngredient.brew_session_id == BrewSession.id)
+        .where(
+            BrewSession.user_id == user_id,
+            BrewSession.guild_id == guild_id,
+            BrewSession.status != "active",
+            BrewIngredient.ingredient_id == ingredient_id,
+        )
+        .order_by(BrewSession.completed_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())

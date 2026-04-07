@@ -647,6 +647,157 @@ class Brewing(commands.Cog, name="brewing"):
         )
         await context.send(embed=embed)
 
+    # ------------------------------------------------------------------
+    # /brew journal
+    # ------------------------------------------------------------------
+
+    @brew.command(name="journal", description="View your brew history")
+    async def brew_journal(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            brews = await brew_repo.get_brew_history(session, user_id, guild_id, 20)
+            # Pre-fetch ingredient counts for each brew
+            brew_ing_counts: dict[int, int] = {}
+            for b in brews:
+                ings = await brew_repo.get_brew_ingredients(session, b.id)
+                brew_ing_counts[b.id] = len(ings)
+
+        if not brews:
+            await context.send(
+                "You haven't completed any brews yet. Use `/brew start` to begin!",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title="\U0001f4d6 Brew Journal",
+            description=f"Your last {len(brews)} brews",
+            color=0x3498DB,
+        )
+        for b in brews:
+            if b.status == "cashed_out":
+                emoji = "\U0001f9ea"
+                label = "Cashed Out"
+                total_cost = b.bottle_cost + b.ingredient_cost_total
+                profit = (b.payout or 0) - total_cost
+                detail = f"Payout: {b.payout} coins ({profit:+d} profit)"
+            else:
+                emoji = "\U0001f4a5"
+                label = "Exploded"
+                total_lost = b.bottle_cost + b.ingredient_cost_total
+                detail = f"Lost: {total_lost} coins"
+
+            ing_count = brew_ing_counts.get(b.id, 0)
+            embed.add_field(
+                name=f"#{b.id} {emoji} {label}",
+                value=f"Potency: {b.potency} | {detail} | {ing_count} ingredients",
+                inline=False,
+            )
+
+        await context.send(embed=embed)
+
+    @brew.command(name="analyze", description="Analyze your brews using a specific ingredient")
+    @app_commands.describe(ingredient="The ingredient to analyze")
+    @app_commands.autocomplete(ingredient=_all_ingredient_autocomplete)
+    async def brew_analyze(self, context: Context, ingredient: str) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            ing = await brew_repo.get_ingredient_by_name(session, ingredient)
+            if ing is None:
+                await context.send(
+                    f"Unknown ingredient: **{ingredient}**.",
+                    ephemeral=True,
+                )
+                return
+
+            brews = await brew_repo.get_brews_with_ingredient(
+                session, user_id, guild_id, ing.id, 20
+            )
+
+            if not brews:
+                await context.send(
+                    f"You haven't used **{ing.name}** in any brews yet.",
+                    ephemeral=True,
+                )
+                return
+
+            # For each brew, get co-ingredients
+            brew_details: list[tuple] = []
+            for b in brews:
+                brew_ings = await brew_repo.get_brew_ingredients(session, b.id)
+                co_names = []
+                for bi in brew_ings:
+                    if bi.ingredient_id != ing.id:
+                        co_ing = await brew_repo.get_ingredient_by_id(
+                            session, bi.ingredient_id
+                        )
+                        if co_ing:
+                            co_names.append(co_ing.name)
+                brew_details.append((b, co_names))
+
+        # Build embed
+        success_count = sum(1 for b, _ in brew_details if b.status == "cashed_out")
+        avg_potency = (
+            sum(b.potency for b, _ in brew_details) // len(brew_details)
+            if brew_details
+            else 0
+        )
+
+        embed = discord.Embed(
+            title=f"\U0001f50d Brew Analysis: {ing.name}",
+            description=f"Your brews using {ing.name}",
+            color=0x3498DB,
+        )
+
+        for b, co_names in brew_details:
+            if b.status == "cashed_out":
+                emoji = "\U0001f9ea"
+                outcome = f"Payout: {b.payout} coins"
+            else:
+                emoji = "\U0001f4a5"
+                total_lost = b.bottle_cost + b.ingredient_cost_total
+                outcome = f"Lost: {total_lost} coins"
+
+            co_str = ", ".join(co_names) if co_names else "None"
+            embed.add_field(
+                name=f"#{b.id} {emoji} Potency {b.potency}",
+                value=f"Co-ingredients: {co_str} | {outcome}",
+                inline=False,
+            )
+
+        embed.set_footer(
+            text=(
+                f"Used in {len(brew_details)} brews | "
+                f"{success_count} successful | "
+                f"Avg potency: {avg_potency}"
+            )
+        )
+        await context.send(embed=embed)
+
+
+async def _all_ingredient_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete showing all 28 ingredients for journal analysis."""
+    sessionmaker = interaction.client.scheduler.sessionmaker
+    async with sessionmaker() as session:
+        all_ingredients = await brew_repo.get_all_ingredients(session)
+
+    current_lower = current.lower()
+    choices = []
+    for ing in all_ingredients:
+        if current_lower in ing.name.lower():
+            choices.append(app_commands.Choice(name=ing.name, value=ing.name))
+        if len(choices) >= 25:
+            break
+    return choices
+
 
 async def setup(bot) -> None:
     await bot.add_cog(Brewing(bot))
