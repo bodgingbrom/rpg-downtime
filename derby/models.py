@@ -48,6 +48,9 @@ class Race(Base):
     finished: Mapped[bool] = mapped_column(Boolean, default=False)
     winner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     placements: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    biggest_payout: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    biggest_payout_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    biggest_payout_racer_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 class Bet(Base):

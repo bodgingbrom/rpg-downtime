@@ -105,6 +105,10 @@ class DerbyScheduler:
         self.daily_task = tasks.loop(time=[dt_time(0, 0)])(self._daily_tick)
         self.daily_task.start()
 
+        # Daily digest — 00:05 UTC (after dailies are generated)
+        self.digest_task = tasks.loop(time=[dt_time(0, 5)])(self._digest_tick)
+        self.digest_task.start()
+
         # Ensure pending races exist once the guild cache is ready.
         # This runs in the background so it doesn't block setup_hook.
         if hasattr(self.bot, "wait_until_ready"):
@@ -125,6 +129,8 @@ class DerbyScheduler:
             self.tournament_task.cancel()
         if hasattr(self, "daily_task") and self.daily_task and self.daily_task.is_running():
             self.daily_task.cancel()
+        if hasattr(self, "digest_task") and self.digest_task and self.digest_task.is_running():
+            self.digest_task.cancel()
         await self.engine.dispose()
 
     async def _init_db(self) -> None:
@@ -342,6 +348,9 @@ class DerbyScheduler:
 
             race_migrations = {
                 "placements": ("VARCHAR", "NULL"),
+                "biggest_payout": ("INTEGER", "NULL"),
+                "biggest_payout_user_id": ("INTEGER", "NULL"),
+                "biggest_payout_racer_id": ("INTEGER", "NULL"),
             }
             for name, (col_type, default) in race_migrations.items():
                 if name not in race_columns:
@@ -694,6 +703,178 @@ class DerbyScheduler:
                         amount=amount,
                         flavor_text=flavor_text,
                     )
+
+    async def _digest_tick(self) -> None:
+        """Called at 00:05 UTC.  Post daily digest to all guild channels."""
+        await self._init_db()
+        for guild in self.bot.guilds:
+            try:
+                embed = await self._build_digest_embed(guild.id)
+                if embed is None:
+                    continue
+                gs = await self._load_guild_settings(guild.id)
+                channel = self._get_channel(guild, gs)
+                if channel is None:
+                    continue
+                await channel.send(embed=embed)
+            except Exception:
+                self.bot.logger.exception(
+                    "Failed to post daily digest",
+                    extra={"guild_id": guild.id},
+                )
+
+    async def _build_digest_embed(self, guild_id: int) -> discord.Embed | None:
+        """Build the daily digest embed for a guild.
+
+        Returns ``None`` if there's nothing to show (no players in guild).
+        """
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        weekday = now.strftime("%A")
+        date_str = now.strftime("%B %d, %Y")
+
+        embed = discord.Embed(
+            title=f"\U0001f4dc Daily Digest — {weekday}, {date_str}",
+            color=0x5865F2,
+        )
+
+        # 1. Daily reward reminder (always present)
+        embed.add_field(
+            name="\U0001f381 Daily Reward",
+            value="Your daily reward is ready! Use `/daily` to claim it.",
+            inline=False,
+        )
+
+        # 2 & 3. Yesterday's races — biggest payout & longshot winner
+        yesterday_start = (now - timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        yesterday_end = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        async with self.sessionmaker() as session:
+            yesterday_races = await repo.get_races_finished_between(
+                session, guild_id, yesterday_start, yesterday_end
+            )
+
+            if yesterday_races:
+                # Biggest payout
+                best_race = None
+                for race in yesterday_races:
+                    bp = getattr(race, "biggest_payout", None)
+                    if bp and bp > 0:
+                        if best_race is None or bp > best_race.biggest_payout:
+                            best_race = race
+
+                if best_race is not None:
+                    racer = await repo.get_racer(
+                        session, best_race.biggest_payout_racer_id
+                    )
+                    racer_name = racer.name if racer else "Unknown"
+                    embed.add_field(
+                        name="\U0001f4b0 Yesterday's Best Payout",
+                        value=(
+                            f"<@{best_race.biggest_payout_user_id}> won "
+                            f"**{best_race.biggest_payout} coins** betting on "
+                            f"**{racer_name}**!"
+                        ),
+                        inline=False,
+                    )
+
+                # Longshot winner — highest odds (multiplier) winner across yesterday's races
+                best_longshot_name = None
+                best_longshot_mult = 0.0
+
+                for race in yesterday_races:
+                    if race.winner_id is None:
+                        continue
+                    participants = await repo.get_race_participants(
+                        session, race.id
+                    )
+                    if len(participants) < 2:
+                        continue
+                    odds = logic.calculate_odds(participants, [], 0.1)
+                    winner_mult = odds.get(race.winner_id, 0.0)
+                    if winner_mult > best_longshot_mult:
+                        best_longshot_mult = winner_mult
+                        winner_racer = next(
+                            (r for r in participants if r.id == race.winner_id),
+                            None,
+                        )
+                        best_longshot_name = (
+                            winner_racer.name if winner_racer else None
+                        )
+
+                if best_longshot_name:
+                    embed.add_field(
+                        name="\U0001f40e Yesterday's Longshot Winner",
+                        value=f"**{best_longshot_name}** defied the odds and took the win!",
+                        inline=False,
+                    )
+
+        # 4. Tournament section (day-of-week dependent)
+        day_of_week = now.weekday()  # 0=Mon ... 6=Sun
+        tournament_text = await self._build_tournament_digest(
+            guild_id, day_of_week
+        )
+        if tournament_text:
+            embed.add_field(
+                name="\U0001f3c6 Tournaments",
+                value=tournament_text,
+                inline=False,
+            )
+
+        return embed
+
+    async def _build_tournament_digest(
+        self, guild_id: int, day_of_week: int
+    ) -> str | None:
+        """Return tournament-related text for the digest, or None if not relevant."""
+        # Friday=4: preview weekend tournaments
+        # Saturday=5: D/C counts + B/A reminder
+        # Sunday=6: B/A counts + S reminder
+        if day_of_week == 4:  # Friday
+            return (
+                "Weekend tournaments start tomorrow! "
+                "Register your racers with `/tournament register`\n"
+                "📅 **Saturday:** D & C rank\n"
+                "📅 **Sunday:** B & A rank\n"
+                "📅 **Monday:** S rank"
+            )
+
+        if day_of_week == 5:  # Saturday
+            lines = ["Today's tournaments: **D & C rank**"]
+            async with self.sessionmaker() as session:
+                for rank in ("D", "C"):
+                    t = await repo.get_pending_tournament(session, guild_id, rank)
+                    if t:
+                        entries = await repo.get_tournament_entries(session, t.id)
+                        player_count = sum(
+                            1 for e in entries if not e.is_pool_filler
+                        )
+                        lines.append(
+                            f"  {rank}-Rank: **{player_count}** registered"
+                        )
+            lines.append("\n📅 **Tomorrow:** B & A rank tournaments")
+            return "\n".join(lines)
+
+        if day_of_week == 6:  # Sunday
+            lines = ["Today's tournaments: **B & A rank**"]
+            async with self.sessionmaker() as session:
+                for rank in ("B", "A"):
+                    t = await repo.get_pending_tournament(session, guild_id, rank)
+                    if t:
+                        entries = await repo.get_tournament_entries(session, t.id)
+                        player_count = sum(
+                            1 for e in entries if not e.is_pool_filler
+                        )
+                        lines.append(
+                            f"  {rank}-Rank: **{player_count}** registered"
+                        )
+            lines.append("\n📅 **Tomorrow:** S rank tournament")
+            return "\n".join(lines)
+
+        return None
 
     async def _expire_pool_racers(self, guild_id: int) -> int:
         """Delete unowned pool racers whose expiry time has passed."""

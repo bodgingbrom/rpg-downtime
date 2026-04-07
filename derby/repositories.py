@@ -501,6 +501,26 @@ async def get_racer_owner_ids(session: AsyncSession, guild_id: int) -> list[int]
 
 
 # ---------------------------------------------------------------------------
+# Finished races in a date range (for daily digest)
+# ---------------------------------------------------------------------------
+
+
+async def get_races_finished_between(
+    session: AsyncSession, guild_id: int, start_dt: datetime, end_dt: datetime
+) -> list[Race]:
+    """Return finished races for a guild within a datetime range."""
+    result = await session.execute(
+        select(Race).where(
+            Race.guild_id == guild_id,
+            Race.finished.is_(True),
+            Race.started_at >= start_dt,
+            Race.started_at < end_dt,
+        )
+    )
+    return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
 # Racer buffs (potion effects)
 # ---------------------------------------------------------------------------
 
