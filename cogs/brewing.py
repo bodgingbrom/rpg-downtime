@@ -74,6 +74,24 @@ async def _brew_ingredient_autocomplete(
     return choices
 
 
+async def _all_ingredient_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete showing all 28 ingredients for journal analysis."""
+    sessionmaker = interaction.client.scheduler.sessionmaker
+    async with sessionmaker() as session:
+        all_ingredients = await brew_repo.get_all_ingredients(session)
+
+    current_lower = current.lower()
+    choices = []
+    for ing in all_ingredients:
+        if current_lower in ing.name.lower():
+            choices.append(app_commands.Choice(name=ing.name, value=ing.name))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
 class Brewing(commands.Cog, name="brewing"):
     def __init__(self, bot) -> None:
         self.bot = bot
@@ -779,24 +797,6 @@ class Brewing(commands.Cog, name="brewing"):
             )
         )
         await context.send(embed=embed)
-
-
-async def _all_ingredient_autocomplete(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[str]]:
-    """Autocomplete showing all 28 ingredients for journal analysis."""
-    sessionmaker = interaction.client.scheduler.sessionmaker
-    async with sessionmaker() as session:
-        all_ingredients = await brew_repo.get_all_ingredients(session)
-
-    current_lower = current.lower()
-    choices = []
-    for ing in all_ingredients:
-        if current_lower in ing.name.lower():
-            choices.append(app_commands.Choice(name=ing.name, value=ing.name))
-        if len(choices) >= 25:
-            break
-    return choices
 
 
 async def setup(bot) -> None:
