@@ -1143,6 +1143,59 @@ class Derby(commands.Cog, name="derby"):
         )
         await context.send(embed=embed)
 
+    @racer_group.command(
+        name="regen-desc",
+        description="Regenerate a racer's description with an optional hint",
+    )
+    @app_commands.describe(
+        racer="Racer to regenerate description for",
+        hint="Optional direction for the description (e.g. 'make him look like a ghost')",
+    )
+    @app_commands.autocomplete(racer=guild_racer_autocomplete)
+    async def racer_regen_desc(
+        self, context: Context, racer: int, hint: str | None = None,
+    ) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+            gs = await repo.get_guild_settings(session, guild_id)
+            flavor = getattr(gs, "racer_flavor", None) if gs else None
+            if not flavor:
+                await context.send(
+                    "Set a racer flavor first with "
+                    "`/derby settings set racer_flavor <text>`.",
+                    ephemeral=True,
+                )
+                return
+            desc = await descriptions.generate_description(
+                name=racer_obj.name,
+                speed=racer_obj.speed,
+                cornering=racer_obj.cornering,
+                stamina=racer_obj.stamina,
+                temperament=racer_obj.temperament,
+                gender=racer_obj.gender,
+                flavor=flavor,
+                hint=hint,
+            )
+            if desc is None:
+                await context.send(
+                    "Description generation failed — check API key.", ephemeral=True
+                )
+                return
+            await repo.update_racer(session, racer, description=desc)
+        embed = discord.Embed(
+            title=f"Description Updated — {racer_obj.name}",
+            description=desc,
+            color=0x3498DB,
+        )
+        if hint:
+            embed.set_footer(text=f"Hint: {hint}")
+        await context.send(embed=embed)
+
     @derby_group.group(name="race", description="Race admin commands")
     async def race_admin(self, context: Context) -> None:
         if context.invoked_subcommand is None:
