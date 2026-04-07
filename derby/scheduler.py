@@ -808,8 +808,15 @@ class DerbyScheduler:
             "Race starting",
             extra={"guild_id": guild_id, "race_id": race_id},
         )
+        # Load potion buffs for race participants
+        racer_ids = [r.id for r in participants]
+        async with self.sessionmaker() as session:
+            raw_buffs = await repo.get_race_buffs_for_racers(session, racer_ids)
+        stat_buffs, mood_buffs = logic.convert_buffs(raw_buffs)
+
         result = logic.simulate_race(
-            {"racers": participants}, race_id, race_map=race_map
+            {"racers": participants}, race_id, race_map=race_map,
+            stat_buffs=stat_buffs, mood_buffs=mood_buffs,
         )
         winner_id = result.placements[0] if result.placements else None
         placements_json = json.dumps(result.placements)
@@ -848,6 +855,8 @@ class DerbyScheduler:
             retirements = await self._apply_retirements(
                 session, participants, guild_id=guild_id
             )
+            # Consume potion buffs after race
+            await repo.consume_racer_buffs(session, racer_ids)
             await session.commit()
         names = result.racer_names
 
@@ -1376,9 +1385,20 @@ class DerbyScheduler:
                 started_at=datetime.now(timezone.utc),
             )
 
+        # Load potion buffs for tournament participants
+        tournament_racer_ids = [r.id for r in all_racers]
+        async with self.sessionmaker() as session:
+            raw_buffs = await repo.get_race_buffs_for_racers(
+                session, tournament_racer_ids
+            )
+        stat_buffs, mood_buffs = logic.convert_buffs(raw_buffs)
+
         # Run the tournament engine
         seed = int(datetime.now(timezone.utc).timestamp() * 1000) + guild_id
-        result = logic.run_tournament(all_racers, seed)
+        result = logic.run_tournament(
+            all_racers, seed,
+            stat_buffs=stat_buffs, mood_buffs=mood_buffs,
+        )
 
         # Store placements, eliminated rounds, and award prizes
         async with self.sessionmaker() as session:
@@ -1417,6 +1437,8 @@ class DerbyScheduler:
                 session, rank, result.final_placements,
                 entry_by_racer_owner,
             )
+            # Consume potion buffs after tournament (1 tournament = 1 use)
+            await repo.consume_racer_buffs(session, tournament_racer_ids)
             await session.commit()
 
         # Announce results
