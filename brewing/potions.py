@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Sequence
 
 from .models import Ingredient
@@ -195,3 +196,62 @@ POTION_DESCRIPTIONS: dict[str, str] = {
     "foresight": "Reveals the explosion threshold when you start your next brew.",
     "revelation": "Permanently reveals the hidden tags of one ingredient.",
 }
+
+# All 7 temperaments available in Downtime Derby
+ALL_TEMPERAMENTS = [
+    "Agile", "Reckless", "Tactical", "Burly", "Steady", "Sharpshift", "Quirky",
+]
+
+# Potion types that target a racer
+RACER_POTIONS = {
+    "swiftness", "dexterity", "giants_strength", "clarity", "harmony",
+    "fertility", "longevity", "stripping", "healing", "mutation",
+}
+
+# Potion types that target an ingredient (revelation)
+INGREDIENT_POTIONS = {"revelation"}
+
+# Potion types with no target (brew effects)
+NO_TARGET_POTIONS = {"fortification", "foresight"}
+
+# Stat buff potion types → buff_type for RacerBuff
+STAT_BUFF_MAP: dict[str, str] = {
+    "swiftness": "speed",
+    "dexterity": "cornering",
+    "giants_strength": "stamina",
+    "clarity": "mood",
+    "harmony": "all_stats",
+}
+
+
+# ---------------------------------------------------------------------------
+# Effect application functions
+# ---------------------------------------------------------------------------
+
+
+def generate_stripping_choices(
+    current_temperament: str, num_choices: int, seed: int
+) -> list[str]:
+    """Generate random temperament choices for a Stripping potion.
+
+    Returns ``num_choices`` temperaments excluding the current one.
+    """
+    available = [t for t in ALL_TEMPERAMENTS if t != current_temperament]
+    rng = random.Random(seed)
+    num_choices = min(num_choices, len(available))
+    return rng.sample(available, num_choices)
+
+
+def apply_mutation(
+    speed: int, cornering: int, stamina: int, floor_value: int, seed: int
+) -> tuple[str, int, int]:
+    """Pick a random stat and set it to a random value in [floor_value, 31].
+
+    Returns ``(stat_name, old_value, new_value)``.
+    """
+    rng = random.Random(seed)
+    stats = {"speed": speed, "cornering": cornering, "stamina": stamina}
+    stat_name = rng.choice(list(stats.keys()))
+    old_value = stats[stat_name]
+    new_value = rng.randint(floor_value, 31)
+    return (stat_name, old_value, new_value)

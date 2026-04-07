@@ -91,11 +91,39 @@ class BrewIngredient(Base):
     instability_after: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class PlayerBrewEffect(Base):
+    __tablename__ = "player_brew_effects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    effect_type: Mapped[str] = mapped_column(String, nullable=False)  # fortification/foresight
+    effect_value: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RevealedIngredient(Base):
+    __tablename__ = "revealed_ingredients"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guild_id", "ingredient_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ingredient_id: Mapped[int] = mapped_column(
+        ForeignKey("ingredients.id"), nullable=False
+    )
+    revealed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 __all__ = [
     "Ingredient",
     "DangerousTriple",
     "PlayerIngredient",
     "PlayerPotion",
+    "PlayerBrewEffect",
+    "RevealedIngredient",
     "BrewSession",
     "BrewIngredient",
 ]

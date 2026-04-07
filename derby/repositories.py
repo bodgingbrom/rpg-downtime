@@ -16,6 +16,7 @@ from .models import (
     Race,
     RaceEntry,
     Racer,
+    RacerBuff,
     Tournament,
     TournamentEntry,
 )
@@ -497,3 +498,70 @@ async def get_racer_owner_ids(session: AsyncSession, guild_id: int) -> list[int]
         ).distinct()
     )
     return [row[0] for row in result.all()]
+
+
+# ---------------------------------------------------------------------------
+# Racer buffs (potion effects)
+# ---------------------------------------------------------------------------
+
+
+async def create_racer_buff(
+    session: AsyncSession,
+    *,
+    racer_id: int,
+    guild_id: int,
+    buff_type: str,
+    value: int,
+    races_remaining: int = 1,
+) -> RacerBuff:
+    buff = RacerBuff(
+        racer_id=racer_id,
+        guild_id=guild_id,
+        buff_type=buff_type,
+        value=value,
+        races_remaining=races_remaining,
+    )
+    session.add(buff)
+    await session.commit()
+    await session.refresh(buff)
+    return buff
+
+
+async def get_racer_buffs(
+    session: AsyncSession, racer_id: int
+) -> list[RacerBuff]:
+    result = await session.execute(
+        select(RacerBuff).where(RacerBuff.racer_id == racer_id)
+    )
+    return list(result.scalars().all())
+
+
+async def get_race_buffs_for_racers(
+    session: AsyncSession, racer_ids: list[int]
+) -> dict[int, list[RacerBuff]]:
+    """Load active buffs for multiple racers, grouped by racer_id."""
+    if not racer_ids:
+        return {}
+    result = await session.execute(
+        select(RacerBuff).where(RacerBuff.racer_id.in_(racer_ids))
+    )
+    buffs: dict[int, list[RacerBuff]] = {}
+    for b in result.scalars().all():
+        buffs.setdefault(b.racer_id, []).append(b)
+    return buffs
+
+
+async def consume_racer_buffs(
+    session: AsyncSession, racer_ids: list[int]
+) -> None:
+    """Decrement races_remaining for buffs on given racers; delete expired."""
+    if not racer_ids:
+        return
+    result = await session.execute(
+        select(RacerBuff).where(RacerBuff.racer_id.in_(racer_ids))
+    )
+    for buff in result.scalars().all():
+        buff.races_remaining -= 1
+        if buff.races_remaining <= 0:
+            await session.delete(buff)
+    await session.commit()
