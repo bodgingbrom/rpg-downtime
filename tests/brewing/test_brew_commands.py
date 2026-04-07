@@ -166,3 +166,140 @@ async def test_brew_ingredients_ordered(session: AsyncSession):
 
     result = await brew_repo.get_brew_ingredients(session, brew.id)
     assert [bi.add_order for bi in result] == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# Brew history / journal
+# ---------------------------------------------------------------------------
+
+
+async def _create_completed_brew(session, user_id, guild_id, status, potency, payout=None):
+    """Helper to create a completed brew for history tests."""
+    from datetime import datetime, timezone
+
+    brew = await brew_repo.create_brew_session(
+        session,
+        user_id=user_id,
+        guild_id=guild_id,
+        explosion_threshold=100,
+        bottle_cost=10,
+    )
+    brew.status = status
+    brew.potency = potency
+    brew.payout = payout
+    brew.completed_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(brew)
+    return brew
+
+
+@pytest.mark.asyncio
+async def test_get_brew_history_empty(session: AsyncSession):
+    history = await brew_repo.get_brew_history(session, USER_ID, GUILD_ID)
+    assert history == []
+
+
+@pytest.mark.asyncio
+async def test_get_brew_history_excludes_active(session: AsyncSession):
+    # Active brew should not appear in history
+    await brew_repo.create_brew_session(
+        session,
+        user_id=USER_ID,
+        guild_id=GUILD_ID,
+        explosion_threshold=100,
+        bottle_cost=10,
+    )
+    history = await brew_repo.get_brew_history(session, USER_ID, GUILD_ID)
+    assert history == []
+
+
+@pytest.mark.asyncio
+async def test_get_brew_history_returns_completed(session: AsyncSession):
+    await _create_completed_brew(session, USER_ID, GUILD_ID, "cashed_out", 50, 75)
+    await _create_completed_brew(session, USER_ID, GUILD_ID, "exploded", 30)
+
+    history = await brew_repo.get_brew_history(session, USER_ID, GUILD_ID)
+    assert len(history) == 2
+    # Most recent first
+    assert history[0].status == "exploded"
+    assert history[1].status == "cashed_out"
+
+
+@pytest.mark.asyncio
+async def test_get_brew_history_respects_limit(session: AsyncSession):
+    for i in range(5):
+        await _create_completed_brew(session, USER_ID, GUILD_ID, "cashed_out", i * 10, i * 5)
+
+    history = await brew_repo.get_brew_history(session, USER_ID, GUILD_ID, limit=3)
+    assert len(history) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_brew_history_guild_isolation(session: AsyncSession):
+    await _create_completed_brew(session, USER_ID, GUILD_ID, "cashed_out", 50, 75)
+    await _create_completed_brew(session, USER_ID, 999, "cashed_out", 30, 45)
+
+    history = await brew_repo.get_brew_history(session, USER_ID, GUILD_ID)
+    assert len(history) == 1
+    assert history[0].potency == 50
+
+
+@pytest.mark.asyncio
+async def test_get_brews_with_ingredient(session: AsyncSession):
+    ember = await brew_repo.get_ingredient_by_name(session, "Ember Salt")
+    moonpetal = await brew_repo.get_ingredient_by_name(session, "Moonpetal")
+
+    # Brew 1: has Ember Salt
+    brew1 = await _create_completed_brew(session, USER_ID, GUILD_ID, "cashed_out", 40, 60)
+    await brew_repo.add_brew_ingredient(
+        session, brew_session_id=brew1.id, ingredient_id=ember.id,
+        add_order=1, potency_gained=2, instability_after=0,
+    )
+
+    # Brew 2: has Moonpetal only (no Ember Salt)
+    brew2 = await _create_completed_brew(session, USER_ID, GUILD_ID, "exploded", 20)
+    await brew_repo.add_brew_ingredient(
+        session, brew_session_id=brew2.id, ingredient_id=moonpetal.id,
+        add_order=1, potency_gained=2, instability_after=0,
+    )
+
+    # Brew 3: has both
+    brew3 = await _create_completed_brew(session, USER_ID, GUILD_ID, "cashed_out", 60, 90)
+    await brew_repo.add_brew_ingredient(
+        session, brew_session_id=brew3.id, ingredient_id=ember.id,
+        add_order=1, potency_gained=2, instability_after=0,
+    )
+    await brew_repo.add_brew_ingredient(
+        session, brew_session_id=brew3.id, ingredient_id=moonpetal.id,
+        add_order=2, potency_gained=10, instability_after=0,
+    )
+
+    # Query for Ember Salt brews
+    ember_brews = await brew_repo.get_brews_with_ingredient(
+        session, USER_ID, GUILD_ID, ember.id
+    )
+    assert len(ember_brews) == 2
+    ember_ids = {b.id for b in ember_brews}
+    assert brew1.id in ember_ids
+    assert brew3.id in ember_ids
+    assert brew2.id not in ember_ids
+
+
+@pytest.mark.asyncio
+async def test_get_brews_with_ingredient_excludes_active(session: AsyncSession):
+    ember = await brew_repo.get_ingredient_by_name(session, "Ember Salt")
+
+    # Active brew with Ember Salt should not appear
+    active_brew = await brew_repo.create_brew_session(
+        session, user_id=USER_ID, guild_id=GUILD_ID,
+        explosion_threshold=100, bottle_cost=10,
+    )
+    await brew_repo.add_brew_ingredient(
+        session, brew_session_id=active_brew.id, ingredient_id=ember.id,
+        add_order=1, potency_gained=2, instability_after=0,
+    )
+
+    result = await brew_repo.get_brews_with_ingredient(
+        session, USER_ID, GUILD_ID, ember.id
+    )
+    assert result == []
