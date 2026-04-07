@@ -1316,6 +1316,8 @@ class Derby(commands.Cog, name="derby"):
         "max_foals_per_female",
         "racer_flavor",
         "race_stat_window",
+        "daily_min",
+        "daily_max",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")

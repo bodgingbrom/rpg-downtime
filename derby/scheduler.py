@@ -99,6 +99,10 @@ class DerbyScheduler:
         self.tournament_task = tasks.loop(seconds=60)(self._tournament_tick)
         self.tournament_task.start()
 
+        # Daily reward generation — midnight UTC
+        self.daily_task = tasks.loop(time=[dt_time(0, 0)])(self._daily_tick)
+        self.daily_task.start()
+
         # Ensure pending races exist once the guild cache is ready.
         # This runs in the background so it doesn't block setup_hook.
         if hasattr(self.bot, "wait_until_ready"):
@@ -117,6 +121,8 @@ class DerbyScheduler:
             self.task.cancel()
         if self.tournament_task and self.tournament_task.is_running():
             self.tournament_task.cancel()
+        if hasattr(self, "daily_task") and self.daily_task and self.daily_task.is_running():
+            self.daily_task.cancel()
         await self.engine.dispose()
 
     async def _init_db(self) -> None:
@@ -369,6 +375,8 @@ class DerbyScheduler:
                 "max_foals_per_female": ("INTEGER", "NULL"),
                 "racer_flavor": ("TEXT", "NULL"),
                 "race_stat_window": ("INTEGER", "NULL"),
+                "daily_min": ("INTEGER", "NULL"),
+                "daily_max": ("INTEGER", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:
@@ -576,6 +584,108 @@ class DerbyScheduler:
                 continue
 
             await self._create_next_race(guild.id)
+
+        # Generate daily rewards for today if not already done (startup catch-up)
+        await self._generate_dailies()
+
+    async def _daily_tick(self) -> None:
+        """Called at midnight UTC.  Generate daily rewards for all players."""
+        await self._init_db()
+        await self._generate_dailies()
+
+    async def _generate_dailies(self) -> None:
+        """Pre-generate today's daily rewards for all players in all guilds."""
+        from . import descriptions
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        for guild in self.bot.guilds:
+            gs = await self._load_guild_settings(guild.id)
+            daily_min = self._resolve("daily_min", gs)
+            daily_max = self._resolve("daily_max", gs)
+            racer_flavor = self._resolve("racer_flavor", gs)
+
+            async with self.sessionmaker() as session:
+                # Get all players who own non-retired racers
+                owner_ids = await repo.get_racer_owner_ids(session, guild.id)
+
+                for owner_id in owner_ids:
+                    # Skip if already generated for today
+                    existing = await repo.get_daily_reward(
+                        session, owner_id, guild.id, today
+                    )
+                    if existing is not None:
+                        continue
+
+                    # Find their best racer
+                    racers = await repo.get_owned_racers(
+                        session, owner_id, guild.id
+                    )
+                    if not racers:
+                        continue
+
+                    best = max(racers, key=lambda r: logic._racer_power(r))
+                    rank = best.rank or "D"
+                    multiplier = logic.daily_rank_multiplier(rank)
+                    base = random.randint(daily_min, daily_max)
+                    amount = base * multiplier
+
+                    # Generate flavor text
+                    flavor_text = None
+                    if racer_flavor:
+                        try:
+                            flavor_text = await descriptions.generate_daily_flavor(
+                                best.name, rank, amount, racer_flavor,
+                            )
+                        except Exception:
+                            pass  # Fall through to generic
+
+                    if not flavor_text:
+                        flavor_text = (
+                            f"{best.name} found something worth **{amount} coins** "
+                            f"while out exploring!"
+                        )
+
+                    await repo.create_daily_reward(
+                        session,
+                        user_id=owner_id,
+                        guild_id=guild.id,
+                        date=today,
+                        racer_id=best.id,
+                        racer_name=best.name,
+                        amount=amount,
+                        flavor_text=flavor_text,
+                    )
+
+                # Also generate for players with wallets but no racers
+                from economy.models import Wallet
+                wallet_result = await session.execute(
+                    select(Wallet.user_id).where(
+                        Wallet.guild_id == guild.id,
+                    )
+                )
+                wallet_user_ids = {row[0] for row in wallet_result.all()}
+                no_racer_ids = wallet_user_ids - set(owner_ids)
+
+                for user_id in no_racer_ids:
+                    existing = await repo.get_daily_reward(
+                        session, user_id, guild.id, today
+                    )
+                    if existing is not None:
+                        continue
+
+                    amount = random.randint(daily_min, daily_max)
+                    flavor_text = (
+                        f"You scavenged **{amount} coins** from around the track."
+                    )
+                    await repo.create_daily_reward(
+                        session,
+                        user_id=user_id,
+                        guild_id=guild.id,
+                        date=today,
+                        amount=amount,
+                        flavor_text=flavor_text,
+                    )
 
     async def _expire_pool_racers(self, guild_id: int) -> int:
         """Delete unowned pool racers whose expiry time has passed."""

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import (
     Bet,
     CourseSegment,
+    DailyReward,
     GuildSettings,
     PlayerData,
     Race,
@@ -465,3 +466,34 @@ async def get_player_tournament_entry(
         )
     )
     return result.scalars().first()
+
+
+# Daily rewards
+async def get_daily_reward(
+    session: AsyncSession, user_id: int, guild_id: int, date_str: str
+) -> DailyReward | None:
+    """Return a player's daily reward for a specific date, if any."""
+    result = await session.execute(
+        select(DailyReward).where(
+            DailyReward.user_id == user_id,
+            DailyReward.guild_id == guild_id,
+            DailyReward.date == date_str,
+        )
+    )
+    return result.scalars().first()
+
+
+async def create_daily_reward(session: AsyncSession, **kwargs) -> DailyReward:
+    return await _create(session, DailyReward, **kwargs)
+
+
+async def get_racer_owner_ids(session: AsyncSession, guild_id: int) -> list[int]:
+    """Return distinct owner IDs of non-retired racers in a guild (excluding pool)."""
+    result = await session.execute(
+        select(Racer.owner_id).where(
+            Racer.guild_id == guild_id,
+            Racer.owner_id != 0,
+            Racer.retired.is_(False),
+        ).distinct()
+    )
+    return [row[0] for row in result.all()]
