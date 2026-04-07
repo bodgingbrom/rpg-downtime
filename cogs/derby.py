@@ -174,7 +174,7 @@ async def viewable_racer_autocomplete(
     return (owned + others)[:25]
 
 
-HELP_CATEGORIES = {
+DERBY_HELP_CATEGORIES = {
     "Getting Started": (
         "New here? Start with these:\n"
         "`/wallet` — Check your balance (auto-creates on first use)\n"
@@ -220,21 +220,74 @@ HELP_CATEGORIES = {
     ),
 }
 
+BREWING_HELP_CATEGORIES = {
+    "The Basics": (
+        "Combine ingredients in a cauldron to build potency — "
+        "but push too far and it explodes!\n"
+        "`/brew start` — Light the cauldron and begin a brew\n"
+        "`/brew add <ingredient>` — Toss an ingredient in\n"
+        "`/brew cashout` — Finish and collect your reward\n"
+        "`/brew status` — Check your current brew"
+    ),
+    "Ingredients": (
+        "Every ingredient has hidden tags that affect your brew.\n"
+        "`/ingredients` — View your ingredient inventory\n"
+        "`/ingredients shop` — Buy ingredients from the daily shop\n"
+        "Some ingredients are free, others cost coins. "
+        "The shop rotates daily."
+    ),
+    "Brewing Tips": (
+        "Each ingredient adds **potency** (good) and **instability** (risky). "
+        "If instability hits the cauldron's hidden threshold — boom!\n"
+        "You can only add each ingredient once per brew.\n"
+        "`/brew journal` — Review your past brews\n"
+        "`/brew analyze <ingredient>` — See an ingredient's brew history\n"
+        "*Experiment and keep notes — the best brewers learn from every batch.*"
+    ),
+}
+
 
 class Derby(commands.Cog, name="derby"):
     def __init__(self, bot) -> None:
         self.bot = bot
 
-    @commands.hybrid_command(name="help", description="Show Downtime Derby commands and tips")
+    @commands.hybrid_group(name="help", description="Show help for Downtime Derby or Potion Panic")
     async def help_command(self, context: Context) -> None:
+        if context.invoked_subcommand is not None:
+            return
+        embed = discord.Embed(
+            title="Downtime Help",
+            description=(
+                "Pick a topic to learn more:\n\n"
+                "\U0001f3c7 `/help derby` — Racing, betting, stables, breeding, and tournaments\n"
+                "\U0001f9ea `/help brewing` — Potion Panic ingredient brewing"
+            ),
+            color=0x3498DB,
+        )
+        await context.send(embed=embed, ephemeral=True)
+
+    @help_command.command(name="derby", description="Show Downtime Derby commands and tips")
+    async def help_derby(self, context: Context) -> None:
         embed = discord.Embed(
             title="\U0001f3c7 Downtime Derby — Help",
             description="Everything you need to race, bet, train, breed, and compete.",
             color=0x3498DB,
         )
-        for category, text in HELP_CATEGORIES.items():
+        for category, text in DERBY_HELP_CATEGORIES.items():
             embed.add_field(name=category, value=text, inline=False)
         embed.set_footer(text="Use /stable view <racer> for detailed racer info and training costs.")
+        await context.send(embed=embed, ephemeral=True)
+
+    @help_command.command(name="brewing", description="Show Potion Panic brewing commands and tips")
+    async def help_brewing(self, context: Context) -> None:
+        embed = discord.Embed(
+            title="\U0001f9ea Potion Panic — Help",
+            description="Brew ingredients, build potency, and see what you can create.",
+            color=0x9B59B6,
+        )
+        for category, text in BREWING_HELP_CATEGORIES.items():
+            embed.add_field(name=category, value=text, inline=False)
+        embed.set_footer(text="What happens at higher potency? There's only one way to find out...")
         await context.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_group(name="race", description="Race commands")

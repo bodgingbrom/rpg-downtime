@@ -69,8 +69,24 @@ async def test_help_command():
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
+    ctx.invoked_subcommand = None
 
     await cog.help_command.callback(cog, ctx)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "derby" in embed.description.lower()
+    assert "brewing" in embed.description.lower()
+
+
+@pytest.mark.asyncio
+async def test_help_derby():
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    await cog.help_derby.callback(cog, ctx)
 
     assert ctx.sent
     embed = ctx.sent[0].get("embed")
@@ -82,6 +98,24 @@ async def test_help_command():
     assert "Your Stable" in field_names
     assert "Breeding" in field_names
     assert "Tournaments" in field_names
+
+
+@pytest.mark.asyncio
+async def test_help_brewing():
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    cog = derby_cog.Derby(bot)
+    ctx = DummyContext(bot)
+
+    await cog.help_brewing.callback(cog, ctx)
+
+    assert ctx.sent
+    embed = ctx.sent[0].get("embed")
+    assert embed is not None
+    assert "Potion Panic" in embed.title
+    field_names = [f.name for f in embed.fields]
+    assert "The Basics" in field_names
+    assert "Ingredients" in field_names
+    assert "Brewing Tips" in field_names
 
 
 @pytest.mark.asyncio
