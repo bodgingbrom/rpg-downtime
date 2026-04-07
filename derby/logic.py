@@ -1559,5 +1559,15 @@ async def resolve_payouts(
         })
         await session.delete(bet)
 
+    # Persist the biggest winning payout on the Race record for the daily digest
+    winning_results = [r for r in results if r["won"] and r["payout"] > 0]
+    if winning_results:
+        best = max(winning_results, key=lambda r: r["payout"])
+        race = await session.get(models.Race, race_id)
+        if race is not None:
+            race.biggest_payout = best["payout"]
+            race.biggest_payout_user_id = best["user_id"]
+            race.biggest_payout_racer_id = best["racer_id"]
+
     await session.commit()
     return results
