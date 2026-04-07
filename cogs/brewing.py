@@ -52,24 +52,31 @@ async def _brew_ingredient_autocomplete(
     async with sessionmaker() as session:
         all_ingredients = await brew_repo.get_all_ingredients(session)
         player_inv = await brew_repo.get_player_ingredients(session, user_id, guild_id)
+        revealed = await brew_repo.get_revealed_ingredients(session, user_id, guild_id)
 
     ing_map = {i.id: i for i in all_ingredients}
+    revealed_ids = {r.ingredient_id for r in revealed}
     free_items = [i for i in all_ingredients if i.rarity == "free"]
+
+    def _tag_suffix(ing):
+        if ing.id in revealed_ids:
+            return f" [{ing.tag_1}/{ing.tag_2}]"
+        return ""
 
     # Build available list: free ingredients + owned inventory
     available: list[tuple[str, str]] = []  # (label, value)
     for ing in free_items:
-        available.append((ing.name, ing.name))
+        available.append((f"{ing.name}{_tag_suffix(ing)}", ing.name))
     for pi in player_inv:
         ing = ing_map.get(pi.ingredient_id)
         if ing and ing.rarity != "free":
-            available.append((f"{ing.name} (x{pi.quantity})", ing.name))
+            available.append((f"{ing.name} (x{pi.quantity}){_tag_suffix(ing)}", ing.name))
 
     current_lower = current.lower()
     choices = []
     for label, value in available:
         if current_lower in label.lower():
-            choices.append(app_commands.Choice(name=label, value=value))
+            choices.append(app_commands.Choice(name=label[:100], value=value))
         if len(choices) >= 25:
             break
     return choices
@@ -80,14 +87,23 @@ async def _all_ingredient_autocomplete(
 ) -> list[app_commands.Choice[str]]:
     """Autocomplete showing all 28 ingredients for journal analysis."""
     sessionmaker = interaction.client.scheduler.sessionmaker
+    guild_id = interaction.guild_id or 0
+    user_id = interaction.user.id
+
     async with sessionmaker() as session:
         all_ingredients = await brew_repo.get_all_ingredients(session)
+        revealed = await brew_repo.get_revealed_ingredients(session, user_id, guild_id)
+
+    revealed_ids = {r.ingredient_id for r in revealed}
 
     current_lower = current.lower()
     choices = []
     for ing in all_ingredients:
         if current_lower in ing.name.lower():
-            choices.append(app_commands.Choice(name=ing.name, value=ing.name))
+            label = ing.name
+            if ing.id in revealed_ids:
+                label += f" [{ing.tag_1}/{ing.tag_2}]"
+            choices.append(app_commands.Choice(name=label[:100], value=ing.name))
         if len(choices) >= 25:
             break
     return choices
@@ -358,6 +374,25 @@ class Brewing(commands.Cog, name="brewing"):
             )
             threshold = random.randint(threshold_min, threshold_max)
 
+            # Check for Fortification brew effect (raises minimum threshold)
+            fort_effect = await brew_repo.get_player_brew_effect(
+                session, user_id, guild_id, "fortification"
+            )
+            fort_applied = False
+            if fort_effect is not None:
+                if threshold < fort_effect.effect_value:
+                    threshold = fort_effect.effect_value
+                    fort_applied = True
+                await brew_repo.delete_player_brew_effect(session, fort_effect.id)
+
+            # Check for Foresight brew effect (reveals threshold)
+            foresight_effect = await brew_repo.get_player_brew_effect(
+                session, user_id, guild_id, "foresight"
+            )
+            foresight_active = foresight_effect is not None
+            if foresight_effect is not None:
+                await brew_repo.delete_player_brew_effect(session, foresight_effect.id)
+
             # Create brew session
             brew_session = await brew_repo.create_brew_session(
                 session,
@@ -367,9 +402,18 @@ class Brewing(commands.Cog, name="brewing"):
                 bottle_cost=bottle_fee,
             )
 
+        desc = "You light the fire and set the cauldron to a gentle simmer. Time to brew."
+        if fort_applied:
+            desc += "\n\n\U0001f6e1\ufe0f Your **Fortification** potion reinforces the cauldron!"
+        if foresight_active:
+            desc += (
+                f"\n\n\U0001f52e Your **Foresight** potion reveals the explosion "
+                f"threshold: **{threshold}**"
+            )
+
         embed = discord.Embed(
             title="\u2697\ufe0f The Cauldron",
-            description="You light the fire and set the cauldron to a gentle simmer. Time to brew.",
+            description=desc,
             color=brew_logic.COLOR_SAFE,
         )
         embed.add_field(name="Potency", value="0", inline=True)

@@ -3,7 +3,16 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BrewIngredient, BrewSession, DangerousTriple, Ingredient, PlayerIngredient, PlayerPotion
+from .models import (
+    BrewIngredient,
+    BrewSession,
+    DangerousTriple,
+    Ingredient,
+    PlayerBrewEffect,
+    PlayerIngredient,
+    PlayerPotion,
+    RevealedIngredient,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -315,3 +324,101 @@ async def delete_player_potion(session: AsyncSession, potion_id: int) -> None:
     if potion:
         await session.delete(potion)
         await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Player brew effects (Fortification / Foresight)
+# ---------------------------------------------------------------------------
+
+
+async def create_player_brew_effect(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    guild_id: int,
+    effect_type: str,
+    effect_value: int,
+) -> PlayerBrewEffect:
+    effect = PlayerBrewEffect(
+        user_id=user_id,
+        guild_id=guild_id,
+        effect_type=effect_type,
+        effect_value=effect_value,
+    )
+    session.add(effect)
+    await session.commit()
+    await session.refresh(effect)
+    return effect
+
+
+async def get_player_brew_effect(
+    session: AsyncSession, user_id: int, guild_id: int, effect_type: str
+) -> PlayerBrewEffect | None:
+    result = await session.execute(
+        select(PlayerBrewEffect).where(
+            PlayerBrewEffect.user_id == user_id,
+            PlayerBrewEffect.guild_id == guild_id,
+            PlayerBrewEffect.effect_type == effect_type,
+        )
+    )
+    return result.scalars().first()
+
+
+async def delete_player_brew_effect(
+    session: AsyncSession, effect_id: int
+) -> None:
+    result = await session.execute(
+        select(PlayerBrewEffect).where(PlayerBrewEffect.id == effect_id)
+    )
+    effect = result.scalars().first()
+    if effect:
+        await session.delete(effect)
+        await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Revealed ingredients
+# ---------------------------------------------------------------------------
+
+
+async def create_revealed_ingredient(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    guild_id: int,
+    ingredient_id: int,
+) -> RevealedIngredient:
+    revealed = RevealedIngredient(
+        user_id=user_id,
+        guild_id=guild_id,
+        ingredient_id=ingredient_id,
+    )
+    session.add(revealed)
+    await session.commit()
+    await session.refresh(revealed)
+    return revealed
+
+
+async def get_revealed_ingredients(
+    session: AsyncSession, user_id: int, guild_id: int
+) -> list[RevealedIngredient]:
+    result = await session.execute(
+        select(RevealedIngredient).where(
+            RevealedIngredient.user_id == user_id,
+            RevealedIngredient.guild_id == guild_id,
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def is_ingredient_revealed(
+    session: AsyncSession, user_id: int, guild_id: int, ingredient_id: int
+) -> bool:
+    result = await session.execute(
+        select(RevealedIngredient).where(
+            RevealedIngredient.user_id == user_id,
+            RevealedIngredient.guild_id == guild_id,
+            RevealedIngredient.ingredient_id == ingredient_id,
+        )
+    )
+    return result.scalars().first() is not None

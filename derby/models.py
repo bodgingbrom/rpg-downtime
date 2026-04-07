@@ -175,6 +175,20 @@ class TournamentEntry(Base):
     is_pool_filler: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class RacerBuff(Base):
+    """Temporary potion buff applied to a racer for their next race/tournament."""
+
+    __tablename__ = "racer_buffs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    racer_id: Mapped[int] = mapped_column(ForeignKey("racers.id"), nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    buff_type: Mapped[str] = mapped_column(String, nullable=False)  # speed/cornering/stamina/mood/all_stats
+    value: Mapped[int] = mapped_column(Integer, nullable=False)
+    races_remaining: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 __all__ = [
     "Base",
     "Racer",
@@ -187,4 +201,5 @@ __all__ = [
     "PlayerData",
     "Tournament",
     "TournamentEntry",
+    "RacerBuff",
 ]
