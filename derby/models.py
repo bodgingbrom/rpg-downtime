@@ -118,6 +118,24 @@ class GuildSettings(Base):
     max_foals_per_female: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     racer_flavor: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     race_stat_window: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    daily_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    daily_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+
+class DailyReward(Base):
+    """Pre-generated daily check-in rewards for players."""
+
+    __tablename__ = "daily_rewards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    date: Mapped[str] = mapped_column(String, nullable=False)  # "YYYY-MM-DD"
+    racer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    racer_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    flavor_text: Mapped[str] = mapped_column(String, nullable=False)
+    claimed: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class PlayerData(Base):
@@ -164,6 +182,7 @@ __all__ = [
     "RaceEntry",
     "Bet",
     "CourseSegment",
+    "DailyReward",
     "GuildSettings",
     "PlayerData",
     "Tournament",

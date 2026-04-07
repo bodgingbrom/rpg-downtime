@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     max_foals_per_female: int = 3
     racer_flavor: str | None = None
     race_stat_window: int = 35
+    daily_min: int = 15
+    daily_max: int = 30
     tournament_enabled: bool = True
 
     @classmethod

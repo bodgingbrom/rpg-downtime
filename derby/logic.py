@@ -354,6 +354,15 @@ def rank_label(rank: str | None) -> str:
     return f"{rank}-Rank"
 
 
+# Maps rank tier to daily reward multiplier.  Better racers find better loot.
+RANK_DAILY_MULTIPLIER: dict[str, int] = {"D": 1, "C": 2, "B": 3, "A": 4, "S": 5}
+
+
+def daily_rank_multiplier(rank: str | None) -> int:
+    """Return the daily reward multiplier for a given rank tier."""
+    return RANK_DAILY_MULTIPLIER.get(rank or "D", 1)
+
+
 # ---------------------------------------------------------------------------
 # Tournament system
 # ---------------------------------------------------------------------------

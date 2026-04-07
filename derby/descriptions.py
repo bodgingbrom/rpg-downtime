@@ -150,3 +150,65 @@ async def generate_description(
     except Exception:
         logger.exception("Failed to generate racer description")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Daily reward flavor text
+# ---------------------------------------------------------------------------
+
+_RANK_ITEM_HINTS = {
+    "D": "worthless junk — rusty nails, tattered rags, chipped stones, old bones",
+    "C": "modest finds — dull blades, copper coins, cracked potions, frayed rope",
+    "B": "decent loot — polished weapons, silver trinkets, useful herbs, leather goods",
+    "A": "valuable treasure — enchanted gear, gold artifacts, rare scrolls, fine gems",
+    "S": "legendary prizes — magical relics, flawless gemstones, ancient spell scrolls, mythic artifacts",
+}
+
+
+async def generate_daily_flavor(
+    racer_name: str,
+    rank: str,
+    amount: int,
+    flavor: str,
+) -> str | None:
+    """Generate a one-sentence daily reward flavor text using Haiku.
+
+    Returns the text string, or ``None`` if the LLM is unavailable.
+    """
+    client = _get_client()
+    if client is None:
+        return None
+
+    item_hint = _RANK_ITEM_HINTS.get(rank, _RANK_ITEM_HINTS["D"])
+
+    system_prompt = (
+        f"You are narrating a racing creature game themed around: {flavor}.\n"
+        "Write exactly ONE short, fun sentence (under 25 words) about a racing "
+        "creature finding/discovering an item while exploring between races.\n"
+        f"The item should be {item_hint}.\n"
+        "Match the item's value to the coin amount given. "
+        "Be creative, specific, and playful. Include the racer's name. "
+        "Do NOT mention coins, currency, or game mechanics."
+    )
+
+    user_prompt = f"Racer: {racer_name}, Rank: {rank}, Value: {amount} coins"
+
+    try:
+        response = await asyncio.to_thread(
+            client.messages.create,
+            model=MODEL,
+            max_tokens=100,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        text = response.content[0].text.strip()
+
+        if not text:
+            logger.warning("LLM returned empty daily flavor text")
+            return None
+
+        return text
+
+    except Exception:
+        logger.exception("Failed to generate daily flavor text")
+        return None
