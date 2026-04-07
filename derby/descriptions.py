@@ -51,18 +51,22 @@ def _build_system_prompt(
     prompt = (
         f"You are describing a racing creature for a Discord game. "
         f"The guild's creature theme: {flavor}.\n\n"
-        "Write exactly 2-3 sentences describing this racer's physical appearance. "
-        "Include at least 3 distinct physical features (build, coloring, markings, etc.). "
-        "The description should subtly reflect their stats and temperament. "
-        "Do NOT include the racer's name, stat numbers, or game mechanics. "
-        "Prose only — no bullet points, headers, or formatting."
+        "Write exactly 2 short sentences describing ONLY what this racer looks like. "
+        "Cover exactly 3 physical features: build/size, coloring/markings, and one unique detail.\n\n"
+        "RULES:\n"
+        "- Describe ONLY visible appearance — what someone would see looking at the creature\n"
+        "- Do NOT infer abilities, personality, speed, agility, or competitiveness from appearance\n"
+        "- No phrases like 'hints at', 'suggests', 'built for', 'speaks to', 'capable of'\n"
+        "- No embellishments or purple prose — plain, vivid, concrete descriptions\n"
+        "- Do NOT include the racer's name, stat numbers, or game mechanics\n"
+        "- Keep it under 50 words total"
     )
 
     if sire_desc and dam_desc:
         prompt += (
-            "\n\nThis is a foal born from two parents. Blend physical traits from "
-            "both parents while adding 1-2 unique features of its own. The foal "
-            "should clearly resemble both parents but be its own individual.\n\n"
+            "\n\nThis is a foal born from two parents. Blend visible traits from "
+            "both parents and add one unique feature. It should resemble both "
+            "parents but be distinct.\n\n"
             f"Sire's appearance: {sire_desc}\n"
             f"Dam's appearance: {dam_desc}"
         )
@@ -92,10 +96,7 @@ def _build_user_prompt(
     return (
         f"Racer: {name}\n"
         f"Gender: {'Male' if gender == 'M' else 'Female'}\n"
-        f"Temperament: {temperament}\n"
-        f"Speed: {_stat_hint(speed)} (lean/sleek builds suggest speed)\n"
-        f"Cornering: {_stat_hint(cornering)} (agile/compact builds suggest cornering)\n"
-        f"Stamina: {_stat_hint(stamina)} (sturdy/muscular builds suggest stamina)"
+        f"Temperament: {temperament}"
     )
 
 
