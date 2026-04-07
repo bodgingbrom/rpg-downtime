@@ -96,19 +96,22 @@ async def unowned_racer_autocomplete(
 async def owned_racer_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[int]]:
-    """Autocomplete showing the user's owned racers."""
+    """Autocomplete showing the user's owned racers (including retired)."""
     sessionmaker = interaction.client.scheduler.sessionmaker
     guild_id = interaction.guild_id or 0
     async with sessionmaker() as session:
-        racers = await repo.get_owned_racers(
+        racers = await repo.get_stable_racers(
             session, interaction.user.id, guild_id
         )
     choices = []
     current_lower = current.lower()
     for r in racers:
         if current_lower in r.name.lower():
+            label = f"{r.name} (#{r.id})"
+            if r.retired:
+                label += " [retired]"
             choices.append(
-                app_commands.Choice(name=f"{r.name} (#{r.id})", value=r.id)
+                app_commands.Choice(name=label, value=r.id)
             )
         if len(choices) >= 25:
             break
@@ -1512,7 +1515,7 @@ class Stable(commands.Cog, name="stable"):
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
-            racers = await repo.get_owned_racers(
+            racers = await repo.get_stable_racers(
                 session, context.author.id, guild_id
             )
             gs = await repo.get_guild_settings(session, guild_id)
@@ -1538,8 +1541,9 @@ class Stable(commands.Cog, name="stable"):
             rank = logic.rank_label(getattr(r, "rank", None))
             t_wins = getattr(r, "tournament_wins", 0) or 0
             trophy = f" \U0001f3c6{t_wins}" if t_wins > 0 else ""
+            retired_tag = " \U0001f3d6\ufe0f Retired" if r.retired else ""
             embed.add_field(
-                name=f"{gender} {r.name} (#{r.id}) [{rank}]{trophy}",
+                name=f"{gender} {r.name} (#{r.id}) [{rank}]{trophy}{retired_tag}",
                 value=(
                     f"Spd {_stat_band(eff['speed'])} / "
                     f"Cor {_stat_band(eff['cornering'])} / "
