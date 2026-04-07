@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import DangerousTriple, Ingredient, PlayerIngredient
+from .models import BrewIngredient, BrewSession, DangerousTriple, Ingredient, PlayerIngredient
 
 
 # ---------------------------------------------------------------------------
@@ -128,5 +128,90 @@ async def get_all_dangerous_triples(
 ) -> list[DangerousTriple]:
     result = await session.execute(
         select(DangerousTriple).order_by(DangerousTriple.id)
+    )
+    return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Brew sessions
+# ---------------------------------------------------------------------------
+
+
+async def create_brew_session(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    guild_id: int,
+    explosion_threshold: int,
+    bottle_cost: int,
+) -> BrewSession:
+    brew = BrewSession(
+        user_id=user_id,
+        guild_id=guild_id,
+        explosion_threshold=explosion_threshold,
+        bottle_cost=bottle_cost,
+    )
+    session.add(brew)
+    await session.commit()
+    await session.refresh(brew)
+    return brew
+
+
+async def get_active_brew(
+    session: AsyncSession, user_id: int, guild_id: int
+) -> BrewSession | None:
+    result = await session.execute(
+        select(BrewSession).where(
+            BrewSession.user_id == user_id,
+            BrewSession.guild_id == guild_id,
+            BrewSession.status == "active",
+        )
+    )
+    return result.scalars().first()
+
+
+async def get_brew_session(
+    session: AsyncSession, brew_id: int
+) -> BrewSession | None:
+    result = await session.execute(
+        select(BrewSession).where(BrewSession.id == brew_id)
+    )
+    return result.scalars().first()
+
+
+# ---------------------------------------------------------------------------
+# Brew ingredients (ingredients added to a brew session)
+# ---------------------------------------------------------------------------
+
+
+async def add_brew_ingredient(
+    session: AsyncSession,
+    *,
+    brew_session_id: int,
+    ingredient_id: int,
+    add_order: int,
+    potency_gained: int,
+    instability_after: int,
+) -> BrewIngredient:
+    bi = BrewIngredient(
+        brew_session_id=brew_session_id,
+        ingredient_id=ingredient_id,
+        add_order=add_order,
+        potency_gained=potency_gained,
+        instability_after=instability_after,
+    )
+    session.add(bi)
+    await session.commit()
+    await session.refresh(bi)
+    return bi
+
+
+async def get_brew_ingredients(
+    session: AsyncSession, brew_session_id: int
+) -> list[BrewIngredient]:
+    result = await session.execute(
+        select(BrewIngredient)
+        .where(BrewIngredient.brew_session_id == brew_session_id)
+        .order_by(BrewIngredient.add_order)
     )
     return list(result.scalars().all())
