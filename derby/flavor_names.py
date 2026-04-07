@@ -83,16 +83,22 @@ async def generate_flavor_names(flavor: str) -> list[str] | None:
         return None
 
     system_prompt = (
-        "You are a creative naming assistant for a Discord racing game. "
-        "Generate exactly 100 unique racer names that fit the theme described. "
-        "Include a good mix of:\n"
-        "- Serious/cool names that fit the theme\n"
-        "- Punny names (wordplay on the theme)\n"
-        "- Funny/witty names\n"
-        "- Weird/quirky names\n"
-        "- Pop culture references twisted to fit the theme\n\n"
-        "Names should be 1-3 words, max 32 characters each. "
-        "Return ONLY the names, one per line, no numbering or formatting."
+        "You are naming racing animals for a Discord game. "
+        "Generate exactly 100 unique racer names that fit the theme described.\n\n"
+        "Study these examples from the base game to understand the STYLE:\n"
+        "- Single evocative words: Thunderhooves, Quicksilver, Brimstone, Zephyr, Moonshine\n"
+        "- Compound words: Boneshaker, Mudslinger, Stormchaser, Emberheart, Nightcrawler\n"
+        "- Clever puns: Hoof Hearted, Oat Cuisine, Neigh Sayer, Foal Play, Mane Event\n"
+        "- Oxymorons/absurd pairs: Lazy Lightning, Elegant Stumble, Silent Thunder, Dignified Panic\n"
+        "- Funny/irreverent: Tax Evasion, Glue Factory Reject, Witness Protection, Mild Salsa\n"
+        "- Internet humor: Absolute Unit, Full Send, Yeet Machine, No Ragrets\n\n"
+        "RULES:\n"
+        "- Names should feel like racing names, NOT like 'Adjective Animal Firstname' patterns\n"
+        "- NO names that are just '[Color] [Animal] [Human Name]' — those are boring\n"
+        "- Keep names 1-3 words max, under 32 characters\n"
+        "- Twist the theme into the name styles above: puns, compound words, oxymorons, absurd humor\n"
+        "- Include a good mix: ~30 cool/evocative, ~30 punny/clever, ~20 funny/absurd, ~20 weird/quirky\n"
+        "- Return ONLY the names, one per line, no numbering or formatting."
     )
 
     user_prompt = f"Theme: {flavor}"
