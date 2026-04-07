@@ -46,6 +46,7 @@ def _build_system_prompt(
     flavor: str,
     sire_desc: str | None = None,
     dam_desc: str | None = None,
+    hint: str | None = None,
 ) -> str:
     """Build the system prompt for description generation."""
     prompt = (
@@ -70,6 +71,9 @@ def _build_system_prompt(
             f"Sire's appearance: {sire_desc}\n"
             f"Dam's appearance: {dam_desc}"
         )
+
+    if hint:
+        prompt += f"\n\nAdditional direction: {hint}"
 
     return prompt
 
@@ -115,17 +119,19 @@ async def generate_description(
     flavor: str,
     sire_desc: str | None = None,
     dam_desc: str | None = None,
+    hint: str | None = None,
 ) -> str | None:
     """Generate an LLM description for a racer.
 
     Returns the description string, or ``None`` if the LLM is unavailable
-    or generation fails.
+    or generation fails.  An optional *hint* steers the output
+    (e.g. "make him look like a literal ghost").
     """
     client = _get_client()
     if client is None:
         return None
 
-    system_prompt = _build_system_prompt(flavor, sire_desc, dam_desc)
+    system_prompt = _build_system_prompt(flavor, sire_desc, dam_desc, hint=hint)
     user_prompt = _build_user_prompt(name, speed, cornering, stamina, temperament, gender)
 
     try:
