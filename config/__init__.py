@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     daily_max: int = 30
     tournament_enabled: bool = True
 
+    # Brewing / Potion Panic
+    bottle_fee: int = 10
+    base_potency: int = 10
+    min_potency_no_match: int = 2
+    triple_instability: int = 50
+    explosion_threshold_min: int = 70
+    explosion_threshold_max: int = 130
+    rare_drop_potency: int = 200
+
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":
         data: dict[str, Any]

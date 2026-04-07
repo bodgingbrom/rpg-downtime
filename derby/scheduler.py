@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from config import resolve_guild_setting
 from db_base import Base
+import brewing.models  # noqa: F401 — register brewing tables on Base
+
 from . import commentary, flavor_names, logic, models
 from . import repositories as repo
 
@@ -386,6 +388,12 @@ class DerbyScheduler:
                             f"{col_name} {col_type} DEFAULT {default}"
                         )
                     )
+        # Seed brewing reference data (ingredients + dangerous triples)
+        async with self.sessionmaker() as session:
+            from brewing.seed_data import seed_if_empty
+
+            await seed_if_empty(session)
+
         self._initialized = True
 
     async def _run(self) -> None:
