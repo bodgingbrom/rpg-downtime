@@ -19,7 +19,7 @@ class Economy(commands.Cog, name="economy"):
 
     @commands.hybrid_command(name="wallet", description="Show your wallet balance")
     async def wallet(self, context: Context) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
             wallet = await wallet_repo.get_wallet(
@@ -150,7 +150,6 @@ class Economy(commands.Cog, name="economy"):
                 ) if reward.racer_id else ""
                 embed.add_field(name="Racer", value=f"{reward.racer_name} ({rank_str})", inline=True)
             embed.add_field(name="Coins Earned", value=f"+{reward.amount}", inline=True)
-            embed.add_field(name="New Balance", value=f"{wallet.balance} coins", inline=True)
             await context.send(embed=embed)
 
 
