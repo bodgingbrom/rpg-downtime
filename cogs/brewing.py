@@ -9,6 +9,7 @@ from discord.ext import commands
 from discord.ext.commands import Context
 
 from brewing import logic as brew_logic
+from brewing import potions as brew_potions
 from brewing import repositories as brew_repo
 from brewing.shop import get_daily_shop
 from config import resolve_guild_setting
@@ -403,6 +404,16 @@ class Brewing(commands.Cog, name="brewing"):
                 )
                 return
 
+            # Enforce one-of-each ingredient limit
+            brew_ings = await brew_repo.get_brew_ingredients(session, brew_session.id)
+            if any(bi.ingredient_id == ing.id for bi in brew_ings):
+                await context.send(
+                    f"You already have **{ing.name}** in this brew. "
+                    "Each ingredient can only be added once.",
+                    ephemeral=True,
+                )
+                return
+
             # Check availability: free ingredients are always available,
             # otherwise must be in player's inventory
             if ing.rarity != "free":
@@ -423,8 +434,7 @@ class Brewing(commands.Cog, name="brewing"):
             # Track ingredient cost
             brew_session.ingredient_cost_total += ing.base_cost
 
-            # Load existing cauldron ingredients for potency calculation
-            brew_ings = await brew_repo.get_brew_ingredients(session, brew_session.id)
+            # Resolve cauldron ingredients for potency calculation
             cauldron_ingredients: list = []
             for bi in brew_ings:
                 cauldron_ing = await brew_repo.get_ingredient_by_id(
@@ -573,18 +583,42 @@ class Brewing(commands.Cog, name="brewing"):
                     )
                     rare_drop_name = drop.name
 
-            # Finalize brew
-            brew_session.status = "cashed_out"
-            brew_session.payout = payout
-            brew_session.completed_at = datetime.now(timezone.utc)
-
-            # Get ingredient names for embed
+            # Resolve brew ingredients (ordered) for potion creation + embed
             brew_ings = await brew_repo.get_brew_ingredients(session, brew_session.id)
+            cauldron_ingredients = []
             ingredient_names = []
             for bi in brew_ings:
                 ing_obj = await brew_repo.get_ingredient_by_id(session, bi.ingredient_id)
                 if ing_obj:
+                    cauldron_ingredients.append(ing_obj)
                     ingredient_names.append(ing_obj.name)
+
+            # Create potion if potency is high enough
+            potion_name = None
+            if brew_session.potency >= brew_potions.POTION_MIN_POTENCY:
+                dominant_tag = brew_potions.calculate_dominant_tag(
+                    cauldron_ingredients
+                )
+                if dominant_tag:
+                    result = brew_potions.determine_potion(
+                        dominant_tag, brew_session.potency
+                    )
+                    if result:
+                        p_type, p_value, p_name = result
+                        await brew_repo.create_player_potion(
+                            session,
+                            user_id=user_id,
+                            guild_id=guild_id,
+                            potion_type=p_type,
+                            effect_value=p_value,
+                            potion_name=p_name,
+                        )
+                        potion_name = p_name
+
+            # Finalize brew
+            brew_session.status = "cashed_out"
+            brew_session.payout = payout
+            brew_session.completed_at = datetime.now(timezone.utc)
 
             total_cost = brew_session.bottle_cost + brew_session.ingredient_cost_total
             profit = payout - total_cost
@@ -595,6 +629,8 @@ class Brewing(commands.Cog, name="brewing"):
         cashout_text = brew_logic.get_cashout_text(brew_session.potency)
         if rare_drop_name:
             cashout_text += f"\n\nA **{rare_drop_name}** crystallizes from the residue!"
+        if potion_name:
+            cashout_text += f"\n\nYou also created a **{potion_name}**!"
 
         embed = discord.Embed(
             title="\U0001f9ea Brew Complete!",

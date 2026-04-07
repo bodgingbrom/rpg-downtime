@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BrewIngredient, BrewSession, DangerousTriple, Ingredient, PlayerIngredient
+from .models import BrewIngredient, BrewSession, DangerousTriple, Ingredient, PlayerIngredient, PlayerPotion
 
 
 # ---------------------------------------------------------------------------
@@ -258,3 +258,60 @@ async def get_brews_with_ingredient(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Player potions
+# ---------------------------------------------------------------------------
+
+
+async def create_player_potion(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    guild_id: int,
+    potion_type: str,
+    effect_value: int,
+    potion_name: str,
+) -> PlayerPotion:
+    potion = PlayerPotion(
+        user_id=user_id,
+        guild_id=guild_id,
+        potion_type=potion_type,
+        effect_value=effect_value,
+        potion_name=potion_name,
+    )
+    session.add(potion)
+    await session.commit()
+    await session.refresh(potion)
+    return potion
+
+
+async def get_player_potions(
+    session: AsyncSession, user_id: int, guild_id: int
+) -> list[PlayerPotion]:
+    result = await session.execute(
+        select(PlayerPotion)
+        .where(
+            PlayerPotion.user_id == user_id,
+            PlayerPotion.guild_id == guild_id,
+        )
+        .order_by(PlayerPotion.potion_type, PlayerPotion.id)
+    )
+    return list(result.scalars().all())
+
+
+async def get_player_potion(
+    session: AsyncSession, potion_id: int
+) -> PlayerPotion | None:
+    result = await session.execute(
+        select(PlayerPotion).where(PlayerPotion.id == potion_id)
+    )
+    return result.scalars().first()
+
+
+async def delete_player_potion(session: AsyncSession, potion_id: int) -> None:
+    potion = await get_player_potion(session, potion_id)
+    if potion:
+        await session.delete(potion)
+        await session.commit()
