@@ -143,9 +143,11 @@ class Potions(commands.Cog, name="potions"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    potion = commands.hybrid_group(
-        name="potion", description="Potion Panic potion commands"
-    )
+    @commands.hybrid_group(name="potion", description="Potion Panic potion commands")
+    async def potion(self, context: Context) -> None:
+        if context.invoked_subcommand is not None:
+            return
+        await self.potion_list(context)
 
     @potion.command(name="list", description="View your potion inventory")
     async def potion_list(self, context: Context) -> None:
