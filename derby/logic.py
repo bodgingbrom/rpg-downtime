@@ -509,6 +509,8 @@ def run_tournament(
     racers: list[models.Racer],
     seed: int,
     race_map: "RaceMap | None" = None,
+    stat_buffs: dict[int, dict[str, int]] | None = None,
+    mood_buffs: dict[int, int] | None = None,
 ) -> TournamentResult:
     """Run a 3-round elimination tournament (8 → 4 → 2 → winner).
 
@@ -523,6 +525,10 @@ def run_tournament(
         Base RNG seed; each round derives its own sub-seed.
     race_map:
         Optional map; if ``None``, a random map is picked per round.
+    stat_buffs:
+        Per-racer stat bonuses from potion buffs.
+    mood_buffs:
+        Per-racer mood bonuses from potion buffs.
     """
     if len(racers) != 8:
         raise ValueError(f"Tournament requires exactly 8 racers, got {len(racers)}")
@@ -546,7 +552,10 @@ def run_tournament(
 
         # Build a pseudo-race dict for simulate_race
         race_obj: Dict[str, list] = {"racers": remaining}
-        result = simulate_race(race_obj, round_seed, race_map=round_map)
+        result = simulate_race(
+            race_obj, round_seed, race_map=round_map,
+            stat_buffs=stat_buffs, mood_buffs=mood_buffs,
+        )
 
         # Split placements into advancing and eliminated
         advancing_ids = result.placements[:cut_to]
@@ -836,21 +845,64 @@ def mood_label(value: int) -> str:
     return MOOD_LABELS.get(value, str(value))
 
 
-def effective_stats(racer: models.Racer) -> dict[str, int]:
-    """Return a racer's stats with decline penalty applied.
+def effective_stats(
+    racer: models.Racer, buffs: dict[str, int] | None = None
+) -> dict[str, int]:
+    """Return a racer's stats with decline penalty and optional buffs applied.
 
     During the decline phase (races_completed > peak_end), each stat is
     reduced by ``(races_completed - peak_end)``.  Base stats are never
     modified — the penalty is applied at simulation time only.
+
+    When *buffs* is provided, each key (speed/cornering/stamina) is added
+    after decline.  Buffed stats may exceed the normal 31 cap by design.
     """
     completed = getattr(racer, "races_completed", None) or 0
     peak = getattr(racer, "peak_end", None) or 18
     penalty = max(0, completed - peak)
-    return {
+    stats = {
         "speed": max(0, racer.speed - penalty),
         "cornering": max(0, racer.cornering - penalty),
         "stamina": max(0, racer.stamina - penalty),
     }
+    if buffs:
+        for stat, bonus in buffs.items():
+            if stat in stats:
+                stats[stat] += bonus
+    return stats
+
+
+def convert_buffs(
+    raw_buffs: dict[int, list[models.RacerBuff]],
+) -> tuple[dict[int, dict[str, int]], dict[int, int]]:
+    """Convert RacerBuff rows into simulation-ready dicts.
+
+    Returns ``(stat_buffs, mood_buffs)`` where:
+    - ``stat_buffs``: ``{racer_id: {"speed": N, "cornering": N, "stamina": N}}``
+    - ``mood_buffs``: ``{racer_id: total_mood_bonus}``
+
+    ``all_stats`` buffs are expanded to each of speed, cornering, stamina.
+    ``mood`` buffs are collected separately since mood is applied differently.
+    """
+    stat_buffs: dict[int, dict[str, int]] = {}
+    mood_buffs: dict[int, int] = {}
+    for racer_id, buffs in raw_buffs.items():
+        merged: dict[str, int] = {}
+        mood_total = 0
+        for b in buffs:
+            if b.buff_type == "mood":
+                mood_total += b.value
+            elif b.buff_type == "all_stats":
+                for s in ("speed", "cornering", "stamina"):
+                    merged[s] = merged.get(s, 0) + b.value
+                mood_total += b.value
+            else:
+                merged[b.buff_type] = merged.get(b.buff_type, 0) + b.value
+        if merged:
+            stat_buffs[racer_id] = merged
+        if mood_total:
+            mood_buffs[racer_id] = mood_total
+    return stat_buffs, mood_buffs
 
 
 def career_phase(racer: models.Racer) -> str:
@@ -1111,6 +1163,8 @@ def simulate_race(
     race: models.Race | Dict[str, list],
     seed: int,
     race_map: RaceMap | None = None,
+    stat_buffs: dict[int, dict[str, int]] | None = None,
+    mood_buffs: dict[int, int] | None = None,
 ) -> RaceResult:
     """Simulate a race and return a RaceResult.
 
@@ -1137,8 +1191,9 @@ def simulate_race(
     if has_stats and race_map and race_map.segments:
         racer_stats: Dict[int, Dict[str, int]] = {}
         for r in raw_racers:
+            buff_dict = (stat_buffs or {}).get(r.id)
             racer_stats[r.id] = apply_temperament(
-                effective_stats(r), r.temperament,
+                effective_stats(r, buffs=buff_dict), r.temperament,
             )
 
         cumulative: Dict[int, float] = {r.id: 0.0 for r in raw_racers}
@@ -1146,10 +1201,12 @@ def simulate_race(
         prev_order = [r.id for r in raw_racers]
         segment_results: List[SegmentResult] = []
 
-        # Build mood lookup for d20 rolls
-        racer_moods: Dict[int, int] = {
-            r.id: getattr(r, "mood", 3) for r in raw_racers
-        }
+        # Build mood lookup for d20 rolls (apply mood buffs, cap at 5)
+        racer_moods: Dict[int, int] = {}
+        for r in raw_racers:
+            base_mood = getattr(r, "mood", None) or 3
+            mood_bonus = (mood_buffs or {}).get(r.id, 0)
+            racer_moods[r.id] = min(5, base_mood + mood_bonus)
 
         # Roll hidden Race Day Form for each racer (mood-influenced)
         race_form: Dict[int, float] = {
