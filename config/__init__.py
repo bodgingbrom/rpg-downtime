@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     explosion_threshold_min: int = 70
     explosion_threshold_max: int = 130
     rare_drop_potency: int = 200
+    potion_min_potency: int = 100
 
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":

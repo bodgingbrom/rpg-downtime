@@ -64,6 +64,18 @@ class BrewSession(Base):
     )
 
 
+class PlayerPotion(Base):
+    __tablename__ = "player_potions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    potion_type: Mapped[str] = mapped_column(String, nullable=False)
+    effect_value: Mapped[int] = mapped_column(Integer, nullable=False)
+    potion_name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class BrewIngredient(Base):
     __tablename__ = "brew_ingredients"
 
@@ -83,6 +95,7 @@ __all__ = [
     "Ingredient",
     "DangerousTriple",
     "PlayerIngredient",
+    "PlayerPotion",
     "BrewSession",
     "BrewIngredient",
 ]
