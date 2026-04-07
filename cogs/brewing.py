@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from datetime import datetime, timezone
 
 import discord
@@ -7,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ext.commands import Context
 
-from brewing import models as brew_models
+from brewing import logic as brew_logic
 from brewing import repositories as brew_repo
 from brewing.shop import get_daily_shop
 from config import resolve_guild_setting
@@ -34,6 +35,40 @@ async def shop_ingredient_autocomplete(
         if current_lower in ing.name.lower():
             label = ing.name if ing.base_cost == 0 else f"{ing.name} — {ing.base_cost} coins"
             choices.append(app_commands.Choice(name=label, value=ing.name))
+        if len(choices) >= 25:
+            break
+    return choices
+
+
+async def _brew_ingredient_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete for brew add — shows free + owned ingredients."""
+    sessionmaker = interaction.client.scheduler.sessionmaker
+    guild_id = interaction.guild_id or 0
+    user_id = interaction.user.id
+
+    async with sessionmaker() as session:
+        all_ingredients = await brew_repo.get_all_ingredients(session)
+        player_inv = await brew_repo.get_player_ingredients(session, user_id, guild_id)
+
+    ing_map = {i.id: i for i in all_ingredients}
+    free_items = [i for i in all_ingredients if i.rarity == "free"]
+
+    # Build available list: free ingredients + owned inventory
+    available: list[tuple[str, str]] = []  # (label, value)
+    for ing in free_items:
+        available.append((ing.name, ing.name))
+    for pi in player_inv:
+        ing = ing_map.get(pi.ingredient_id)
+        if ing and ing.rarity != "free":
+            available.append((f"{ing.name} (x{pi.quantity})", ing.name))
+
+    current_lower = current.lower()
+    choices = []
+    for label, value in available:
+        if current_lower in label.lower():
+            choices.append(app_commands.Choice(name=label, value=value))
         if len(choices) >= 25:
             break
     return choices
@@ -238,6 +273,378 @@ class Brewing(commands.Cog, name="brewing"):
         else:
             embed.add_field(name="Cost", value="Free", inline=True)
         embed.set_footer(text="Use /ingredients to view your inventory")
+        await context.send(embed=embed)
+
+
+    # ------------------------------------------------------------------
+    # /brew command group
+    # ------------------------------------------------------------------
+
+    @commands.hybrid_group(name="brew", description="Potion Panic brewing commands")
+    async def brew(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await context.send(
+                "Use `/brew start`, `/brew add`, `/brew cashout`, or `/brew status`.",
+                ephemeral=True,
+            )
+
+    @brew.command(name="start", description="Pay the bottle fee and begin a new brew")
+    async def brew_start(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            # Check for existing active brew
+            active = await brew_repo.get_active_brew(session, user_id, guild_id)
+            if active is not None:
+                await context.send(
+                    "You already have an active brew! "
+                    "Use `/brew add` to continue or `/brew cashout` to finish it.",
+                    ephemeral=True,
+                )
+                return
+
+            # Resolve bottle fee from config
+            gs = await repo.get_guild_settings(session, guild_id)
+            bottle_fee = resolve_guild_setting(gs, self.bot.settings, "bottle_fee")
+
+            # Get/create wallet and check balance
+            wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
+            if wallet is None:
+                default_bal = resolve_guild_setting(
+                    gs, self.bot.settings, "default_wallet"
+                )
+                wallet = await wallet_repo.create_wallet(
+                    session, user_id=user_id, guild_id=guild_id, balance=default_bal,
+                )
+
+            if wallet.balance < bottle_fee:
+                await context.send(
+                    f"Not enough coins! The bottle fee is **{bottle_fee} coins** "
+                    f"but you only have **{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            # Deduct bottle fee
+            wallet.balance -= bottle_fee
+
+            # Generate random explosion threshold
+            threshold_min = resolve_guild_setting(
+                gs, self.bot.settings, "explosion_threshold_min"
+            )
+            threshold_max = resolve_guild_setting(
+                gs, self.bot.settings, "explosion_threshold_max"
+            )
+            threshold = random.randint(threshold_min, threshold_max)
+
+            # Create brew session
+            brew_session = await brew_repo.create_brew_session(
+                session,
+                user_id=user_id,
+                guild_id=guild_id,
+                explosion_threshold=threshold,
+                bottle_cost=bottle_fee,
+            )
+
+        embed = discord.Embed(
+            title="\u2697\ufe0f The Cauldron",
+            description="You light the fire and set the cauldron to a gentle simmer. Time to brew.",
+            color=brew_logic.COLOR_SAFE,
+        )
+        embed.add_field(name="Potency", value="0", inline=True)
+        embed.add_field(name="Bottle Fee", value=f"{bottle_fee} coins", inline=True)
+        embed.set_footer(text="/brew add <ingredient> to begin")
+        await context.send(embed=embed)
+
+    @brew.command(name="add", description="Add an ingredient to your active brew")
+    @app_commands.describe(ingredient="The ingredient to add")
+    @app_commands.autocomplete(ingredient=_brew_ingredient_autocomplete)
+    async def brew_add(self, context: Context, ingredient: str) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            # Get active brew
+            brew_session = await brew_repo.get_active_brew(session, user_id, guild_id)
+            if brew_session is None:
+                await context.send(
+                    "You don't have an active brew. Use `/brew start` first.",
+                    ephemeral=True,
+                )
+                return
+
+            # Resolve ingredient
+            ing = await brew_repo.get_ingredient_by_name(session, ingredient)
+            if ing is None:
+                await context.send(
+                    f"Unknown ingredient: **{ingredient}**.",
+                    ephemeral=True,
+                )
+                return
+
+            # Check availability: free ingredients are always available,
+            # otherwise must be in player's inventory
+            if ing.rarity != "free":
+                player_ing = await brew_repo.get_player_ingredient(
+                    session, user_id, guild_id, ing.id
+                )
+                if player_ing is None or player_ing.quantity < 1:
+                    await context.send(
+                        f"You don't have any **{ing.name}** in your inventory.",
+                        ephemeral=True,
+                    )
+                    return
+                # Consume from inventory
+                await brew_repo.remove_player_ingredient(
+                    session, user_id, guild_id, ing.id, 1
+                )
+
+            # Track ingredient cost
+            brew_session.ingredient_cost_total += ing.base_cost
+
+            # Load existing cauldron ingredients for potency calculation
+            brew_ings = await brew_repo.get_brew_ingredients(session, brew_session.id)
+            cauldron_ingredients: list = []
+            for bi in brew_ings:
+                cauldron_ing = await brew_repo.get_ingredient_by_id(
+                    session, bi.ingredient_id
+                )
+                if cauldron_ing:
+                    cauldron_ingredients.append(cauldron_ing)
+
+            # Calculate potency gain
+            gs = await repo.get_guild_settings(session, guild_id)
+            base_potency = resolve_guild_setting(
+                gs, self.bot.settings, "base_potency"
+            )
+            min_no_match = resolve_guild_setting(
+                gs, self.bot.settings, "min_potency_no_match"
+            )
+            potency_gain = brew_logic.calculate_potency(
+                ing, cauldron_ingredients, base_potency, min_no_match
+            )
+            brew_session.potency += potency_gain
+
+            # Calculate instability (recalculate from scratch)
+            all_cauldron = cauldron_ingredients + [ing]
+            all_tags = brew_logic.collect_cauldron_tags(all_cauldron)
+            triples = await brew_repo.get_all_dangerous_triples(session)
+            new_instability = brew_logic.calculate_instability(all_tags, triples)
+            brew_session.instability = new_instability
+
+            # Record the addition
+            add_order = len(brew_ings) + 1
+            await brew_repo.add_brew_ingredient(
+                session,
+                brew_session_id=brew_session.id,
+                ingredient_id=ing.id,
+                add_order=add_order,
+                potency_gained=potency_gain,
+                instability_after=new_instability,
+            )
+
+            # Build ingredient name list for embed
+            ingredient_names = [
+                (await brew_repo.get_ingredient_by_id(session, bi.ingredient_id)).name
+                for bi in brew_ings
+            ]
+            ingredient_names.append(ing.name)
+
+            # Check for explosion
+            if brew_logic.check_explosion(new_instability, brew_session.explosion_threshold):
+                brew_session.status = "exploded"
+                brew_session.completed_at = datetime.now(timezone.utc)
+                await session.commit()
+
+                total_lost = brew_session.bottle_cost + brew_session.ingredient_cost_total
+                embed = discord.Embed(
+                    title="\U0001f4a5 CATASTROPHIC FAILURE",
+                    description=brew_logic.get_explosion_text(),
+                    color=brew_logic.COLOR_EXPLODED,
+                )
+                embed.add_field(
+                    name="Final Potency", value=str(brew_session.potency), inline=True
+                )
+                embed.add_field(
+                    name="Coins Lost", value=f"{total_lost} coins", inline=True
+                )
+                embed.add_field(
+                    name="Ingredients Lost",
+                    value=", ".join(ingredient_names),
+                    inline=False,
+                )
+                await context.send(embed=embed)
+                return
+
+            await session.commit()
+
+        # Success — cauldron embed
+        color = brew_logic.get_instability_color(new_instability)
+        flavor = brew_logic.get_flavor_text(new_instability)
+
+        embed = discord.Embed(
+            title="\u2697\ufe0f The Cauldron",
+            description=flavor,
+            color=color,
+        )
+        embed.add_field(
+            name="Potency",
+            value=f"{brew_session.potency} (+{potency_gain})",
+            inline=True,
+        )
+        embed.add_field(
+            name="Ingredients Added", value=str(add_order), inline=True
+        )
+        embed.add_field(
+            name="Ingredients",
+            value=", ".join(ingredient_names),
+            inline=False,
+        )
+        embed.set_footer(
+            text="/brew add <ingredient> to continue | /brew cashout to bottle it"
+        )
+        await context.send(embed=embed)
+
+    @brew.command(name="cashout", description="Bottle your brew and collect the payout")
+    async def brew_cashout(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            brew_session = await brew_repo.get_active_brew(session, user_id, guild_id)
+            if brew_session is None:
+                await context.send(
+                    "You don't have an active brew to cash out.",
+                    ephemeral=True,
+                )
+                return
+
+            # Calculate payout
+            payout = brew_logic.calculate_payout(brew_session.potency)
+
+            # Add payout to wallet
+            wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
+            if wallet is None:
+                gs = await repo.get_guild_settings(session, guild_id)
+                default_bal = resolve_guild_setting(
+                    gs, self.bot.settings, "default_wallet"
+                )
+                wallet = await wallet_repo.create_wallet(
+                    session, user_id=user_id, guild_id=guild_id, balance=default_bal,
+                )
+            wallet.balance += payout
+
+            # Rare ingredient drop at 200+ potency
+            rare_drop_name = None
+            gs = await repo.get_guild_settings(session, guild_id)
+            rare_threshold = resolve_guild_setting(
+                gs, self.bot.settings, "rare_drop_potency"
+            )
+            if brew_session.potency >= rare_threshold:
+                rare_ingredients = await brew_repo.get_ingredients_by_rarity(
+                    session, "rare"
+                )
+                if rare_ingredients:
+                    drop = random.choice(rare_ingredients)
+                    await brew_repo.add_player_ingredient(
+                        session, user_id, guild_id, drop.id, 1
+                    )
+                    rare_drop_name = drop.name
+
+            # Finalize brew
+            brew_session.status = "cashed_out"
+            brew_session.payout = payout
+            brew_session.completed_at = datetime.now(timezone.utc)
+
+            # Get ingredient names for embed
+            brew_ings = await brew_repo.get_brew_ingredients(session, brew_session.id)
+            ingredient_names = []
+            for bi in brew_ings:
+                ing_obj = await brew_repo.get_ingredient_by_id(session, bi.ingredient_id)
+                if ing_obj:
+                    ingredient_names.append(ing_obj.name)
+
+            total_cost = brew_session.bottle_cost + brew_session.ingredient_cost_total
+            profit = payout - total_cost
+
+            await session.commit()
+
+        # Cashout embed
+        cashout_text = brew_logic.get_cashout_text(brew_session.potency)
+        if rare_drop_name:
+            cashout_text += f"\n\nA **{rare_drop_name}** crystallizes from the residue!"
+
+        embed = discord.Embed(
+            title="\U0001f9ea Brew Complete!",
+            description=cashout_text,
+            color=brew_logic.COLOR_CASHOUT,
+        )
+        embed.add_field(
+            name="Final Potency", value=str(brew_session.potency), inline=True
+        )
+        embed.add_field(name="Payout", value=f"{payout} coins", inline=True)
+        embed.add_field(
+            name="Profit",
+            value=f"{profit:+d} coins",
+            inline=True,
+        )
+        embed.add_field(
+            name="Ingredients Used",
+            value=", ".join(ingredient_names) if ingredient_names else "None",
+            inline=False,
+        )
+        embed.set_footer(text=f"Balance: {wallet.balance} coins")
+        await context.send(embed=embed)
+
+    @brew.command(name="status", description="View your current active brew")
+    async def brew_status(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            brew_session = await brew_repo.get_active_brew(session, user_id, guild_id)
+            if brew_session is None:
+                await context.send(
+                    "You don't have an active brew. Use `/brew start` to begin one.",
+                    ephemeral=True,
+                )
+                return
+
+            brew_ings = await brew_repo.get_brew_ingredients(session, brew_session.id)
+            ingredient_names = []
+            for bi in brew_ings:
+                ing_obj = await brew_repo.get_ingredient_by_id(session, bi.ingredient_id)
+                if ing_obj:
+                    ingredient_names.append(ing_obj.name)
+
+        color = brew_logic.get_instability_color(brew_session.instability)
+        flavor = brew_logic.get_flavor_text(brew_session.instability)
+
+        embed = discord.Embed(
+            title="\u2697\ufe0f The Cauldron",
+            description=flavor,
+            color=color,
+        )
+        embed.add_field(
+            name="Potency", value=str(brew_session.potency), inline=True
+        )
+        embed.add_field(
+            name="Ingredients Added", value=str(len(brew_ings)), inline=True
+        )
+        if ingredient_names:
+            embed.add_field(
+                name="Ingredients",
+                value=", ".join(ingredient_names),
+                inline=False,
+            )
+        embed.set_footer(
+            text="/brew add <ingredient> to continue | /brew cashout to bottle it"
+        )
         await context.send(embed=embed)
 
 
