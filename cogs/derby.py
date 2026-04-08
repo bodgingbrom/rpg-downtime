@@ -1758,6 +1758,138 @@ class Stable(commands.Cog, name="stable"):
             )
         await context.send(embed=embed)
 
+    _RANK_ORDER = {"D": 0, "C": 1, "B": 2, "A": 3, "S": 4}
+
+    @stable.command(name="report", description="Get a status report on your stable")
+    async def stable_report(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            all_racers = await repo.get_stable_racers(session, user_id, guild_id)
+            if not all_racers:
+                await context.send(
+                    "You don't own any racers yet! Use `/stable browse` to get started.",
+                    ephemeral=True,
+                )
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+            min_train = self._resolve("min_training_to_race", gs)
+
+            active = [r for r in all_racers if not r.retired]
+            retired = [r for r in all_racers if r.retired]
+
+            # --- Section 1: Racer Status ---
+            status_lines: list[str] = []
+            for r in active:
+                rank = logic.rank_label(r.rank)
+                remaining = r.career_length - r.races_completed
+                phase = logic.career_phase(r)
+
+                notes: list[str] = []
+
+                if r.injury_races_remaining > 0:
+                    icon = "\U0001f534"  # red
+                    injury_name = r.injuries or "injured"
+                    notes.append(f"Injured: {injury_name} ({r.injury_races_remaining} races)")
+                elif remaining <= 3:
+                    icon = "\u26a0\ufe0f"  # warning
+                    notes.append(f"Retiring Soon ({remaining} races left)")
+                elif r.races_completed > r.peak_end:
+                    icon = "\U0001f4c9"  # declining
+                    decline = r.races_completed - r.peak_end
+                    notes.append(f"Declining (-{decline})")
+                elif r.sire_id is not None and (r.training_count or 0) < min_train:
+                    icon = "\U0001f7e1"  # yellow
+                    notes.append(f"Training: {r.training_count or 0}/{min_train}")
+                else:
+                    icon = "\U0001f7e2"  # green
+                    notes.append(f"Ready ({phase}, {remaining} races left)")
+
+                if r.breed_cooldown and r.breed_cooldown > 0:
+                    notes.append(f"Breed cooldown: {r.breed_cooldown} races")
+
+                status_lines.append(
+                    f"{icon} **{r.name}** [{rank}] — {', '.join(notes)}"
+                )
+
+            if retired:
+                status_lines.append(
+                    f"\U0001f3d6\ufe0f {len(retired)} retired racer{'s' if len(retired) != 1 else ''}"
+                )
+
+            # --- Section 2: Tournament Eligibility ---
+            tournament_lines: list[str] = []
+            # Get unique ranks among active racers
+            racer_ranks: dict[str, list] = {}
+            for r in active:
+                if r.rank:
+                    racer_ranks.setdefault(r.rank, []).append(r)
+
+            for rank in sorted(racer_ranks.keys(), key=lambda x: self._RANK_ORDER.get(x, 0)):
+                tournament = await repo.get_pending_tournament(session, guild_id, rank)
+                if tournament is None:
+                    continue
+                # Check registration
+                entry = await repo.get_player_tournament_entry(
+                    session, tournament.id, user_id
+                )
+                best_racer = racer_ranks[rank][0]
+                if entry:
+                    tournament_lines.append(
+                        f"  {rank}-Rank: **{best_racer.name}** — \u2705 Registered"
+                    )
+                else:
+                    injured_note = " (injured!)" if best_racer.injury_races_remaining > 0 else ""
+                    tournament_lines.append(
+                        f"  {rank}-Rank: **{best_racer.name}** eligible — \u274c Not registered{injured_note}"
+                    )
+
+            # --- Section 3: Summary ---
+            best_rank = max(
+                (r.rank for r in active if r.rank),
+                key=lambda x: self._RANK_ORDER.get(x, 0),
+                default="Unranked",
+            )
+            closest_retirement = None
+            min_remaining = float("inf")
+            for r in active:
+                rem = r.career_length - r.races_completed
+                if rem < min_remaining:
+                    min_remaining = rem
+                    closest_retirement = r
+
+            summary_parts = [
+                f"Active: {len(active)}",
+                f"Retired: {len(retired)}",
+                f"Best: {logic.rank_label(best_rank)}",
+            ]
+            if closest_retirement:
+                rem = closest_retirement.career_length - closest_retirement.races_completed
+                summary_parts.append(
+                    f"Next retirement: {closest_retirement.name} ({rem} races)"
+                )
+
+        embed = discord.Embed(
+            title=f"\U0001f4cb {context.author.display_name}'s Stable Report",
+            color=0x3498DB,
+        )
+        embed.add_field(
+            name="\U0001f40e Racer Status",
+            value="\n".join(status_lines) if status_lines else "No racers",
+            inline=False,
+        )
+        if tournament_lines:
+            embed.add_field(
+                name="\U0001f3c6 Tournaments",
+                value="\n".join(tournament_lines),
+                inline=False,
+            )
+        embed.set_footer(text="\U0001f4ca " + " | ".join(summary_parts))
+        await context.send(embed=embed)
+
     @stable.command(name="view", description="View a racer's full profile")
     @app_commands.describe(racer="Racer to view")
     @app_commands.autocomplete(racer=viewable_racer_autocomplete)
