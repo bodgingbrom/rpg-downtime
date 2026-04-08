@@ -37,6 +37,7 @@ class Racer(Base):
     tournament_placements: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     pool_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    npc_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
 
 class Race(Base):
@@ -178,6 +179,27 @@ class TournamentEntry(Base):
     is_pool_filler: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class NPC(Base):
+    """A persistent NPC rival trainer with personality and quips."""
+
+    __tablename__ = "npcs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    personality: Mapped[str] = mapped_column(String, nullable=False)  # archetype label
+    personality_desc: Mapped[str] = mapped_column(String, nullable=False)  # LLM context
+    rank_min: Mapped[str] = mapped_column(String, nullable=False)  # e.g. "D"
+    rank_max: Mapped[str] = mapped_column(String, nullable=False)  # e.g. "C"
+    win_quips: Mapped[str] = mapped_column(String, default="[]")  # JSON list
+    loss_quips: Mapped[str] = mapped_column(String, default="[]")  # JSON list
+    win_quips_used: Mapped[str] = mapped_column(String, default="[]")  # JSON list of indices
+    loss_quips_used: Mapped[str] = mapped_column(String, default="[]")  # JSON list of indices
+    emoji: Mapped[str] = mapped_column(String, default="")
+    catchphrase: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class RacerBuff(Base):
     """Temporary potion buff applied to a racer for their next race/tournament."""
 
@@ -204,5 +226,6 @@ __all__ = [
     "PlayerData",
     "Tournament",
     "TournamentEntry",
+    "NPC",
     "RacerBuff",
 ]

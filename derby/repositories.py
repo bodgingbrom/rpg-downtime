@@ -12,6 +12,7 @@ from .models import (
     CourseSegment,
     DailyReward,
     GuildSettings,
+    NPC,
     PlayerData,
     Race,
     RaceEntry,
@@ -86,6 +87,7 @@ async def create_racer(
     rank: str | None = None,
     description: str | None = None,
     pool_expires_at: datetime | None = None,
+    npc_id: int | None = None,
 ) -> Racer:
     return await _create(
         session,
@@ -111,6 +113,7 @@ async def create_racer(
         rank=rank,
         description=description,
         pool_expires_at=pool_expires_at,
+        npc_id=npc_id,
     )
 
 
@@ -498,6 +501,57 @@ async def get_racer_owner_ids(session: AsyncSession, guild_id: int) -> list[int]
         ).distinct()
     )
     return [row[0] for row in result.all()]
+
+
+# ---------------------------------------------------------------------------
+# NPC trainers
+# ---------------------------------------------------------------------------
+
+
+async def create_npc(session: AsyncSession, **kwargs) -> NPC:
+    return await _create(session, NPC, **kwargs)
+
+
+async def get_npc(session: AsyncSession, npc_id: int) -> NPC | None:
+    return await _get(session, NPC, npc_id)
+
+
+async def update_npc(session: AsyncSession, npc_id: int, **kwargs) -> NPC | None:
+    return await _update(session, NPC, npc_id, **kwargs)
+
+
+async def delete_npc(session: AsyncSession, npc_id: int) -> None:
+    await _delete(session, NPC, npc_id)
+
+
+async def get_guild_npcs(session: AsyncSession, guild_id: int) -> list[NPC]:
+    """Return all NPCs for a guild."""
+    result = await session.execute(
+        select(NPC).where(NPC.guild_id == guild_id)
+    )
+    return list(result.scalars().all())
+
+
+async def get_npc_racers(session: AsyncSession, npc_id: int) -> list[Racer]:
+    """Return racers belonging to a specific NPC."""
+    result = await session.execute(
+        select(Racer).where(Racer.npc_id == npc_id, Racer.retired.is_(False))
+    )
+    return list(result.scalars().all())
+
+
+async def get_guild_npc_racers(
+    session: AsyncSession, guild_id: int
+) -> list[Racer]:
+    """Return all non-retired NPC-owned racers in a guild."""
+    result = await session.execute(
+        select(Racer).where(
+            Racer.guild_id == guild_id,
+            Racer.npc_id.isnot(None),
+            Racer.retired.is_(False),
+        )
+    )
+    return list(result.scalars().all())
 
 
 # ---------------------------------------------------------------------------
