@@ -16,7 +16,7 @@ from config import resolve_guild_setting
 from db_base import Base
 import brewing.models  # noqa: F401 — register brewing tables on Base
 
-from . import commentary, flavor_names, logic, models
+from . import commentary, flavor_names, logic, models, npc_generation, npc_quips
 from . import repositories as repo
 
 
@@ -201,6 +201,7 @@ class DerbyScheduler:
                 "tournament_placements": ("INTEGER", "0"),
                 "description": ("TEXT", "NULL"),
                 "pool_expires_at": ("DATETIME", "NULL"),
+                "npc_id": ("INTEGER", "NULL"),
             }
             for name, (col_type, default) in racer_migrations.items():
                 if name not in racer_columns:
@@ -574,6 +575,109 @@ class DerbyScheduler:
                 extra={"guild_id": guild_id},
             )
 
+    async def _ensure_guild_npcs(self, guild_id: int) -> None:
+        """Generate NPC trainers for a guild if it has a racer_flavor and no NPCs.
+
+        Each NPC gets 2 racers (one per rank in their band) and a pool of quips.
+        """
+        gs = await self._load_guild_settings(guild_id)
+        racer_flavor = self._resolve("racer_flavor", gs)
+        if not racer_flavor:
+            return
+
+        async with self.sessionmaker() as session:
+            existing = await repo.get_guild_npcs(session, guild_id)
+            if existing:
+                return  # NPCs already generated
+
+        self.bot.logger.info(
+            "Generating NPC trainers for theme: %s",
+            racer_flavor,
+            extra={"guild_id": guild_id},
+        )
+
+        npcs_data = await npc_generation.generate_guild_npcs(racer_flavor)
+        if not npcs_data:
+            self.bot.logger.warning(
+                "Failed to generate NPCs — skipping",
+                extra={"guild_id": guild_id},
+            )
+            return
+
+        from . import descriptions
+
+        async with self.sessionmaker() as session:
+            for npc_data in npcs_data:
+                # Generate quips
+                win_quips = await npc_generation.generate_npc_quips(
+                    npc_data["name"], npc_data["personality_desc"],
+                    racer_flavor, "win", count=20,
+                )
+                loss_quips = await npc_generation.generate_npc_quips(
+                    npc_data["name"], npc_data["personality_desc"],
+                    racer_flavor, "loss", count=15,
+                )
+
+                npc = await repo.create_npc(
+                    session,
+                    guild_id=guild_id,
+                    name=npc_data["name"],
+                    personality=npc_data["personality"],
+                    personality_desc=npc_data["personality_desc"],
+                    rank_min=npc_data["rank_min"],
+                    rank_max=npc_data["rank_max"],
+                    win_quips=json.dumps(win_quips or []),
+                    loss_quips=json.dumps(loss_quips or []),
+                    emoji=npc_data.get("emoji", ""),
+                    catchphrase=npc_data.get("catchphrase", ""),
+                )
+
+                # Create 2 racers for this NPC
+                for rank_key, name_key in [
+                    ("rank_min", "racer1_name"),
+                    ("rank_max", "racer2_name"),
+                ]:
+                    rank = npc_data[rank_key]
+                    racer_name = npc_data[name_key]
+                    stats = npc_generation.generate_racer_stats_for_rank(rank)
+                    temperament = random.choice(npc_generation.TEMPERAMENTS)
+                    gender = random.choice(["M", "F"])
+
+                    racer = await repo.create_racer(
+                        session,
+                        name=racer_name,
+                        owner_id=0,
+                        guild_id=guild_id,
+                        speed=stats["speed"],
+                        cornering=stats["cornering"],
+                        stamina=stats["stamina"],
+                        temperament=temperament,
+                        gender=gender,
+                        rank=rank,
+                        npc_id=npc.id,
+                    )
+
+                    # Generate description if flavor is set
+                    try:
+                        desc = await descriptions.generate_description(
+                            racer, racer_flavor
+                        )
+                        if desc:
+                            await repo.update_racer(
+                                session, racer.id, description=desc
+                            )
+                    except Exception:
+                        pass  # Description is optional
+
+                self.bot.logger.info(
+                    "Created NPC: %s (%s, %s-%s rank)",
+                    npc_data["name"],
+                    npc_data["personality"],
+                    npc_data["rank_min"],
+                    npc_data["rank_max"],
+                    extra={"guild_id": guild_id},
+                )
+
     async def _ensure_pending_races(self) -> None:
         """Ensure each guild has a pending race with participants.
 
@@ -581,6 +685,7 @@ class DerbyScheduler:
         """
         for guild in self.bot.guilds:
             await self._ensure_flavor_names(guild.id)
+            await self._ensure_guild_npcs(guild.id)
             await self._replenish_pool(guild.id)
 
             async with self.sessionmaker() as session:
@@ -1138,10 +1243,125 @@ class DerbyScheduler:
             value=f"**{winner_name}**",
             inline=False,
         )
+
+        # NPC trainer reactions
+        npc_reactions = await self._get_npc_reactions(placements)
+        if npc_reactions:
+            embed.add_field(
+                name="\U0001f4ac Trainer Reactions",
+                value="\n".join(npc_reactions),
+                inline=False,
+            )
+
         try:
             await channel.send(embed=embed)
         except (discord.Forbidden, discord.HTTPException):
             return
+
+    async def _get_npc_reactions(
+        self, placements: list[int]
+    ) -> list[str]:
+        """Check if any NPC racers won or finished last, return quip lines."""
+        if not placements:
+            return []
+
+        reactions: list[str] = []
+        async with self.sessionmaker() as session:
+            # Check winner (1st place)
+            winner_racer = await repo.get_racer(session, placements[0])
+            if winner_racer and winner_racer.npc_id:
+                npc = await repo.get_npc(session, winner_racer.npc_id)
+                if npc:
+                    quips = npc_quips.parse_quips(npc.win_quips)
+                    used = npc_quips.parse_used(npc.win_quips_used)
+                    if quips:
+                        quip, used = npc_quips.pick_quip(quips, used)
+                        await repo.update_npc(
+                            session, npc.id,
+                            win_quips_used=json.dumps(used),
+                        )
+                        emoji = f"{npc.emoji} " if npc.emoji else ""
+                        reactions.append(f"{emoji}**{npc.name}:** \"{quip}\"")
+                        # Fire-and-forget quip regeneration check
+                        if npc_quips.should_regenerate(quips, used):
+                            gs = await self._load_guild_settings(
+                                winner_racer.guild_id
+                            )
+                            flavor = self._resolve("racer_flavor", gs) or ""
+                            asyncio.create_task(
+                                self._regenerate_npc_quips(
+                                    npc, flavor, "win"
+                                )
+                            )
+
+            # Check last place (40% chance)
+            if len(placements) >= 2:
+                last_racer = await repo.get_racer(session, placements[-1])
+                if last_racer and last_racer.npc_id and random.random() < 0.4:
+                    npc = await repo.get_npc(session, last_racer.npc_id)
+                    if npc:
+                        quips = npc_quips.parse_quips(npc.loss_quips)
+                        used = npc_quips.parse_used(npc.loss_quips_used)
+                        if quips:
+                            quip, used = npc_quips.pick_quip(quips, used)
+                            await repo.update_npc(
+                                session, npc.id,
+                                loss_quips_used=json.dumps(used),
+                            )
+                            emoji = f"{npc.emoji} " if npc.emoji else ""
+                            reactions.append(
+                                f"{emoji}**{npc.name}:** \"{quip}\""
+                            )
+                            if npc_quips.should_regenerate(quips, used):
+                                gs = await self._load_guild_settings(
+                                    last_racer.guild_id
+                                )
+                                flavor = self._resolve("racer_flavor", gs) or ""
+                                asyncio.create_task(
+                                    self._regenerate_npc_quips(
+                                        npc, flavor, "loss"
+                                    )
+                                )
+
+        return reactions
+
+    async def _regenerate_npc_quips(
+        self, npc: models.NPC, racer_flavor: str, quip_type: str
+    ) -> None:
+        """Background task to regenerate quips for an NPC when pool is exhausted."""
+        try:
+            if quip_type == "win":
+                existing = npc_quips.parse_quips(npc.win_quips)
+            else:
+                existing = npc_quips.parse_quips(npc.loss_quips)
+
+            new_quips = await npc_generation.generate_npc_quips(
+                npc.name, npc.personality_desc, racer_flavor,
+                quip_type, count=20 if quip_type == "win" else 15,
+                existing_quips=existing,
+            )
+            if new_quips:
+                async with self.sessionmaker() as session:
+                    if quip_type == "win":
+                        await repo.update_npc(
+                            session, npc.id,
+                            win_quips=json.dumps(new_quips),
+                            win_quips_used="[]",
+                        )
+                    else:
+                        await repo.update_npc(
+                            session, npc.id,
+                            loss_quips=json.dumps(new_quips),
+                            loss_quips_used="[]",
+                        )
+                self.bot.logger.info(
+                    "Regenerated %s quips for NPC %s",
+                    quip_type, npc.name,
+                )
+        except Exception:
+            self.bot.logger.exception(
+                "Failed to regenerate quips for NPC %s", npc.name
+            )
 
     BET_TYPE_LABELS = {
         "win": "Win",
@@ -1340,11 +1560,25 @@ class DerbyScheduler:
             title="Race Starting Soon",
             description=desc,
         )
+        # Pre-load NPC names for display
+        npc_names: dict[int, str] = {}
+        npc_ids = {r.npc_id for r in racers if r.npc_id}
+        if npc_ids:
+            async with self.sessionmaker() as session:
+                for npc_id in npc_ids:
+                    npc = await repo.get_npc(session, npc_id)
+                    if npc:
+                        prefix = f"{npc.emoji} " if npc.emoji else ""
+                        npc_names[npc_id] = f"{prefix}{npc.name}"
+
         for r in racers:
+            trainer_tag = ""
+            if r.npc_id and r.npc_id in npc_names:
+                trainer_tag = f" — *{npc_names[r.npc_id]}'s racer*"
             mult = odds.get(r.id, 0)
             embed.add_field(
                 name=f"{r.name} (#{r.id})",
-                value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}",
+                value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}{trainer_tag}",
                 inline=False,
             )
         embed.add_field(
@@ -1376,16 +1610,108 @@ class DerbyScheduler:
         if channel is None:
             return
         for racer in retirements:
-            embed = discord.Embed(
-                title=f"\U0001f3c6 Retirement: {racer.name}",
-                description=(
-                    f"**{racer.name}** retires after {racer.races_completed} races!"
-                ),
+            if racer.npc_id:
+                # NPC racer retirement — create replacement and announce
+                await self._handle_npc_retirement(
+                    guild_id, racer, channel
+                )
+            else:
+                embed = discord.Embed(
+                    title=f"\U0001f3c6 Retirement: {racer.name}",
+                    description=(
+                        f"**{racer.name}** retires after {racer.races_completed} races!"
+                    ),
+                )
+                try:
+                    await channel.send(embed=embed)
+                except (discord.Forbidden, discord.HTTPException):
+                    continue
+
+    async def _handle_npc_retirement(
+        self,
+        guild_id: int,
+        racer: models.Racer,
+        channel: discord.abc.Messageable,
+    ) -> None:
+        """Replace a retired NPC racer and announce the change."""
+        async with self.sessionmaker() as session:
+            npc = await repo.get_npc(session, racer.npc_id)
+            if npc is None:
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+            racer_flavor = self._resolve("racer_flavor", gs) or ""
+
+            # Get taken names for uniqueness
+            result = await session.execute(
+                select(models.Racer.name).where(
+                    models.Racer.guild_id == guild_id,
+                    models.Racer.retired.is_(False),
+                )
             )
-            try:
-                await channel.send(embed=embed)
-            except (discord.Forbidden, discord.HTTPException):
-                continue
+            taken_names = {row[0] for row in result.all()}
+
+            # Generate a new name via LLM, fall back to "{old name} II"
+            new_name = None
+            if racer_flavor:
+                new_name = await npc_generation.generate_npc_racer_name(
+                    npc.name, npc.personality_desc,
+                    racer_flavor, taken_names,
+                )
+            if not new_name:
+                new_name = f"{racer.name} II"
+                if new_name in taken_names:
+                    new_name = f"{racer.name} III"
+
+            # Generate stats for the same rank
+            rank = racer.rank or "D"
+            stats = npc_generation.generate_racer_stats_for_rank(rank)
+            temperament = random.choice(npc_generation.TEMPERAMENTS)
+            gender = random.choice(["M", "F"])
+
+            new_racer = await repo.create_racer(
+                session,
+                name=new_name,
+                owner_id=0,
+                guild_id=guild_id,
+                speed=stats["speed"],
+                cornering=stats["cornering"],
+                stamina=stats["stamina"],
+                temperament=temperament,
+                gender=gender,
+                rank=rank,
+                npc_id=npc.id,
+            )
+
+            # Generate description
+            if racer_flavor:
+                from . import descriptions
+                try:
+                    desc = await descriptions.generate_description(
+                        new_racer, racer_flavor
+                    )
+                    if desc:
+                        await repo.update_racer(
+                            session, new_racer.id, description=desc
+                        )
+                except Exception:
+                    pass
+
+        # Announce
+        emoji = f"{npc.emoji} " if npc.emoji else ""
+        embed = discord.Embed(
+            title=f"\U0001f3c6 Retirement & New Prospect",
+            description=(
+                f"{emoji}**{npc.name}** announces the retirement of "
+                f"**{racer.name}** after {racer.races_completed} races.\n\n"
+                f"Their new prospect **{new_name}** joins the stable!"
+            ),
+            color=0xE67E22,
+        )
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
 
     async def _announce_injuries(
         self,

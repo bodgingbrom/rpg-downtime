@@ -1196,6 +1196,157 @@ class Derby(commands.Cog, name="derby"):
             embed.set_footer(text=f"Hint: {hint}")
         await context.send(embed=embed)
 
+    # ------------------------------------------------------------------
+    # NPC commands
+    # ------------------------------------------------------------------
+
+    @derby_group.group(name="npc", description="NPC rival trainer commands")
+    async def npc_group(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await context.send("Specify a subcommand", ephemeral=True)
+
+    @npc_group.command(name="list", description="List all NPC rival trainers")
+    async def npc_list(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            npcs = await repo.get_guild_npcs(session, guild_id)
+            if not npcs:
+                await context.send(
+                    "No NPC trainers yet. Set a `racer_flavor` to generate them!",
+                    ephemeral=True,
+                )
+                return
+
+            embed = discord.Embed(
+                title="\U0001f3ad Rival Trainers",
+                color=0xE67E22,
+            )
+            for npc in npcs:
+                racers = await repo.get_npc_racers(session, npc.id)
+                racer_names = ", ".join(f"**{r.name}** ({r.rank})" for r in racers)
+                if not racer_names:
+                    racer_names = "*No active racers*"
+                emoji = f"{npc.emoji} " if npc.emoji else ""
+                embed.add_field(
+                    name=f"{emoji}{npc.name} — {npc.personality}",
+                    value=(
+                        f"*\"{npc.catchphrase}\"*\n"
+                        f"Ranks: {npc.rank_min}-{npc.rank_max} | "
+                        f"Racers: {racer_names}"
+                    ),
+                    inline=False,
+                )
+            await context.send(embed=embed)
+
+    @npc_group.command(name="info", description="Show detailed NPC info")
+    @app_commands.describe(name="NPC trainer name")
+    async def npc_info(self, context: Context, name: str) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            npcs = await repo.get_guild_npcs(session, guild_id)
+            npc = next(
+                (n for n in npcs if n.name.lower() == name.lower()),
+                None,
+            )
+            if npc is None:
+                await context.send("NPC not found.", ephemeral=True)
+                return
+
+            racers = await repo.get_npc_racers(session, npc.id)
+            emoji = f"{npc.emoji} " if npc.emoji else ""
+            embed = discord.Embed(
+                title=f"{emoji}{npc.name}",
+                description=npc.personality_desc,
+                color=0xE67E22,
+            )
+            embed.add_field(
+                name="Personality", value=npc.personality, inline=True
+            )
+            embed.add_field(
+                name="Ranks", value=f"{npc.rank_min}-{npc.rank_max}", inline=True
+            )
+            embed.add_field(
+                name="Catchphrase",
+                value=f"*\"{npc.catchphrase}\"*" if npc.catchphrase else "*None*",
+                inline=False,
+            )
+            for r in racers:
+                total = r.speed + r.cornering + r.stamina
+                embed.add_field(
+                    name=f"\U0001f40e {r.name} ({r.rank})",
+                    value=(
+                        f"SPD {r.speed} / COR {r.cornering} / STA {r.stamina} "
+                        f"(total {total})\n"
+                        f"Temperament: {r.temperament} | Mood: {r.mood}/5"
+                    ),
+                    inline=False,
+                )
+            if not racers:
+                embed.add_field(
+                    name="Racers", value="*No active racers*", inline=False
+                )
+            await context.send(embed=embed)
+
+    @npc_info.autocomplete("name")
+    async def npc_name_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        guild_id = interaction.guild_id or 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            npcs = await repo.get_guild_npcs(session, guild_id)
+        choices = []
+        for npc in npcs:
+            if current.lower() in npc.name.lower():
+                choices.append(
+                    app_commands.Choice(name=npc.name, value=npc.name)
+                )
+        return choices[:25]
+
+    @npc_group.command(
+        name="regenerate",
+        description="Regenerate all NPC trainers for this server (admin)",
+    )
+    async def npc_regenerate(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+            flavor = getattr(gs, "racer_flavor", None) if gs else None
+            if not flavor:
+                await context.send(
+                    "Set a `racer_flavor` first with "
+                    "`/derby settings set racer_flavor <text>`.",
+                    ephemeral=True,
+                )
+                return
+
+            # Delete existing NPCs and their racers
+            npcs = await repo.get_guild_npcs(session, guild_id)
+            for npc in npcs:
+                # Delete NPC racers
+                racers = await repo.get_npc_racers(session, npc.id)
+                for r in racers:
+                    await repo.delete_racer(session, r.id)
+                await repo.delete_npc(session, npc.id)
+
+        await self.bot.scheduler._ensure_guild_npcs(guild_id)
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            new_npcs = await repo.get_guild_npcs(session, guild_id)
+        if new_npcs:
+            names = ", ".join(f"**{n.name}**" for n in new_npcs)
+            await context.send(
+                f"Regenerated {len(new_npcs)} NPC trainers: {names}",
+                ephemeral=True,
+            )
+        else:
+            await context.send(
+                "NPC generation failed — check API key and try again.",
+                ephemeral=True,
+            )
+
     @derby_group.group(name="race", description="Race admin commands")
     async def race_admin(self, context: Context) -> None:
         if context.invoked_subcommand is None:
