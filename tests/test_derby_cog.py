@@ -632,6 +632,9 @@ async def test_race_force_start(tmp_path: Path) -> None:
         _stream_commentary=fake_stream,
         _post_results=fake_post,
         _announce_injuries=noop,
+        _announce_bet_results=noop,
+        _dm_payouts=noop,
+        _announce_placement_prizes=noop,
         _create_next_race=noop,
         active_races=set(),
     )
