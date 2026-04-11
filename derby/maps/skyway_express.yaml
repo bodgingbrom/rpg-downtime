@@ -1,0 +1,22 @@
+name: The Skyway Express
+theme: airship
+description: A white-knuckle sprint across the docking platforms and gangways of the Aethervane Sky Station.
+segments:
+  - type: straight
+    distance: 1
+    description: Launch off the boarding ramp into the open-air cargo gantry
+  - type: corner
+    distance: 2
+    description: Swinging around a tethered airship's envelope, propellers whipping wind in your face
+  - type: descent
+    distance: 1
+    description: Dropping down the chain-link gangway between two drifting hulls
+  - type: hazard
+    distance: 1
+    description: Steam vents burst from the arcane boiler deck — scalding mist and sparking runes everywhere
+  - type: corner
+    distance: 1
+    description: Threading through the rigging lines of a half-inflated balloon
+  - type: straight
+    distance: 2
+    description: Full send across the sky-bridge, nothing but clouds and a thousand-foot drop below

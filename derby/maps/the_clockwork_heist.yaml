@@ -1,0 +1,22 @@
+name: The Clockwork Heist
+theme: clocktower
+description: A breakneck chase through the gears and catwalks of a massive arcane clocktower.
+segments:
+  - type: straight
+    distance: 2
+    description: Sprinting across the pendulum hall, dodging the swinging weights
+  - type: corner
+    distance: 2
+    description: Cutting hard around the main gear hub, teeth the size of doors grinding past
+  - type: corner
+    distance: 1
+    description: Ducking through the bell chamber, weaving between hanging bronze bells
+  - type: descent
+    distance: 1
+    description: Sliding down the clock hand as it ticks past the six
+  - type: straight
+    distance: 1
+    description: Burst through the glass clock face and out into open air
+  - type: corner
+    distance: 2
+    description: Spiraling down the exterior scaffolding to the cobblestones below

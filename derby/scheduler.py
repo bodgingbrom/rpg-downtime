@@ -389,6 +389,7 @@ class DerbyScheduler:
                 "race_stat_window": ("INTEGER", "NULL"),
                 "daily_min": ("INTEGER", "NULL"),
                 "daily_max": ("INTEGER", "NULL"),
+                "racer_emoji": ("TEXT", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:
@@ -814,10 +815,10 @@ class DerbyScheduler:
         await self._init_db()
         for guild in self.bot.guilds:
             try:
-                embed = await self._build_digest_embed(guild.id)
+                gs = await self._load_guild_settings(guild.id)
+                embed = await self._build_digest_embed(guild.id, guild_settings=gs)
                 if embed is None:
                     continue
-                gs = await self._load_guild_settings(guild.id)
                 channel = self._get_channel(guild, gs)
                 if channel is None:
                     continue
@@ -828,7 +829,7 @@ class DerbyScheduler:
                     extra={"guild_id": guild.id},
                 )
 
-    async def _build_digest_embed(self, guild_id: int) -> discord.Embed | None:
+    async def _build_digest_embed(self, guild_id: int, guild_settings: models.GuildSettings | None = None) -> discord.Embed | None:
         """Build the daily digest embed for a guild.
 
         Returns ``None`` if there's nothing to show (no players in guild).
@@ -912,7 +913,7 @@ class DerbyScheduler:
 
                 if best_longshot_name:
                     embed.add_field(
-                        name="\U0001f40e Yesterday's Longshot Winner",
+                        name=f"{self._resolve('racer_emoji', guild_settings)} Yesterday's Longshot Winner",
                         value=f"**{best_longshot_name}** defied the odds and took the win!",
                         inline=False,
                     )
@@ -1089,7 +1090,6 @@ class DerbyScheduler:
             guild_settings=gs,
         )
         await asyncio.sleep(self._resolve("bet_window", gs))
-        await self._countdown(guild_id, guild_settings=gs)
         self.bot.logger.info(
             "Race starting",
             extra={"guild_id": guild_id, "race_id": race_id},
@@ -1151,16 +1151,48 @@ class DerbyScheduler:
         if guild:
             channel = self._get_channel(guild, gs)
             if channel:
-                lineup = ", ".join(
-                    f"**{names.get(rid, f'Racer {rid}')}**"
-                    for rid in result.placements
-                )
+                # Build lineup with owner names, sorted alphabetically
+                npc_names: dict[int, str] = {}
+                npc_ids = {r.npc_id for r in participants if r.npc_id}
+                if npc_ids:
+                    async with self.sessionmaker() as session:
+                        for npc_id in npc_ids:
+                            npc = await repo.get_npc(session, npc_id)
+                            if npc:
+                                prefix = f"{npc.emoji} " if npc.emoji else ""
+                                npc_names[npc_id] = f"{prefix}{npc.name}"
+
+                owner_names: dict[int, str] = {}
+                player_ids = {
+                    r.owner_id for r in participants
+                    if r.owner_id and r.owner_id != 0 and not r.npc_id
+                }
+                for pid in player_ids:
+                    try:
+                        member = guild.get_member(pid) or await guild.fetch_member(pid)
+                        owner_names[pid] = member.display_name
+                    except (discord.NotFound, discord.HTTPException):
+                        owner_names[pid] = f"Player #{pid}"
+
+                sorted_participants = sorted(participants, key=lambda r: r.name.lower())
+                lineup_lines = []
+                for r in sorted_participants:
+                    name = r.name
+                    if r.npc_id and r.npc_id in npc_names:
+                        owner_tag = npc_names[r.npc_id]
+                    elif r.owner_id and r.owner_id != 0:
+                        owner_tag = owner_names.get(r.owner_id, f"Player #{r.owner_id}")
+                    else:
+                        owner_tag = "Unowned"
+                    lineup_lines.append(f"**{name}** ({owner_tag})")
+
+                lineup = "\n".join(lineup_lines)
                 track_info = f" on **{result.map_name}**" if result.map_name else ""
                 ready_embed = discord.Embed(
-                    title="\U0001f3c7 Racers Getting Ready!",
+                    title=f"{self._resolve('racer_emoji', gs)} Racers Getting Ready!",
                     description=(
                         f"The racers line up{track_info}!\n\n"
-                        f"Lineup: {lineup}\n\n"
+                        f"{lineup}\n\n"
                         f"*The race is about to begin...*"
                     ),
                     color=0xFFAA00,
@@ -1170,12 +1202,15 @@ class DerbyScheduler:
                 except (discord.Forbidden, discord.HTTPException):
                     pass
 
+                await asyncio.sleep(3)
+
         log = await commentary.generate_commentary(result)
         if log is None:
             log = commentary.build_template_commentary(result)
         await self._stream_commentary(
             race_id, guild_id, log,
             delay=self._resolve("commentary_delay", gs),
+            guild_settings=gs,
         )
         await self._post_results(guild_id, result.placements, names)
         await self._announce_bet_results(
@@ -1481,7 +1516,8 @@ class DerbyScheduler:
                 continue
 
     async def _stream_commentary(
-        self, race_id: int, guild_id: int, log: list[str], delay: float = 6.0
+        self, race_id: int, guild_id: int, log: list[str], delay: float = 6.0,
+        guild_settings: models.GuildSettings | None = None,
     ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -1500,7 +1536,8 @@ class DerbyScheduler:
                 description=event,
                 color=0x2ECC71 if i < len(log) - 1 else 0xF1C40F,
             )
-            embed.set_footer(text=f"\U0001f3c7 Race {race_id}")
+            emoji = self._resolve("racer_emoji", guild_settings)
+            embed.set_footer(text=f"{emoji} Race {race_id}")
 
             try:
                 await channel.send(embed=embed)
@@ -1513,9 +1550,17 @@ class DerbyScheduler:
     async def _increment_careers(
         self, session: AsyncSession, racers: list[models.Racer]
     ) -> None:
-        """Increment races_completed for all participants."""
+        """Increment races_completed for all participants.
+
+        Re-fetches each racer from the current session to ensure the
+        change is tracked (participants may be detached from a prior session).
+        """
         for racer in racers:
-            racer.races_completed += 1
+            db_racer = await session.get(models.Racer, racer.id)
+            if db_racer is not None:
+                db_racer.races_completed += 1
+                # Keep the in-memory object in sync for downstream code
+                racer.races_completed = db_racer.races_completed
 
     async def _apply_retirements(
         self,
@@ -1571,14 +1616,31 @@ class DerbyScheduler:
                         prefix = f"{npc.emoji} " if npc.emoji else ""
                         npc_names[npc_id] = f"{prefix}{npc.name}"
 
-        for r in racers:
-            trainer_tag = ""
+        # Resolve player owner names
+        owner_names: dict[int, str] = {}
+        player_ids = {
+            r.owner_id for r in racers
+            if r.owner_id and r.owner_id != 0 and not r.npc_id
+        }
+        if guild and player_ids:
+            for pid in player_ids:
+                try:
+                    member = guild.get_member(pid) or await guild.fetch_member(pid)
+                    owner_names[pid] = member.display_name
+                except (discord.NotFound, discord.HTTPException):
+                    owner_names[pid] = f"Player #{pid}"
+
+        for r in sorted(racers, key=lambda r: r.name.lower()):
             if r.npc_id and r.npc_id in npc_names:
-                trainer_tag = f" — *{npc_names[r.npc_id]}'s racer*"
+                owner_tag = npc_names[r.npc_id]
+            elif r.owner_id and r.owner_id != 0:
+                owner_tag = owner_names.get(r.owner_id, f"Player #{r.owner_id}")
+            else:
+                owner_tag = "Unowned"
             mult = odds.get(r.id, 0)
             embed.add_field(
                 name=f"{r.name} (#{r.id})",
-                value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}{trainer_tag}",
+                value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}\nOwner: {owner_tag}",
                 inline=False,
             )
         embed.add_field(

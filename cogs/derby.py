@@ -254,15 +254,23 @@ class Derby(commands.Cog, name="derby"):
     def __init__(self, bot) -> None:
         self.bot = bot
 
+    def _racer_emoji(self, gs=None) -> str:
+        """Return the configured racer emoji for the guild."""
+        return resolve_guild_setting(gs, self.bot.settings, "racer_emoji")
+
     @commands.hybrid_group(name="help", description="Show help for Downtime Derby or Potion Panic")
     async def help_command(self, context: Context) -> None:
         if context.invoked_subcommand is not None:
             return
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+        emoji = self._racer_emoji(gs)
         embed = discord.Embed(
             title="Downtime Help",
             description=(
                 "Pick a topic to learn more:\n\n"
-                "\U0001f3c7 `/help derby` — Racing, betting, stables, breeding, and tournaments\n"
+                f"{emoji} `/help derby` — Racing, betting, stables, breeding, and tournaments\n"
                 "\U0001f9ea `/help brewing` — Potion Panic ingredient brewing"
             ),
             color=0x3498DB,
@@ -271,8 +279,12 @@ class Derby(commands.Cog, name="derby"):
 
     @help_command.command(name="derby", description="Show Downtime Derby commands and tips")
     async def help_derby(self, context: Context) -> None:
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+        emoji = self._racer_emoji(gs)
         embed = discord.Embed(
-            title="\U0001f3c7 Downtime Derby — Help",
+            title=f"{emoji} Downtime Derby — Help",
             description="Everything you need to race, bet, train, breed, and compete.",
             color=0x3498DB,
         )
@@ -320,9 +332,17 @@ class Derby(commands.Cog, name="derby"):
                 await context.send("No upcoming race.", ephemeral=True)
                 return
             racers = await repo.get_race_participants(session, race.id)
-        if not racers:
-            await context.send("No upcoming race.", ephemeral=True)
-            return
+            if not racers:
+                await context.send("No upcoming race.", ephemeral=True)
+                return
+
+            # Pre-load NPC names for any NPC-owned racers
+            npc_names: dict[int, str] = {}
+            npc_ids = {r.npc_id for r in racers if r.npc_id}
+            for npc_id in npc_ids:
+                npc = await repo.get_npc(session, npc_id)
+                if npc:
+                    npc_names[npc_id] = f"{npc.emoji} {npc.name}".strip() if npc.emoji else npc.name
 
         odds = logic.calculate_odds(racers, [], 0.1)
         embed = discord.Embed(title="Upcoming Race")
@@ -339,11 +359,31 @@ class Derby(commands.Cog, name="derby"):
                 inline=False,
             )
 
-        for r in racers:
+        guild = context.guild
+        # Pre-resolve player display names for owned racers
+        owner_names: dict[int, str] = {}
+        player_ids = {r.owner_id for r in racers if r.owner_id and r.owner_id != 0 and not r.npc_id}
+        if guild:
+            for pid in player_ids:
+                try:
+                    member = guild.get_member(pid) or await guild.fetch_member(pid)
+                    owner_names[pid] = member.display_name
+                except discord.NotFound:
+                    owner_names[pid] = f"Player #{pid}"
+
+        for r in sorted(racers, key=lambda r: r.name.lower()):
             mult = odds.get(r.id, 0)
+            rlabel = logic.rank_label(getattr(r, "rank", None))
+            # Determine owner label
+            if r.npc_id and r.npc_id in npc_names:
+                owner_tag = npc_names[r.npc_id]
+            elif r.owner_id and r.owner_id != 0:
+                owner_tag = owner_names.get(r.owner_id, f"Player #{r.owner_id}")
+            else:
+                owner_tag = "Unowned"
             embed.add_field(
-                name=f"{r.name} (#{r.id})",
-                value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}",
+                name=f"{r.name} [{rlabel}] (#{r.id})",
+                value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}\nOwner: {owner_tag}",
                 inline=False,
             )
         embed.set_footer(text="Use /race bet to place your bet!")
@@ -649,7 +689,7 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.describe(racer="Racer to inspect")
     @app_commands.autocomplete(racer=racer_autocomplete)
     async def race_info(self, context: Context, racer: int) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         async with self.bot.scheduler.sessionmaker() as session:
             racer_obj = await repo.get_racer(session, racer)
         if racer_obj is None:
@@ -830,8 +870,7 @@ class Derby(commands.Cog, name="derby"):
         action = "Gave" if amount > 0 else "Removed"
         await context.send(
             f"{action} **{abs(amount)}** coins "
-            f"{'to' if amount > 0 else 'from'} {user.mention}. "
-            f"New balance: **{new_balance}**."
+            f"{'to' if amount > 0 else 'from'} {user.mention}."
         )
 
     # -- Racer commands -------------------------------------------------
@@ -1245,6 +1284,7 @@ class Derby(commands.Cog, name="derby"):
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
             npcs = await repo.get_guild_npcs(session, guild_id)
             npc = next(
                 (n for n in npcs if n.name.lower() == name.lower()),
@@ -1275,7 +1315,7 @@ class Derby(commands.Cog, name="derby"):
             for r in racers:
                 total = r.speed + r.cornering + r.stamina
                 embed.add_field(
-                    name=f"\U0001f40e {r.name} ({r.rank})",
+                    name=f"{self._racer_emoji(gs)} {r.name} ({r.rank})",
                     value=(
                         f"SPD {r.speed} / COR {r.cornering} / STA {r.stamina} "
                         f"(total {total})\n"
@@ -1447,7 +1487,7 @@ class Derby(commands.Cog, name="derby"):
         )
         track_info = f" on **{result.map_name}**" if result.map_name else ""
         ready_embed = discord.Embed(
-            title=f"\U0001f3c7 Race {race.id} — Racers Getting Ready!",
+            title=f"{self._racer_emoji(gs)} Race {race.id} — Racers Getting Ready!",
             description=(
                 f"The racers are lining up{track_info}!\n\n"
                 f"Lineup: {lineup}\n\n"
@@ -1578,6 +1618,7 @@ class Derby(commands.Cog, name="derby"):
         "race_stat_window",
         "daily_min",
         "daily_max",
+        "racer_emoji",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -1641,7 +1682,7 @@ class Derby(commands.Cog, name="derby"):
 
             # Parse value to the correct type
             try:
-                if key in ("channel_name", "placement_prizes", "stable_upgrade_costs", "racer_flavor"):
+                if key in ("channel_name", "placement_prizes", "stable_upgrade_costs", "racer_flavor", "racer_emoji"):
                     parsed: str | int | float = value
                 elif key in (
                     "commentary_delay",
@@ -1710,6 +1751,10 @@ class Stable(commands.Cog, name="stable"):
     def _resolve(self, key: str, gs) -> int | float | str:
         return resolve_guild_setting(gs, self.bot.settings, key)
 
+    def _racer_emoji(self, gs=None) -> str:
+        """Return the configured racer emoji for the guild."""
+        return self._resolve("racer_emoji", gs)
+
     @commands.hybrid_group(name="stable", description="Your racing stable")
     async def stable(self, context: Context) -> None:
         if context.invoked_subcommand is None:
@@ -1767,6 +1812,7 @@ class Stable(commands.Cog, name="stable"):
         user_id = context.author.id
 
         async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
             all_racers = await repo.get_stable_racers(session, user_id, guild_id)
             if not all_racers:
                 await context.send(
@@ -1811,8 +1857,9 @@ class Stable(commands.Cog, name="stable"):
                 if r.breed_cooldown and r.breed_cooldown > 0:
                     notes.append(f"Breed cooldown: {r.breed_cooldown} races")
 
+                mood_emoji = MOOD_EMOJIS.get(r.mood, "")
                 status_lines.append(
-                    f"{icon} **{r.name}** [{rank}] — {', '.join(notes)}"
+                    f"{icon} **{r.name}** [{rank}] {mood_emoji} — {', '.join(notes)}"
                 )
 
             if retired:
@@ -1877,7 +1924,7 @@ class Stable(commands.Cog, name="stable"):
             color=0x3498DB,
         )
         embed.add_field(
-            name="\U0001f40e Racer Status",
+            name=f"{self._racer_emoji(gs)} Racer Status",
             value="\n".join(status_lines) if status_lines else "No racers",
             inline=False,
         )
@@ -1917,9 +1964,21 @@ class Stable(commands.Cog, name="stable"):
                     dam_name = dam.name
 
             # Look up owner name
-            if racer_obj.owner_id and racer_obj.owner_id != 0:
-                member = context.guild.get_member(racer_obj.owner_id) if context.guild else None
-                owner_name = member.display_name if member else f"User #{racer_obj.owner_id}"
+            if racer_obj.npc_id:
+                npc = await repo.get_npc(session, racer_obj.npc_id)
+                if npc:
+                    prefix = f"{npc.emoji} " if npc.emoji else ""
+                    owner_name = f"{prefix}{npc.name}"
+                else:
+                    owner_name = "NPC Trainer"
+            elif racer_obj.owner_id and racer_obj.owner_id != 0:
+                member = None
+                if context.guild:
+                    try:
+                        member = context.guild.get_member(racer_obj.owner_id) or await context.guild.fetch_member(racer_obj.owner_id)
+                    except Exception:
+                        pass
+                owner_name = member.display_name if member else f"Player #{racer_obj.owner_id}"
             else:
                 owner_name = "Unowned"
 
@@ -2056,11 +2115,126 @@ class Stable(commands.Cog, name="stable"):
         embed.set_footer(text=f"ID: {racer_obj.id} | Owner: {owner_name}")
         await context.send(embed=embed)
 
+    @stable.command(name="show", description="Show off one of your racers to the channel")
+    @app_commands.describe(racer="Racer to show off")
+    @app_commands.autocomplete(racer=owned_racer_autocomplete)
+    async def stable_show(self, context: Context, racer: int) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer_obj = await repo.get_racer(session, racer)
+            if racer_obj is None or racer_obj.guild_id != guild_id:
+                await context.send("Racer not found.", ephemeral=True)
+                return
+            if racer_obj.owner_id != context.author.id:
+                await context.send("You can only show off racers you own.", ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, guild_id)
+
+            # Look up lineage names
+            sire_name = "Unknown"
+            dam_name = "Unknown"
+            if racer_obj.sire_id:
+                sire = await repo.get_racer(session, racer_obj.sire_id)
+                if sire:
+                    sire_name = sire.name
+            if racer_obj.dam_id:
+                dam = await repo.get_racer(session, racer_obj.dam_id)
+                if dam:
+                    dam_name = dam.name
+
+            # Lazy-generate description if missing and flavor is set
+            flavor = getattr(gs, "racer_flavor", None) if gs else None
+            if racer_obj.description is None and flavor:
+                desc = await descriptions.generate_description(
+                    name=racer_obj.name,
+                    speed=racer_obj.speed,
+                    cornering=racer_obj.cornering,
+                    stamina=racer_obj.stamina,
+                    temperament=racer_obj.temperament,
+                    gender=racer_obj.gender,
+                    flavor=flavor,
+                )
+                if desc:
+                    racer_obj.description = desc
+                    await session.commit()
+                    await session.refresh(racer_obj)
+
+        # Build embed
+        gender_emoji = logic.GENDER_LABELS.get(racer_obj.gender, "")
+        if racer_obj.retired:
+            color = 0xF1C40F
+        elif racer_obj.injuries:
+            color = 0xE74C3C
+        else:
+            color = 0x2ECC71
+
+        embed = discord.Embed(
+            title=f"\u2b50 {racer_obj.name}  |  {gender_emoji} {racer_obj.gender}",
+            color=color,
+        )
+
+        eff = logic.effective_stats(racer_obj)
+        embed.add_field(
+            name="Stats",
+            value=(
+                f"Speed {eff['speed']} ({_stat_band(eff['speed'])}) / "
+                f"Cornering {eff['cornering']} ({_stat_band(eff['cornering'])}) / "
+                f"Stamina {eff['stamina']} ({_stat_band(eff['stamina'])})"
+            ),
+            inline=False,
+        )
+        embed.add_field(name="Temperament", value=racer_obj.temperament, inline=True)
+
+        mood_emoji = MOOD_EMOJIS.get(racer_obj.mood, "")
+        embed.add_field(
+            name="Mood",
+            value=f"{mood_emoji} {_mood_label(racer_obj.mood)} ({racer_obj.mood}/5)",
+            inline=True,
+        )
+
+        phase = logic.career_phase(racer_obj)
+        embed.add_field(
+            name="Career",
+            value=f"{racer_obj.races_completed}/{racer_obj.career_length} races | {phase}",
+            inline=True,
+        )
+
+        rank = logic.rank_label(getattr(racer_obj, "rank", None))
+        embed.add_field(name="Rank", value=rank, inline=True)
+
+        # Lineage
+        if racer_obj.sire_id or racer_obj.dam_id:
+            embed.add_field(
+                name="Lineage",
+                value=f"Sire: {sire_name} | Dam: {dam_name}",
+                inline=False,
+            )
+
+        # Tournament record
+        t_wins = getattr(racer_obj, "tournament_wins", 0) or 0
+        t_place = getattr(racer_obj, "tournament_placements", 0) or 0
+        if t_wins or t_place:
+            embed.add_field(
+                name="Tournament Record",
+                value=f"{t_wins}W / {t_place} top-3",
+                inline=True,
+            )
+
+        # Description
+        if racer_obj.description:
+            embed.add_field(name="Description", value=racer_obj.description, inline=False)
+
+        embed.set_footer(text=f"Owned by {context.author.display_name}")
+        await context.send(embed=embed)
+
     @stable.command(name="browse", description="Browse racers available for purchase")
     @app_commands.describe(
         rank="Filter by rank (D/C/B/A/S)",
         gender="Filter by gender",
         temperament="Filter by temperament",
+        upcoming="Show only racers in the next upcoming race",
     )
     @app_commands.choices(
         rank=[app_commands.Choice(name=f"{r}-Rank", value=r) for r in ["D", "C", "B", "A", "S"]],
@@ -2076,12 +2250,35 @@ class Stable(commands.Cog, name="stable"):
         rank: str | None = None,
         gender: str | None = None,
         temperament: str | None = None,
+        upcoming: bool = False,
     ) -> None:
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
-            racers = await repo.get_unowned_guild_racers(session, guild_id)
             gs = await repo.get_guild_settings(session, guild_id)
+            if upcoming:
+                # Get participants directly from the race — avoids
+                # pool_expires_at filtering that would miss valid entrants.
+                race_result = await session.execute(
+                    select(models.Race)
+                    .where(
+                        models.Race.guild_id == guild_id,
+                        models.Race.finished.is_(False),
+                    )
+                    .order_by(models.Race.id)
+                )
+                races = race_result.scalars().all()
+                active = self.bot.scheduler.active_races
+                next_race = next((r for r in races if r.id not in active), None)
+                if next_race is not None:
+                    participants = await repo.get_race_participants(
+                        session, next_race.id
+                    )
+                    racers = [r for r in participants if r.owner_id == 0]
+                else:
+                    racers = []
+            else:
+                racers = await repo.get_unowned_guild_racers(session, guild_id)
         # Apply filters
         if rank is not None:
             racers = [r for r in racers if getattr(r, "rank", None) == rank]
@@ -2093,10 +2290,13 @@ class Stable(commands.Cog, name="stable"):
         mult = self._resolve("racer_buy_multiplier", gs)
         fem_mult = self._resolve("female_buy_multiplier", gs)
         if not racers:
-            await context.send("No racers match your filters.", ephemeral=True)
+            msg = "No racers in the upcoming race are available for purchase." if upcoming else "No racers match your filters."
+            await context.send(msg, ephemeral=True)
             return
         # Build title with active filters
         filters = []
+        if upcoming:
+            filters.append("Upcoming Race")
         if rank:
             filters.append(f"{rank}-Rank")
         if gender:
@@ -2105,9 +2305,9 @@ class Stable(commands.Cog, name="stable"):
             filters.append(temperament)
         title = "Racers For Sale"
         if filters:
-            title += f" — {' '.join(filters)}"
+            title += f" \u2014 {' '.join(filters)}"
         embed = discord.Embed(title=title)
-        for r in racers[:25]:  # Discord embed limit
+        for r in sorted(racers, key=lambda r: r.name.lower())[:25]:  # Discord embed limit
             price = logic.calculate_buy_price(r, base, mult, fem_mult)
             eff = logic.effective_stats(r)
             phase = logic.career_phase(r)
@@ -2711,7 +2911,6 @@ class Stable(commands.Cog, name="stable"):
                 return
 
             gs = await repo.get_guild_settings(session, guild_id)
-            fee = self._resolve("breeding_fee", gs)
             cooldown = self._resolve("breeding_cooldown", gs)
             min_races = self._resolve("min_races_to_breed", gs)
             max_foals = self._resolve("max_foals_per_female", gs)
@@ -2738,6 +2937,9 @@ class Stable(commands.Cog, name="stable"):
             if error:
                 await context.send(error, ephemeral=True)
                 return
+
+            # Tiered breeding fee based on parent ranks
+            fee = logic.calculate_breeding_fee(sire, dam)
 
             # Check wallet
             wallet = await wallet_repo.get_wallet(

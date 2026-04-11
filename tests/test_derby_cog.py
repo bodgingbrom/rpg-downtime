@@ -64,9 +64,21 @@ async def test_setup_adds_cog():
     assert "stable" in bot.cogs
 
 
+async def _make_help_bot():
+    """Create a bot with an in-memory DB scheduler for help command tests."""
+    engine = create_async_engine("sqlite+aiosqlite://")
+    sm = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    bot.settings = Settings()
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sm)
+    return bot
+
+
 @pytest.mark.asyncio
 async def test_help_command():
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    bot = await _make_help_bot()
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
     ctx.invoked_subcommand = None
@@ -82,7 +94,7 @@ async def test_help_command():
 
 @pytest.mark.asyncio
 async def test_help_derby():
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    bot = await _make_help_bot()
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
 
@@ -102,7 +114,7 @@ async def test_help_derby():
 
 @pytest.mark.asyncio
 async def test_help_brewing():
-    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    bot = await _make_help_bot()
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
 
@@ -1971,19 +1983,20 @@ async def test_stable_breed_success(tmp_path: Path) -> None:
         sire = await repo.create_racer(
             session, name="Dad", owner_id=ctx.author.id, guild_id=GUILD_ID,
             speed=20, cornering=20, stamina=20, gender="M",
-            career_length=30, peak_end=18,
+            career_length=30, peak_end=18, rank="B",
         )
         await repo.update_racer(session, sire.id, races_completed=10)
         dam = await repo.create_racer(
             session, name="Mom", owner_id=ctx.author.id, guild_id=GUILD_ID,
             speed=25, cornering=25, stamina=25, gender="F",
-            career_length=30, peak_end=18,
+            career_length=30, peak_end=18, rank="A",
         )
         await repo.update_racer(session, dam.id, races_completed=10)
         await wallet_repo.create_wallet(
-            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=200,
+            session, user_id=ctx.author.id, guild_id=GUILD_ID, balance=500,
         )
 
+    # Tiered breeding fee: B(100) + A(200) = 300
     await cog.stable_breed.callback(cog, ctx, sire.id, dam.id)
 
     assert ctx.sent
@@ -2000,7 +2013,7 @@ async def test_stable_breed_success(tmp_path: Path) -> None:
         assert d.foal_count == 1
 
         w = await wallet_repo.get_wallet(session, ctx.author.id, GUILD_ID)
-        assert w.balance == 200 - 25
+        assert w.balance == 500 - 300  # B(100) + A(200)
 
         # Foal should exist
         all_racers = await repo.get_stable_racers(

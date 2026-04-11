@@ -221,7 +221,7 @@ All settings have global defaults (in `config.yaml`) and can be overridden per g
 | `commentary_delay` | 6.0 | Seconds between commentary messages |
 | `channel_name` | downtime-games | Channel name to announce races in |
 | `racer_buy_base` | 20 | Base cost to purchase a racer |
-| `racer_buy_multiplier` | 2 | Cost multiplier per total stat point |
+| `racer_buy_multiplier` | 5 | Cost multiplier per total stat point |
 | `racer_sell_fraction` | 0.5 | Sell price as fraction of buy price |
 | `max_racers_per_owner` | 3 | Maximum racers a player can own |
 | `min_pool_size` | 20 | Minimum unowned racers to maintain per guild |

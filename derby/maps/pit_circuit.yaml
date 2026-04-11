@@ -1,0 +1,28 @@
+name: The Pit Circuit
+theme: arena
+description: A punishing oval around a roaring fighting pit — speed and stamina or nothing.
+segments:
+  - type: straight
+    distance: 3
+    description: The long drag past the main grandstand, crowd roaring from the fights below
+  - type: corner
+    distance: 1
+    description: Banking hard around the north end of the pit, dodging thrown bottles from the crowd
+  - type: hazard
+    distance: 2
+    description: Blood and sand kicked up from the fighting pit spills across the track
+  - type: straight
+    distance: 3
+    description: The brutal backstretch along the cages — fighters slam into the fence as you pass
+  - type: corner
+    distance: 1
+    description: Wide sweeping turn past the bookmakers' row
+  - type: hazard
+    distance: 1
+    description: A brawl spills out of the pit and onto the track
+  - type: straight
+    distance: 2
+    description: Final push past the weapons rack wall, sparks flying off the grinding stones
+  - type: corner
+    distance: 1
+    description: Tight last turn under the scoreboard back toward the finish

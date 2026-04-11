@@ -1,0 +1,22 @@
+name: The Ember Run
+theme: volcanic
+description: A molten gauntlet through the caldera of Mount Cinderhold — run fast or burn.
+segments:
+  - type: straight
+    distance: 3
+    description: Charging across the obsidian flats, heat shimmer warping the air
+  - type: hazard
+    distance: 2
+    description: Lava geysers erupt across the path — timing is everything
+  - type: climb
+    distance: 2
+    description: Grinding up the inner caldera wall, loose volcanic scree underfoot
+  - type: straight
+    distance: 2
+    description: Ridge sprint along the crater rim, molten rock glowing below on both sides
+  - type: hazard
+    distance: 1
+    description: A chunk of the rim collapses — scramble across the crumbling edge
+  - type: straight
+    distance: 3
+    description: The long downhill blast through the ash field to the finish line

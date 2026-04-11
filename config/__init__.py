@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     commentary_delay: float = 6.0
     channel_name: str | None = None
     racer_buy_base: int = 20
-    racer_buy_multiplier: int = 2
+    racer_buy_multiplier: int = 5
     racer_sell_fraction: float = 0.5
     max_racers_per_owner: int = 3
     min_pool_size: int = 40
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     rest_cost: int = 0
     feed_cost: int = 30
     stable_upgrade_costs: str = "500,1000,2000"
-    female_buy_multiplier: float = 1.5
+    female_buy_multiplier: float = 2.0
     retired_sell_penalty: float = 0.6
     foal_sell_penalty: float = 0.3
     min_training_to_race: int = 5
@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     max_foals_per_female: int = 3
     racer_flavor: str | None = None
     race_stat_window: int = 35
+    racer_emoji: str = "\U0001f3c7"
     daily_min: int = 15
     daily_max: int = 30
     tournament_enabled: bool = True

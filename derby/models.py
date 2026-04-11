@@ -124,6 +124,7 @@ class GuildSettings(Base):
     race_stat_window: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     daily_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     daily_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    racer_emoji: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
 
 class DailyReward(Base):
@@ -200,6 +201,21 @@ class NPC(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class CommandLog(Base):
+    """Append-only log of every successful command invocation."""
+
+    __tablename__ = "command_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    command: Mapped[str] = mapped_column(String, nullable=False)
+    cog: Mapped[str] = mapped_column(String, nullable=False, default="unknown")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False,
+    )
+
+
 class RacerBuff(Base):
     """Temporary potion buff applied to a racer for their next race/tournament."""
 
@@ -220,6 +236,7 @@ __all__ = [
     "Race",
     "RaceEntry",
     "Bet",
+    "CommandLog",
     "CourseSegment",
     "DailyReward",
     "GuildSettings",

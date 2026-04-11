@@ -31,11 +31,26 @@ class DummyChannel:
             self.messages.append(content)
 
 
+class DummyMember:
+    def __init__(self, uid: int, name: str = "TestUser") -> None:
+        self.id = uid
+        self.display_name = name
+
+
 class DummyGuild:
     def __init__(self, gid: int) -> None:
         self.id = gid
         self.system_channel = DummyChannel()
         self.text_channels = [self.system_channel]
+        self._members: dict[int, DummyMember] = {}
+
+    def get_member(self, uid: int):
+        return self._members.get(uid)
+
+    async def fetch_member(self, uid: int):
+        if uid in self._members:
+            return self._members[uid]
+        return DummyMember(uid, f"Player #{uid}")
 
 
 class DummyBot:
@@ -852,9 +867,15 @@ async def test_competitive_window_picks_within_range(tmp_path: Path) -> None:
     scheduler = DerbyScheduler(bot, db_path=str(db_path))
     await scheduler._init_db()
 
-    # Create racers spanning a wide range of stat totals
+    # Create racers across a wide spread with dense clusters so that any
+    # random window of size 20 is very likely to contain >= 6 racers.
     async with scheduler.sessionmaker() as session:
-        for i, total in enumerate([10, 15, 20, 50, 55, 60, 80, 85, 90]):
+        for i, total in enumerate(
+            [10, 13, 16, 19, 22, 25,       # low cluster
+             30, 33, 36, 39, 42, 45,        # mid-low cluster
+             50, 53, 56, 59, 62, 65,        # mid cluster
+             70, 73, 76, 79, 82, 85]        # high cluster
+        ):
             await repo.create_racer(
                 session, name=f"R{i}", owner_id=0, guild_id=GUILD_ID,
                 speed=total // 3, cornering=total // 3, stamina=total - 2 * (total // 3),

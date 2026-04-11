@@ -1,0 +1,25 @@
+name: Neon Gambit
+theme: casino
+description: A flashy sprint through a glittering casino floor, up and over the giant roulette wheel.
+segments:
+  - type: straight
+    distance: 2
+    description: The grand entrance boulevard, lined with slot machines and flashing neon
+  - type: corner
+    distance: 1
+    description: Sharp cut through the blackjack pit
+  - type: hazard
+    distance: 2
+    description: The craps floor chaos — dice and chips flying everywhere
+  - type: climb
+    distance: 3
+    description: The massive ramp up and over the giant roulette wheel
+  - type: descent
+    distance: 1
+    description: Neon-lit drop off the wheel into the high-roller lounge
+  - type: corner
+    distance: 2
+    description: Winding through the velvet-roped VIP tables
+  - type: straight
+    distance: 2
+    description: Full-speed blast down the cashier corridor to the finish

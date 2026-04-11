@@ -1,0 +1,25 @@
+name: The Gullet
+theme: subterranean
+description: A grueling crawl through a living cave system that shifts and breathes around you.
+segments:
+  - type: corner
+    distance: 2
+    description: Squeezing through the twisting root tunnels of the Underbark
+  - type: hazard
+    distance: 2
+    description: Bioluminescent spore clouds burst from the walls — can't see, can't breathe
+  - type: climb
+    distance: 2
+    description: Scrambling up the calcified throat of an ancient petrified worm
+  - type: corner
+    distance: 2
+    description: Navigating the crystal cavern, razor-sharp stalagmites on every side
+  - type: hazard
+    distance: 2
+    description: The cave floor shudders and splits — jump the fissures or fall
+  - type: climb
+    distance: 1
+    description: Final pull up through the blowhole to the surface
+  - type: corner
+    distance: 1
+    description: Stumbling out onto the cliffside switchback to the finish

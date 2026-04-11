@@ -157,6 +157,21 @@ class DiscordBot(commands.Bot):
                 f"Executed {executed_command} command in {context.guild.name} (ID: {context.guild.id}) by {context.author} (ID: {context.author.id})",
                 extra={"guild_id": context.guild.id},
             )
+            # Persist to database for analytics
+            try:
+                if self.scheduler:
+                    from derby import repositories as repo
+
+                    async with self.scheduler.sessionmaker() as session:
+                        await repo.log_command(
+                            session,
+                            guild_id=context.guild.id,
+                            user_id=context.author.id,
+                            command=full_command_name,
+                            cog=context.command.cog_name or "unknown",
+                        )
+            except Exception:
+                self.logger.debug("Failed to log command to DB", exc_info=True)
         else:
             self.logger.info(
                 f"Executed {executed_command} command by {context.author} (ID: {context.author.id}) in DMs"

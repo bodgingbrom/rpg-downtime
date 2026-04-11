@@ -764,6 +764,22 @@ def validate_breeding(
     return None
 
 
+BREEDING_RANK_COSTS: dict[str, int] = {
+    "D": 25,
+    "C": 50,
+    "B": 100,
+    "A": 200,
+    "S": 350,
+}
+
+
+def calculate_breeding_fee(sire: models.Racer, dam: models.Racer) -> int:
+    """Return the total breeding fee based on both parents' ranks."""
+    sire_cost = BREEDING_RANK_COSTS.get(sire.rank or "D", 25)
+    dam_cost = BREEDING_RANK_COSTS.get(dam.rank or "D", 25)
+    return sire_cost + dam_cost
+
+
 def breed_racer(
     sire: models.Racer,
     dam: models.Racer,
@@ -772,28 +788,22 @@ def breed_racer(
 ) -> dict:
     """Generate kwargs for ``create_racer()`` representing the offspring.
 
-    Stat inheritance: one stat (chosen randomly) inherits from parents
-    (random value between them), the other two are random 0-31.
+    Stat inheritance: all 3 stats inherit from parents (random value
+    between sire and dam) with a ±3 mutation, clamped to 0-31.
     Temperament: 10% random mutation, else 75% sire / 25% dam.
     Career: average of parents ±5, clamped 25-40.
     """
     if rng is None:
         rng = random.Random()
 
-    # Pick 1 stat to inherit
-    stats = ["speed", "cornering", "stamina"]
-    inherited_stat = rng.choice(stats)
-    other_stats = [s for s in stats if s != inherited_stat]
-
-    sire_val = getattr(sire, inherited_stat)
-    dam_val = getattr(dam, inherited_stat)
-    lo, hi = min(sire_val, dam_val), max(sire_val, dam_val)
-    inherited_value = rng.randint(lo, hi)
-
     result_stats = {}
-    result_stats[inherited_stat] = inherited_value
-    for s in other_stats:
-        result_stats[s] = rng.randint(0, 31)
+    for stat in ("speed", "cornering", "stamina"):
+        sire_val = getattr(sire, stat)
+        dam_val = getattr(dam, stat)
+        lo, hi = min(sire_val, dam_val), max(sire_val, dam_val)
+        base = rng.randint(lo, hi)
+        mutation = rng.randint(-3, 3)
+        result_stats[stat] = max(0, min(MAX_STAT, base + mutation))
 
     # Temperament
     if rng.randint(1, 10) == 1:
@@ -1361,16 +1371,20 @@ async def apply_injuries(
     participants: list[models.Racer] | None = None,
 ) -> None:
     """Apply injuries to racers in the database."""
-    racer_map: dict[int, models.Racer] = {}
+    participant_map: dict[int, models.Racer] = {}
     if participants:
-        racer_map = {r.id: r for r in participants}
+        participant_map = {r.id: r for r in participants}
 
     for rid, description, recovery in injuries:
-        racer = racer_map.get(rid) or await session.get(models.Racer, rid)
+        racer = await session.get(models.Racer, rid)
         if racer is None:
             continue
         racer.injuries = description
         racer.injury_races_remaining = recovery
+        # Keep in-memory participant in sync
+        if rid in participant_map:
+            participant_map[rid].injuries = description
+            participant_map[rid].injury_races_remaining = recovery
 
 
 async def apply_mood_drift(
@@ -1393,13 +1407,13 @@ async def apply_mood_drift(
     winner_id = placements[0]
     loser_id = placements[-1] if len(placements) > 1 else None
 
-    # Build lookup of participants for in-memory updates
-    racer_map: dict[int, models.Racer] = {}
+    # Build lookup of participants for in-memory sync
+    participant_map: dict[int, models.Racer] = {}
     if participants:
-        racer_map = {r.id: r for r in participants}
+        participant_map = {r.id: r for r in participants}
 
     for rid in placements:
-        racer = racer_map.get(rid) or await session.get(models.Racer, rid)
+        racer = await session.get(models.Racer, rid)
         if racer is None:
             continue
         old_mood = racer.mood
@@ -1419,6 +1433,9 @@ async def apply_mood_drift(
 
         if new_mood != old_mood:
             racer.mood = new_mood
+            # Keep in-memory participant in sync
+            if rid in participant_map:
+                participant_map[rid].mood = new_mood
             changes[rid] = (old_mood, new_mood)
 
     return changes

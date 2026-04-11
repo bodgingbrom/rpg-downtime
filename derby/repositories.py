@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     Bet,
+    CommandLog,
     CourseSegment,
     DailyReward,
     GuildSettings,
@@ -639,3 +640,118 @@ async def consume_racer_buffs(
         if buff.races_remaining <= 0:
             await session.delete(buff)
     await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Command logging / analytics
+# ---------------------------------------------------------------------------
+
+
+async def log_command(
+    session: AsyncSession,
+    *,
+    guild_id: int,
+    user_id: int,
+    command: str,
+    cog: str = "unknown",
+) -> CommandLog:
+    """Insert a command log entry."""
+    entry = CommandLog(
+        guild_id=guild_id,
+        user_id=user_id,
+        command=command,
+        cog=cog,
+    )
+    session.add(entry)
+    await session.commit()
+    return entry
+
+
+async def get_command_usage(
+    session: AsyncSession, guild_id: int, since: datetime
+) -> list:
+    """Return (command, count, unique_users) grouped by command, ordered by count desc."""
+    result = await session.execute(
+        select(
+            CommandLog.command,
+            func.count(CommandLog.id).label("cnt"),
+            func.count(func.distinct(CommandLog.user_id)).label("users"),
+        )
+        .where(
+            CommandLog.guild_id == guild_id,
+            CommandLog.created_at >= since,
+        )
+        .group_by(CommandLog.command)
+        .order_by(func.count(CommandLog.id).desc())
+    )
+    return result.all()
+
+
+async def get_player_activity(
+    session: AsyncSession, guild_id: int, since: datetime
+) -> list:
+    """Return (user_id, count) grouped by user, ordered by count desc."""
+    result = await session.execute(
+        select(
+            CommandLog.user_id,
+            func.count(CommandLog.id).label("cnt"),
+        )
+        .where(
+            CommandLog.guild_id == guild_id,
+            CommandLog.created_at >= since,
+        )
+        .group_by(CommandLog.user_id)
+        .order_by(func.count(CommandLog.id).desc())
+    )
+    return result.all()
+
+
+async def get_player_top_command(
+    session: AsyncSession, guild_id: int, user_id: int, since: datetime
+) -> str | None:
+    """Return the most-used command for a specific player."""
+    result = await session.execute(
+        select(CommandLog.command)
+        .where(
+            CommandLog.guild_id == guild_id,
+            CommandLog.user_id == user_id,
+            CommandLog.created_at >= since,
+        )
+        .group_by(CommandLog.command)
+        .order_by(func.count(CommandLog.id).desc())
+        .limit(1)
+    )
+    row = result.first()
+    return row[0] if row else None
+
+
+async def get_weekly_totals(
+    session: AsyncSession, guild_id: int, start: datetime, end: datetime
+) -> tuple[int, int]:
+    """Return (total_commands, unique_users) for a date range."""
+    result = await session.execute(
+        select(
+            func.count(CommandLog.id),
+            func.count(func.distinct(CommandLog.user_id)),
+        ).where(
+            CommandLog.guild_id == guild_id,
+            CommandLog.created_at >= start,
+            CommandLog.created_at < end,
+        )
+    )
+    row = result.first()
+    return (row[0] or 0, row[1] or 0) if row else (0, 0)
+
+
+async def get_commands_in_period(
+    session: AsyncSession, guild_id: int, start: datetime, end: datetime
+) -> set[str]:
+    """Return the set of distinct command names used in a date range."""
+    result = await session.execute(
+        select(func.distinct(CommandLog.command)).where(
+            CommandLog.guild_id == guild_id,
+            CommandLog.created_at >= start,
+            CommandLog.created_at < end,
+        )
+    )
+    return {row[0] for row in result.all()}
