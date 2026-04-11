@@ -176,6 +176,14 @@ def load_all_maps() -> list[RaceMap]:
     return maps
 
 
+def get_map_by_name(name: str) -> RaceMap | None:
+    """Return a loaded map matching *name*, or ``None``."""
+    for m in load_all_maps():
+        if m.name == name:
+            return m
+    return None
+
+
 def pick_map() -> RaceMap | None:
     """Pick a random map from the available maps."""
     maps = load_all_maps()

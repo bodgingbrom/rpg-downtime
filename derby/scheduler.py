@@ -349,6 +349,7 @@ class DerbyScheduler:
 
             race_migrations = {
                 "placements": ("VARCHAR", "NULL"),
+                "map_name": ("VARCHAR", "NULL"),
                 "biggest_payout": ("INTEGER", "NULL"),
                 "biggest_payout_user_id": ("INTEGER", "NULL"),
                 "biggest_payout_racer_id": ("INTEGER", "NULL"),
@@ -529,8 +530,12 @@ class DerbyScheduler:
             )
             return None
 
+        race_map = logic.pick_map()
         async with self.sessionmaker() as session:
-            race = await repo.create_race(session, guild_id=guild_id)
+            race = await repo.create_race(
+                session, guild_id=guild_id,
+                map_name=race_map.name if race_map else None,
+            )
             await repo.create_race_entries(
                 session, race.id, [r.id for r in participants]
             )
@@ -1084,7 +1089,14 @@ class DerbyScheduler:
         self, race_id: int, guild_id: int, participants: list[models.Racer]
     ) -> None:
         gs = await self._load_guild_settings(guild_id)
-        race_map = logic.pick_map()
+        # Use the pre-picked map stored on the race, fall back to a random pick
+        async with self.sessionmaker() as session:
+            race_obj = await repo.get_race(session, race_id)
+        race_map = None
+        if race_obj and race_obj.map_name:
+            race_map = logic.get_map_by_name(race_obj.map_name)
+        if race_map is None:
+            race_map = logic.pick_map()
         await self._announce_race_start(
             guild_id, race_id, participants, race_map=race_map,
             guild_settings=gs,

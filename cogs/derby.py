@@ -344,9 +344,24 @@ class Derby(commands.Cog, name="derby"):
                 if npc:
                     npc_names[npc_id] = f"{npc.emoji} {npc.name}".strip() if npc.emoji else npc.name
 
-        odds = logic.calculate_odds(racers, [], 0.1)
+        # Load pre-picked track info
+        race_map = None
+        if race.map_name:
+            race_map = logic.get_map_by_name(race.map_name)
+
+        odds = logic.calculate_odds(racers, [], 0.1, race_map=race_map)
         embed = discord.Embed(title="Upcoming Race")
         embed.add_field(name="Race ID", value=str(race.id), inline=False)
+
+        if race_map:
+            layout = " \u2192 ".join(
+                f"[{s.type.capitalize()}]" for s in race_map.segments
+            )
+            embed.add_field(
+                name="Track",
+                value=f"**{race_map.name}** ({race_map.theme})\n{layout}",
+                inline=False,
+            )
 
         # Show next race time using Discord timestamp (auto-localizes)
         task = getattr(self.bot.scheduler, "task", None)

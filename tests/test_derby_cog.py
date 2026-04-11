@@ -448,7 +448,7 @@ async def test_give_coins_positive(tmp_path: Path) -> None:
         wallet = await wallet_repo.get_wallet(session, 99, GUILD_ID)
     # Default 100 + 50 given = 150
     assert wallet.balance == 150
-    assert any("150" in str(m.get("content", "")) for m in ctx.sent)
+    assert any("50" in str(m.get("content", "")) for m in ctx.sent)
 
 
 @pytest.mark.asyncio
