@@ -1458,7 +1458,7 @@ class Derby(commands.Cog, name="derby"):
                 session, race.id, finished=True, winner_id=winner_id,
                 placements=placements_json,
             )
-            await logic.resolve_payouts(
+            bet_results = await logic.resolve_payouts(
                 session, race.id, result.placements, guild_id=guild_id
             )
             gs = await repo.get_guild_settings(session, guild_id)
@@ -1539,6 +1539,16 @@ class Derby(commands.Cog, name="derby"):
             if new_injuries:
                 await self.bot.scheduler._announce_injuries(
                     context.guild.id, new_injuries, names
+                )
+
+            # --- Announce bet results and placement prizes ---
+            await self.bot.scheduler._announce_bet_results(
+                context.guild.id, bet_results, names
+            )
+            await self.bot.scheduler._dm_payouts(bet_results, race.id, names)
+            if placement_awards:
+                await self.bot.scheduler._announce_placement_prizes(
+                    context.guild.id, placement_awards, names
                 )
         finally:
             self.bot.scheduler.active_races.discard(race.id)
