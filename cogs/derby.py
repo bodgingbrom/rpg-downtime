@@ -223,6 +223,41 @@ DERBY_HELP_CATEGORIES = {
     ),
 }
 
+FISHING_HELP_CATEGORIES = {
+    "The Basics": (
+        "Cast a line, sit back, and let the fish come to you.\n"
+        "`/fish start <location> [bait]` — Start an AFK fishing session\n"
+        "`/fish stop` — End your session and see your haul\n"
+        "`/fish status` — Check your active session\n"
+        "Fish are caught automatically on a timer. "
+        "Better rods and bait speed things up."
+    ),
+    "Gear & Bait": (
+        "Upgrade your rod and stock up on bait before heading out.\n"
+        "`/fish gear` — View your rod, bait inventory, and skill level\n"
+        "`/fish shop` — See available bait and rod upgrades\n"
+        "`/fish buy-bait <type> <amount>` — Purchase bait\n"
+        "`/fish upgrade-rod` — Upgrade to the next rod tier\n"
+        "Better rods reduce trash catches and boost rare fish odds. "
+        "Better bait reduces cast time and improves catches."
+    ),
+    "Locations & Progression": (
+        "Earn XP with every catch to unlock harder locations.\n"
+        "`/fish locations` — See all spots and which are unlocked\n"
+        "Locations are gated by skill level (Lv1 \u2192 Lv2 \u2192 Lv3). "
+        "Higher-level spots have rarer fish and bigger payouts.\n"
+        "Over-leveling a location gives a small cast speed bonus."
+    ),
+    "Fish Log & Trophies": (
+        "Track every species you've caught and aim for completion.\n"
+        "`/fish log` — Overview of your collection across all locations\n"
+        "`/fish log <location>` — Detailed species list with your records\n"
+        "`/fish trophies` — Trophy progress and missing species\n"
+        "Catch every species at a location to earn a **trophy** — "
+        "trophies grant a permanent **10% cast speed bonus** there."
+    ),
+}
+
 BREWING_HELP_CATEGORIES = {
     "The Basics": (
         "Combine ingredients in a cauldron to build potency — "
@@ -271,7 +306,8 @@ class Derby(commands.Cog, name="derby"):
             description=(
                 "Pick a topic to learn more:\n\n"
                 f"{emoji} `/help derby` — Racing, betting, stables, breeding, and tournaments\n"
-                "\U0001f9ea `/help brewing` — Potion Panic ingredient brewing"
+                "\U0001f9ea `/help brewing` — Potion Panic ingredient brewing\n"
+                "\U0001f3a3 `/help fishing` — Lazy Lures AFK fishing and progression"
             ),
             color=0x3498DB,
         )
@@ -303,6 +339,18 @@ class Derby(commands.Cog, name="derby"):
         for category, text in BREWING_HELP_CATEGORIES.items():
             embed.add_field(name=category, value=text, inline=False)
         embed.set_footer(text="What happens at higher potency? There's only one way to find out...")
+        await context.send(embed=embed, ephemeral=True)
+
+    @help_command.command(name="fishing", description="Show Lazy Lures fishing commands and tips")
+    async def help_fishing(self, context: Context) -> None:
+        embed = discord.Embed(
+            title="\U0001f3a3 Lazy Lures — Help",
+            description="Set it and forget it — fish while you're away, collect when you're back.",
+            color=0x3498DB,
+        )
+        for category, text in FISHING_HELP_CATEGORIES.items():
+            embed.add_field(name=category, value=text, inline=False)
+        embed.set_footer(text="Use /fish notify to toggle DM alerts for each catch.")
         await context.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_group(name="race", description="Race commands")
