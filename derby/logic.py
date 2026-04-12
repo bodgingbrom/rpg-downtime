@@ -1502,6 +1502,67 @@ async def resolve_placement_prizes(
     return awarded
 
 
+async def apply_placement_stat_gains(
+    session: AsyncSession,
+    placements: list[int],
+    participants: list[models.Racer],
+    race_map: "RaceMap | None",
+    prize_list: list[int],
+) -> dict[int, tuple[str, int]]:
+    """Award +1 to a random stat for placing player-owned racers.
+
+    The stat is chosen randomly, weighted by the track's segment distances
+    and their stat weights from ``SEGMENT_TYPES``.  Returns
+    ``{racer_id: (stat_name, new_value)}`` for announcement purposes.
+    """
+    if race_map is None or not race_map.segments:
+        return {}
+
+    # Build per-stat weight from track layout
+    stat_weights: dict[str, float] = {"speed": 0.0, "cornering": 0.0, "stamina": 0.0}
+    for seg in race_map.segments:
+        weights = SEGMENT_TYPES.get(seg.type, SEGMENT_TYPES["straight"])
+        for stat in stat_weights:
+            stat_weights[stat] += seg.distance * weights[stat]
+
+    racer_map = {r.id: r for r in participants}
+    gains: dict[int, tuple[str, int]] = {}
+
+    for position, racer_id in enumerate(placements):
+        if position >= len(prize_list):
+            break
+        if prize_list[position] <= 0:
+            continue
+        racer = racer_map.get(racer_id)
+        if racer is None or racer.owner_id == 0 or racer.npc_id is not None:
+            continue
+
+        # Filter out stats already at cap
+        eligible = [
+            s for s in ("speed", "cornering", "stamina")
+            if getattr(racer, s) < MAX_STAT
+        ]
+        if not eligible:
+            continue
+
+        weights = [stat_weights[s] for s in eligible]
+        chosen = random.choices(eligible, weights=weights, k=1)[0]
+
+        # Persist via re-fetch to avoid detached-session issues
+        db_racer = await session.get(models.Racer, racer.id)
+        if db_racer is None:
+            continue
+        new_val = min(MAX_STAT, getattr(db_racer, chosen) + 1)
+        setattr(db_racer, chosen, new_val)
+        recalculate_rank(db_racer)
+        # Keep in-memory copy in sync
+        setattr(racer, chosen, new_val)
+        racer.rank = db_racer.rank
+        gains[racer_id] = (chosen, new_val)
+
+    return gains
+
+
 def _bet_wins(
     bet_type: str,
     racer_id: int,

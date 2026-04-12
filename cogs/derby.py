@@ -1525,6 +1525,9 @@ class Derby(commands.Cog, name="derby"):
             )
             new_injuries = logic.check_injury_risk(result)
             await logic.apply_injuries(session, new_injuries, participants)
+            stat_gains = await logic.apply_placement_stat_gains(
+                session, result.placements, participants, race_map, prize_list,
+            )
             for r in participants:
                 r.races_completed += 1
                 if r.races_completed >= r.career_length:
@@ -1542,6 +1545,18 @@ class Derby(commands.Cog, name="derby"):
                         career_length=cl,
                         peak_end=int(cl * 0.6),
                     )
+            await session.commit()
+
+        # Reset training counters for all guild racers
+        async with self.bot.scheduler.sessionmaker() as session:
+            from sqlalchemy import text
+            await session.execute(
+                text(
+                    "UPDATE racers SET trains_since_race = 0 "
+                    "WHERE guild_id = :gid AND trains_since_race > 0"
+                ),
+                {"gid": guild_id},
+            )
             await session.commit()
 
         names = result.racer_names
@@ -1599,7 +1614,8 @@ class Derby(commands.Cog, name="derby"):
             await self.bot.scheduler._dm_payouts(bet_results, race.id, names)
             if placement_awards:
                 await self.bot.scheduler._announce_placement_prizes(
-                    context.guild.id, placement_awards, names
+                    context.guild.id, placement_awards, names,
+                    stat_gains=stat_gains,
                 )
         finally:
             self.bot.scheduler.active_races.discard(race.id)
@@ -1695,6 +1711,7 @@ class Derby(commands.Cog, name="derby"):
         "daily_min",
         "daily_max",
         "racer_emoji",
+        "max_trains_per_race",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -2640,6 +2657,16 @@ class Stable(commands.Cog, name="stable"):
                 await context.send("This racer is retired.", ephemeral=True)
                 return
 
+            gs = await repo.get_guild_settings(session, guild_id)
+            max_trains = self._resolve("max_trains_per_race", gs)
+            if (racer_obj.trains_since_race or 0) >= max_trains:
+                await context.send(
+                    f"**{racer_obj.name}** has reached the training limit "
+                    f"({max_trains} sessions). Wait for the next race!",
+                    ephemeral=True,
+                )
+                return
+
             current_value = getattr(racer_obj, stat_name)
             if current_value >= logic.MAX_STAT:
                 await context.send(
@@ -2650,7 +2677,6 @@ class Stable(commands.Cog, name="stable"):
                 return
 
             # Resolve training cost settings
-            gs = await repo.get_guild_settings(session, guild_id)
             training_base = self._resolve("training_base", gs)
             training_mult = self._resolve("training_multiplier", gs)
             cost = logic.calculate_training_cost(
@@ -2677,8 +2703,9 @@ class Stable(commands.Cog, name="stable"):
                 )
                 return
 
-            # Deduct cost and reduce mood
+            # Deduct cost, reduce mood, and count training attempt
             wallet.balance -= cost
+            racer_obj.trains_since_race = (racer_obj.trains_since_race or 0) + 1
             old_mood = racer_obj.mood
             new_mood = max(1, old_mood - 1)
             racer_obj.mood = new_mood

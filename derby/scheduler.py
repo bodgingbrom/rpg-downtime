@@ -203,6 +203,7 @@ class DerbyScheduler:
                 "foal_count": ("INTEGER", "0"),
                 "breed_cooldown": ("INTEGER", "0"),
                 "training_count": ("INTEGER", "5"),
+                "trains_since_race": ("INTEGER", "0"),
                 "rank": ("VARCHAR", "NULL"),
                 "tournament_wins": ("INTEGER", "0"),
                 "tournament_placements": ("INTEGER", "0"),
@@ -398,6 +399,7 @@ class DerbyScheduler:
                 "daily_min": ("INTEGER", "NULL"),
                 "daily_max": ("INTEGER", "NULL"),
                 "racer_emoji": ("TEXT", "NULL"),
+                "max_trains_per_race": ("INTEGER", "NULL"),
                 # Fishing (Lazy Lures)
                 "fishing_bait_costs": ("TEXT", "NULL"),
                 "fishing_cast_multiplier": ("REAL", "NULL"),
@@ -1222,9 +1224,24 @@ class DerbyScheduler:
             retirements = await self._apply_retirements(
                 session, participants, guild_id=guild_id
             )
+            stat_gains = await logic.apply_placement_stat_gains(
+                session, result.placements, participants, race_map, prize_list,
+            )
             # Consume potion buffs after race
             await repo.consume_racer_buffs(session, racer_ids)
             await session.commit()
+
+        # Reset training counters for all guild racers
+        async with self.sessionmaker() as session:
+            await session.execute(
+                text(
+                    "UPDATE racers SET trains_since_race = 0 "
+                    "WHERE guild_id = :gid AND trains_since_race > 0"
+                ),
+                {"gid": guild_id},
+            )
+            await session.commit()
+
         names = result.racer_names
 
         # Show a "getting ready" message while LLM generates commentary
@@ -1306,7 +1323,8 @@ class DerbyScheduler:
             await self._announce_healed(guild_id, healed)
         if placement_awards:
             await self._announce_placement_prizes(
-                guild_id, placement_awards, names
+                guild_id, placement_awards, names,
+                stat_gains=stat_gains,
             )
         self.bot.logger.info(
             "Race finished",
@@ -1941,6 +1959,7 @@ class DerbyScheduler:
         guild_id: int,
         awards: list[tuple[int, int, int]],
         names: dict[int, str] | None = None,
+        stat_gains: dict[int, tuple[str, int]] | None = None,
     ) -> None:
         """Announce placement prize earnings to the race channel."""
         guild = self.bot.get_guild(guild_id)
@@ -1952,9 +1971,11 @@ class DerbyScheduler:
         lines: list[str] = []
         for owner_id, racer_id, prize in awards:
             racer_name = (names or {}).get(racer_id, f"Racer {racer_id}")
-            lines.append(
-                f"**{racer_name}** earned **{prize} coins** for <@{owner_id}>!"
-            )
+            line = f"**{racer_name}** earned **{prize} coins** for <@{owner_id}>!"
+            if stat_gains and racer_id in stat_gains:
+                stat_name, new_val = stat_gains[racer_id]
+                line += f" (+1 {stat_name.capitalize()} \u2192 {new_val})"
+            lines.append(line)
         if not lines:
             return
         embed = discord.Embed(

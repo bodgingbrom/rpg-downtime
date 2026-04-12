@@ -32,6 +32,7 @@ class Racer(Base):
     foal_count: Mapped[int] = mapped_column(Integer, default=0)
     breed_cooldown: Mapped[int] = mapped_column(Integer, default=0)
     training_count: Mapped[int] = mapped_column(Integer, default=0)
+    trains_since_race: Mapped[int] = mapped_column(Integer, default=0)
     rank: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     tournament_wins: Mapped[int] = mapped_column(Integer, default=0)
     tournament_placements: Mapped[int] = mapped_column(Integer, default=0)
@@ -126,6 +127,7 @@ class GuildSettings(Base):
     daily_min: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     daily_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     racer_emoji: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    max_trains_per_race: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     # Fishing
     fishing_bait_costs: Mapped[str | None] = mapped_column(String, nullable=True, default=None)

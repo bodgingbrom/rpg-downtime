@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     retired_sell_penalty: float = 0.6
     foal_sell_penalty: float = 0.3
     min_training_to_race: int = 5
+    max_trains_per_race: int = 5
     breeding_fee: int = 25
     breeding_cooldown: int = 6
     min_races_to_breed: int = 5
