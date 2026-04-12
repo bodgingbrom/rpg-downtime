@@ -1626,6 +1626,7 @@ class DerbyScheduler:
             return
 
         message: discord.Message | None = None
+        lines: list[str] = []
 
         for i, event in enumerate(log):
             # Check if race was cancelled
@@ -1633,8 +1634,9 @@ class DerbyScheduler:
                 if await repo.get_race(session, race_id) is None:
                     return
 
+            lines.append(event)
             embed = discord.Embed(
-                description=event,
+                description="\n\n".join(lines),
                 color=0x2ECC71 if i < len(log) - 1 else 0xF1C40F,
             )
 

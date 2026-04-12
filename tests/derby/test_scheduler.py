@@ -17,6 +17,23 @@ from economy import repositories as wallet_repo
 GUILD_ID = 1
 
 
+class DummyMessage:
+    """Minimal message stub that supports edit."""
+
+    def __init__(self, channel: "DummyChannel", content: str) -> None:
+        self.channel = channel
+        self.content = content
+
+    async def edit(
+        self, *, content: str | None = None, embed: discord.Embed | None = None
+    ) -> None:
+        if embed is not None and embed.description is not None:
+            self.content = embed.description
+        elif content is not None:
+            self.content = content
+        self.channel.messages.append(self.content)
+
+
 class DummyChannel:
     def __init__(self, name: str = "general") -> None:
         self.name = name
@@ -24,11 +41,14 @@ class DummyChannel:
 
     async def send(
         self, content: str | None = None, *, embed: discord.Embed | None = None
-    ) -> None:
+    ) -> "DummyMessage":
+        text = ""
         if embed is not None and embed.description is not None:
-            self.messages.append(embed.description)
+            text = embed.description
         elif content is not None:
-            self.messages.append(content)
+            text = content
+        self.messages.append(text)
+        return DummyMessage(self, text)
 
 
 class DummyMember:
@@ -199,7 +219,12 @@ async def test_stream_commentary(tmp_path: Path) -> None:
 
     events = ["E1", "E2", "E3"]
     await scheduler._stream_commentary(race.id, guild.id, events, delay=0)
-    assert guild.system_channel.messages == events
+    # First send, then two edits — each appends to the accumulated text
+    assert guild.system_channel.messages == [
+        "E1",
+        "E1\n\nE2",
+        "E1\n\nE2\n\nE3",
+    ]
 
 
 @pytest.mark.asyncio
