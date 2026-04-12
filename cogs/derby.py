@@ -3142,7 +3142,7 @@ class Stable(commands.Cog, name="stable"):
     )
     @app_commands.describe(name="The name to add (max 32 characters, letters/numbers/spaces/hyphens)")
     async def stable_suggest_name(self, context: Context, name: str) -> None:
-        await context.defer(ephemeral=True)
+        await context.defer()
         guild_id = context.guild.id if context.guild else 0
 
         # --- Sanitize ---
@@ -3190,9 +3190,9 @@ class Stable(commands.Cog, name="stable"):
         flavor_names.save_flavor_names(guild_id, existing_flavor)
 
         await context.send(
-            f"**{name}** has been added to the name pool! "
+            f"**{name}** has been added to the name pool by "
+            f"**{context.author.display_name}**! "
             f"It may appear on a future racer.",
-            ephemeral=True,
         )
 
 
