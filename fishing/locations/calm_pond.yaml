@@ -1,0 +1,54 @@
+name: Calm Pond
+description: A peaceful pond on the outskirts of town, perfect for beginners.
+theme: pond
+skill_level: 1
+base_cast_time: 600
+
+fish:
+  - name: Bluegill
+    rarity: common
+    value_range: [3, 8]
+    length_range: [4, 10]
+    preferred_bait: worm
+    weight: 40
+
+  - name: Sunfish
+    rarity: common
+    value_range: [4, 9]
+    length_range: [5, 11]
+    preferred_bait: insect
+    weight: 35
+
+  - name: Silverscale Trout
+    rarity: uncommon
+    value_range: [10, 18]
+    length_range: [10, 20]
+    preferred_bait: insect
+    weight: 15
+
+  - name: Golden Perch
+    rarity: rare
+    value_range: [25, 45]
+    length_range: [14, 26]
+    preferred_bait: shiny_lure
+    weight: 6
+
+  - name: Phantom Koi
+    rarity: legendary
+    value_range: [80, 150]
+    length_range: [18, 32]
+    required_bait: premium
+    weight: 1
+
+trash:
+  - name: Old Boot
+    value: 0
+    weight: 10
+
+  - name: Rusty Can
+    value: 0
+    weight: 8
+
+  - name: Tangled Weeds
+    value: 0
+    weight: 7

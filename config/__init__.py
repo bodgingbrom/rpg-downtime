@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     rare_drop_potency: int = 200
     potion_min_potency: int = 100
 
+    # Fishing
+    fishing_bait_costs: str = "2,5,12,20"
+    fishing_cast_multiplier: float = 1.0
+
     @classmethod
     def from_yaml(cls, path: str | Path = Path("config.yaml")) -> "Settings":
         data: dict[str, Any]

@@ -1,0 +1,31 @@
+- id: basic
+  name: Basic Rod
+  cost: 0
+  tier: 0
+  cast_reduction: 0.0
+  trash_multiplier: 1.0
+  rare_boost: 0.0
+
+- id: oak
+  name: Oak Rod
+  cost: 400
+  tier: 1
+  cast_reduction: 0.15
+  trash_multiplier: 0.5
+  rare_boost: 0.05
+
+- id: steel
+  name: Steel Rod
+  cost: 900
+  tier: 2
+  cast_reduction: 0.25
+  trash_multiplier: 0.25
+  rare_boost: 0.10
+
+- id: master
+  name: Master Rod
+  cost: 1800
+  tier: 3
+  cast_reduction: 0.35
+  trash_multiplier: 0.0
+  rare_boost: 0.15
