@@ -1625,6 +1625,8 @@ class DerbyScheduler:
         if channel is None:
             return
 
+        message: discord.Message | None = None
+
         for i, event in enumerate(log):
             # Check if race was cancelled
             async with self.sessionmaker() as session:
@@ -1635,11 +1637,12 @@ class DerbyScheduler:
                 description=event,
                 color=0x2ECC71 if i < len(log) - 1 else 0xF1C40F,
             )
-            emoji = self._resolve("racer_emoji", guild_settings)
-            embed.set_footer(text=f"{emoji} Race {race_id}")
 
             try:
-                await channel.send(embed=embed)
+                if message is None:
+                    message = await channel.send(embed=embed)
+                else:
+                    await message.edit(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
                 return
 
