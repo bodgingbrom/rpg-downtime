@@ -410,6 +410,20 @@ class DerbyScheduler:
                             f"{col_name} {col_type} DEFAULT {default}"
                         )
                     )
+            # Add fishing_xp column to fishing_players if missing
+            tables = await conn.run_sync(_get_tables)
+            if "fishing_players" in tables:
+                fp_cols = await conn.run_sync(
+                    lambda c: get_table_columns(c, "fishing_players")
+                )
+                if "fishing_xp" not in fp_cols:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE fishing_players "
+                            "ADD COLUMN fishing_xp INTEGER DEFAULT 0"
+                        )
+                    )
+
         # Seed brewing reference data (ingredients + dangerous triples)
         async with self.sessionmaker() as session:
             from brewing.seed_data import seed_if_empty
@@ -945,6 +959,14 @@ class DerbyScheduler:
                 inline=False,
             )
 
+        fishing_text = await self._build_fishing_digest(guild_id)
+        if fishing_text:
+            embed.add_field(
+                name="\U0001f3a3 Fishing",
+                value=fishing_text,
+                inline=False,
+            )
+
         return embed
 
     async def _build_tournament_digest(
@@ -996,6 +1018,43 @@ class DerbyScheduler:
             return "\n".join(lines)
 
         return None
+
+    async def _build_fishing_digest(self, guild_id: int) -> str | None:
+        """Return fishing stats for yesterday, or None if no activity."""
+        from datetime import timedelta as _td
+
+        from fishing import repositories as fish_repo
+
+        yesterday = (datetime.now(timezone.utc) - _td(days=1)).strftime("%Y-%m-%d")
+        async with self.sessionmaker() as session:
+            summaries = await fish_repo.get_guild_daily_summaries(
+                session, guild_id, yesterday
+            )
+
+        if not summaries:
+            return None
+
+        total_fish = sum(s.total_fish for s in summaries)
+        total_coins = sum(s.total_coins for s in summaries)
+        if total_fish == 0:
+            return None
+
+        lines = [f"**{total_fish}** fish caught for **{total_coins}** coins"]
+
+        # Most active angler
+        top_angler = max(summaries, key=lambda s: s.total_fish)
+        lines.append(f"Top angler: <@{top_angler.user_id}> ({top_angler.total_fish} fish)")
+
+        # Biggest catch (by length)
+        with_length = [s for s in summaries if s.biggest_catch_length]
+        if with_length:
+            biggest = max(with_length, key=lambda s: s.biggest_catch_length)
+            lines.append(
+                f"Biggest catch: **{biggest.biggest_catch_name}** "
+                f"({biggest.biggest_catch_length}in) by <@{biggest.user_id}>"
+            )
+
+        return "\n".join(lines)
 
     async def _expire_pool_racers(self, guild_id: int) -> int:
         """Delete unowned pool racers whose expiry time has passed."""
@@ -2215,7 +2274,12 @@ class DerbyScheduler:
                 try:
                     location_data = locations.get(fs.location_name)
                     if location_data is None:
-                        # Location YAML removed — end gracefully
+                        # Location YAML removed — end gracefully; refund leftover bait
+                        if fs.bait_remaining > 0:
+                            await fish_repo.add_bait(
+                                session, fs.user_id, fs.guild_id,
+                                fs.bait_type, fs.bait_remaining,
+                            )
                         await fish_repo.end_session(session, fs.id)
                         continue
 
@@ -2239,17 +2303,63 @@ class DerbyScheduler:
                             )
                         wallet.balance += catch["value"]
 
-                    # Calculate next cast
+                    # Award XP
+                    xp_gained = fish_logic.calculate_catch_xp(catch, location_data)
+                    player, old_level, new_level = await fish_repo.add_xp(
+                        session, fs.user_id, fs.guild_id, xp_gained
+                    )
+
+                    is_fish = not catch["is_trash"]
+
+                    # Log the catch and check trophy
+                    trophy_just_earned = False
+                    if is_fish:
+                        await fish_repo.upsert_fish_catch(
+                            session, fs.user_id, fs.guild_id,
+                            catch["name"], fs.location_name,
+                            catch.get("rarity", "common"),
+                            catch.get("length") or 0,
+                            catch["value"], now,
+                        )
+                        # Check if this catch completed the location trophy
+                        caught_species = await fish_repo.get_caught_species_at_location(
+                            session, fs.user_id, fs.guild_id, fs.location_name
+                        )
+                        has_trophy_now = fish_logic.has_location_trophy(
+                            caught_species, location_data
+                        )
+                        had_trophy_before = fish_logic.has_location_trophy(
+                            caught_species - {catch["name"]}, location_data
+                        )
+                        trophy_just_earned = has_trophy_now and not had_trophy_before
+                    else:
+                        caught_species = set()
+                        has_trophy_now = False
+
+                    # Update daily summary for digest
+                    date_str = now.strftime("%Y-%m-%d")
+                    await fish_repo.upsert_daily_summary(
+                        session, fs.user_id, fs.guild_id, date_str, catch
+                    )
+
+                    # Calculate next cast with skill + trophy bonuses
                     new_remaining = fs.bait_remaining - 1
+                    skill_reduction = fish_logic.get_skill_cast_reduction(
+                        new_level, location_data.get("skill_level", 1)
+                    )
+                    trophy_reduction = (
+                        fish_logic.TROPHY_CAST_REDUCTION if has_trophy_now else 0.0
+                    )
                     next_catch = now + timedelta(
                         seconds=fish_logic.calculate_cast_time(
                             location_data["base_cast_time"],
                             rod_data,
                             fs.bait_type,
+                            skill_reduction=skill_reduction,
+                            trophy_reduction=trophy_reduction,
                         )
                     )
 
-                    is_fish = not catch["is_trash"]
                     update_kwargs: dict[str, Any] = {
                         "total_fish": fs.total_fish + (1 if is_fish else 0),
                         "total_coins": fs.total_coins + catch["value"],
@@ -2261,12 +2371,27 @@ class DerbyScheduler:
                     }
 
                     session_ended = new_remaining <= 0
-                    end_reason = None
                     if session_ended:
                         update_kwargs["active"] = False
-                        end_reason = "Ran out of bait!"
 
                     await fish_repo.update_session(session, fs.id, **update_kwargs)
+
+                    # Announcements (level-up and trophy)
+                    try:
+                        channel = self.bot.get_channel(fs.channel_id)
+                        if channel and new_level > old_level:
+                            await channel.send(
+                                f"\u2B50 <@{fs.user_id}> reached "
+                                f"**Fishing Level {new_level}**!"
+                            )
+                        if channel and trophy_just_earned:
+                            loc_name = location_data.get("name", fs.location_name)
+                            await channel.send(
+                                f"\U0001f3c6 <@{fs.user_id}> completed the "
+                                f"**{loc_name}** collection! Trophy earned!"
+                            )
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
 
                 except Exception:
                     self.bot.logger.error(

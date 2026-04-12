@@ -29,6 +29,29 @@ _FISHING_DIR = Path(os.path.realpath(os.path.dirname(__file__)))
 _RODS_PATH = _FISHING_DIR / "rods.yaml"
 _LOCATIONS_DIR = _FISHING_DIR / "locations"
 
+# ---------------------------------------------------------------------------
+# XP & Level constants
+# ---------------------------------------------------------------------------
+
+XP_PER_RARITY: dict[str, int] = {
+    "trash": 1,
+    "common": 5,
+    "uncommon": 15,
+    "rare": 40,
+    "legendary": 100,
+}
+
+LEVEL_THRESHOLDS: list[tuple[int, int]] = [
+    (1, 0),
+    (2, 100),
+    (3, 300),
+    (4, 600),
+    (5, 1000),
+]
+
+SKILL_BONUS_PER_LEVEL = 0.02   # 2% cast reduction per level above requirement
+TROPHY_CAST_REDUCTION = 0.10   # 10% cast reduction at trophy locations
+
 # Rarity colour mapping for embeds
 _RARITY_COLORS = {
     "common": 0x95A5A6,     # grey
@@ -116,17 +139,76 @@ def calculate_cast_time(
     base_cast_time: int,
     rod_data: dict[str, Any],
     bait_type: str,
+    skill_reduction: float = 0.0,
+    trophy_reduction: float = 0.0,
 ) -> int:
     """Return seconds until next catch.
 
-    Formula: ``base * (1 - rod_reduction) * (1 - bait_reduction)``
+    Formula: ``base * (1 - rod) * (1 - bait) * (1 - skill) * (1 - trophy)``
     """
     rod_reduction = rod_data.get("cast_reduction", 0.0)
     bait_info = BAIT_TYPES.get(bait_type, {})
     bait_reduction = bait_info.get("cast_reduction", 0.0)
 
-    result = base_cast_time * (1 - rod_reduction) * (1 - bait_reduction)
+    result = (
+        base_cast_time
+        * (1 - rod_reduction)
+        * (1 - bait_reduction)
+        * (1 - skill_reduction)
+        * (1 - trophy_reduction)
+    )
     return max(int(result), 60)  # minimum 60 seconds
+
+
+# ---------------------------------------------------------------------------
+# XP & Level functions
+# ---------------------------------------------------------------------------
+
+
+def calculate_catch_xp(catch: dict[str, Any], location_data: dict[str, Any]) -> int:
+    """Return XP earned for a catch, scaled by location difficulty."""
+    rarity = "trash" if catch.get("is_trash") else catch.get("rarity", "common")
+    base_xp = XP_PER_RARITY.get(rarity, 1)
+    skill_level = location_data.get("skill_level", 1)
+    return base_xp * skill_level
+
+
+def get_level(xp: int) -> int:
+    """Return the player's fishing level based on cumulative XP."""
+    level = 1
+    for lvl, threshold in LEVEL_THRESHOLDS:
+        if xp >= threshold:
+            level = lvl
+    return level
+
+
+def get_xp_for_next_level(xp: int) -> tuple[int, int] | None:
+    """Return ``(xp_needed, next_level)`` or ``None`` if at max level."""
+    current = get_level(xp)
+    for lvl, threshold in LEVEL_THRESHOLDS:
+        if lvl > current:
+            return (threshold - xp, lvl)
+    return None
+
+
+def can_fish_at_location(player_level: int, location_data: dict[str, Any]) -> bool:
+    """Check if a player's level meets the location's skill requirement."""
+    return player_level >= location_data.get("skill_level", 1)
+
+
+def get_skill_cast_reduction(player_level: int, location_skill_level: int) -> float:
+    """Return bonus cast reduction from over-leveling a location."""
+    levels_above = max(0, player_level - location_skill_level)
+    return levels_above * SKILL_BONUS_PER_LEVEL
+
+
+def has_location_trophy(
+    caught_species: set[str], location_data: dict[str, Any]
+) -> bool:
+    """Check if a player has caught all non-trash species at a location."""
+    fish_pool = location_data.get("fish", [])
+    all_species = {f["name"] for f in fish_pool}
+    return len(all_species) > 0 and all_species.issubset(caught_species)
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ class FishingPlayer(Base):
     guild_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     rod_id: Mapped[str] = mapped_column(String, default="basic")
     notify_on_catch: Mapped[bool] = mapped_column(Boolean, default=False)
+    fishing_xp: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class PlayerBait(Base):
@@ -58,8 +59,50 @@ class FishingSession(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class FishCatch(Base):
+    """Tracks species discovery and records per player per location."""
+
+    __tablename__ = "fish_catches"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guild_id", "fish_name", "location_name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    fish_name: Mapped[str] = mapped_column(String, nullable=False)
+    location_name: Mapped[str] = mapped_column(String, nullable=False)
+    rarity: Mapped[str] = mapped_column(String, nullable=False)
+    best_length: Mapped[int] = mapped_column(Integer, default=0)
+    best_value: Mapped[int] = mapped_column(Integer, default=0)
+    catch_count: Mapped[int] = mapped_column(Integer, default=0)
+    first_caught_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_caught_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class DailyCatchSummary(Base):
+    """Per-user daily fishing totals for the daily digest."""
+
+    __tablename__ = "daily_catch_summaries"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guild_id", "date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    date: Mapped[str] = mapped_column(String, nullable=False)  # "YYYY-MM-DD"
+    total_fish: Mapped[int] = mapped_column(Integer, default=0)
+    total_coins: Mapped[int] = mapped_column(Integer, default=0)
+    biggest_catch_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    biggest_catch_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    biggest_catch_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 __all__ = [
     "FishingPlayer",
     "PlayerBait",
     "FishingSession",
+    "FishCatch",
+    "DailyCatchSummary",
 ]
