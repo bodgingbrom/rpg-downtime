@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import discord
+import checks
 from discord import app_commands
 from discord.ext import commands
 from discord.ext.commands import Context
@@ -32,6 +33,9 @@ async def location_autocomplete(
 class Fishing(commands.Cog, name="fishing"):
     def __init__(self, bot) -> None:
         self.bot = bot
+
+    async def cog_check(self, ctx: Context) -> bool:
+        return await checks.in_bot_channel(ctx)
         # Pre-load data caches
         fish_logic.load_rods()
         fish_logic.load_locations()

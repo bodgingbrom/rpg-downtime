@@ -224,6 +224,9 @@ class DiscordBot(commands.Bot):
             )
             await context.send(embed=embed, ephemeral=True)
         elif isinstance(error, commands.CheckFailure):
+            # Channel restriction check already sends its own message
+            if "wrong channel" in str(error):
+                return
             embed = discord.Embed(
                 description="You don't have permission to do that!",
                 color=0xE02B2B,
