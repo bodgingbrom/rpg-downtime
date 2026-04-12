@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from datetime import datetime, timedelta
 
 import discord
@@ -12,7 +13,7 @@ from sqlalchemy import select
 
 import checks
 from config import resolve_guild_setting
-from derby import commentary, descriptions, logic, models
+from derby import commentary, descriptions, flavor_names, logic, models
 from derby import repositories as repo
 from economy import repositories as wallet_repo
 
@@ -3129,6 +3130,70 @@ class Stable(commands.Cog, name="stable"):
             text=f"Breeding fee: {fee} coins | Balance: {wallet.balance} coins"
         )
         await context.send(embed=embed)
+
+    # -- Name submission -------------------------------------------------------
+
+    _NAME_MAX_LEN = 32
+    _NAME_PATTERN = re.compile(r"^[A-Za-z0-9 '\-]+$")
+
+    @stable.command(
+        name="suggest-name",
+        description="Submit a racer name to the guild's name pool",
+    )
+    @app_commands.describe(name="The name to add (max 32 characters, letters/numbers/spaces/hyphens)")
+    async def stable_suggest_name(self, context: Context, name: str) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+
+        # --- Sanitize ---
+        name = name.strip()
+        if not name:
+            await context.send("Name cannot be empty.", ephemeral=True)
+            return
+        if len(name) > self._NAME_MAX_LEN:
+            await context.send(
+                f"Name must be {self._NAME_MAX_LEN} characters or fewer "
+                f"(yours is {len(name)}).",
+                ephemeral=True,
+            )
+            return
+        if not self._NAME_PATTERN.match(name):
+            await context.send(
+                "Name can only contain letters, numbers, spaces, "
+                "hyphens, and apostrophes.",
+                ephemeral=True,
+            )
+            return
+
+        # --- Duplicate check against existing pool + DB ---
+        existing_flavor = flavor_names.load_flavor_names(guild_id)
+        base_names = logic._load_names()
+        all_pool = [n.lower() for n in existing_flavor + base_names]
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            result = await session.execute(
+                select(models.Racer.name).where(
+                    models.Racer.guild_id == guild_id
+                )
+            )
+            db_names = {row[0].lower() for row in result.all()}
+
+        if name.lower() in all_pool or name.lower() in db_names:
+            await context.send(
+                f"**{name}** is already in the name pool or in use.",
+                ephemeral=True,
+            )
+            return
+
+        # --- Add to guild flavor file ---
+        existing_flavor.append(name)
+        flavor_names.save_flavor_names(guild_id, existing_flavor)
+
+        await context.send(
+            f"**{name}** has been added to the name pool! "
+            f"It may appear on a future racer.",
+            ephemeral=True,
+        )
 
 
 class Tournament(commands.Cog, name="tournament_cog"):
