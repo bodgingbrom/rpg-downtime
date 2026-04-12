@@ -428,23 +428,31 @@ class Fishing(commands.Cog, name="fishing"):
 
             cost = next_rod["cost"]
             if wallet.balance < cost:
+                cast_pct = int(next_rod.get("cast_reduction", 0) * 100)
+                rare_pct = int(next_rod.get("rare_boost", 0) * 100)
                 await context.send(
                     f"Not enough coins! The **{next_rod['name']}** costs "
-                    f"**{cost}** coins but you have **{wallet.balance}**.",
+                    f"**{cost}** coins but you have **{wallet.balance}**.\n"
+                    f"(Cast speed -{cast_pct}% | Rare boost +{rare_pct}%)",
                     ephemeral=True,
                 )
                 return
 
+            old_rod = fish_logic.get_rod(player.rod_id)
             wallet.balance -= cost
             await fish_repo.update_player(
                 session, user_id, guild_id, rod_id=next_rod["id"]
             )
             await session.commit()
 
-        current_rod = fish_logic.get_rod(player.rod_id)
+        cast_pct = int(next_rod.get("cast_reduction", 0) * 100)
+        rare_pct = int(next_rod.get("rare_boost", 0) * 100)
+        trash_pct = int(next_rod.get("trash_multiplier", 1) * 100)
         await context.send(
-            f"Upgraded from **{current_rod['name']}** to **{next_rod['name']}**! "
-            f"(-{cost} coins)",
+            f"Upgraded from **{old_rod['name']}** to **{next_rod['name']}**! "
+            f"(-{cost} coins)\n"
+            f"Cast speed **-{cast_pct}%** | Rare boost **+{rare_pct}%** | "
+            f"Trash rate **{trash_pct}%**",
             ephemeral=True,
         )
 
