@@ -127,6 +127,10 @@ class GuildSettings(Base):
     daily_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     racer_emoji: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
+    # Fishing
+    fishing_bait_costs: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    fishing_cast_multiplier: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
 
 class DailyReward(Base):
     """Pre-generated daily check-in rewards for players."""

@@ -1,0 +1,61 @@
+name: River Rapids
+description: A rushing river with strong currents. Skilled anglers find good catches here.
+theme: river
+skill_level: 2
+base_cast_time: 1080
+
+fish:
+  - name: Brook Trout
+    rarity: common
+    value_range: [8, 14]
+    length_range: [8, 16]
+    preferred_bait: worm
+    weight: 35
+
+  - name: River Bass
+    rarity: common
+    value_range: [10, 16]
+    length_range: [10, 18]
+    preferred_bait: insect
+    weight: 30
+
+  - name: Steelhead
+    rarity: uncommon
+    value_range: [18, 30]
+    length_range: [16, 28]
+    preferred_bait: shiny_lure
+    weight: 18
+
+  - name: Crimson Salmon
+    rarity: rare
+    value_range: [35, 65]
+    length_range: [20, 34]
+    preferred_bait: shiny_lure
+    weight: 8
+
+  - name: Storm Eel
+    rarity: rare
+    value_range: [40, 70]
+    length_range: [24, 42]
+    preferred_bait: premium
+    weight: 5
+
+  - name: Ghostfin Pike
+    rarity: legendary
+    value_range: [120, 220]
+    length_range: [30, 48]
+    required_bait: premium
+    weight: 1
+
+trash:
+  - name: Driftwood
+    value: 0
+    weight: 8
+
+  - name: Torn Net
+    value: 0
+    weight: 6
+
+  - name: River Stone
+    value: 0
+    weight: 5

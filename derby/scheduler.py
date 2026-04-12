@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from config import resolve_guild_setting
 from db_base import Base
 import brewing.models  # noqa: F401 — register brewing tables on Base
+import fishing.models  # noqa: F401 — register fishing tables on Base
 
 from . import commentary, flavor_names, logic, models, npc_generation, npc_quips
 from . import repositories as repo
@@ -109,6 +110,10 @@ class DerbyScheduler:
         self.digest_task = tasks.loop(time=[dt_time(0, 5)])(self._digest_tick)
         self.digest_task.start()
 
+        # Fishing session tick — every 60 seconds
+        self.fishing_task = tasks.loop(seconds=60)(self._fishing_tick)
+        self.fishing_task.start()
+
         # Ensure pending races exist once the guild cache is ready.
         # This runs in the background so it doesn't block setup_hook.
         if hasattr(self.bot, "wait_until_ready"):
@@ -131,6 +136,8 @@ class DerbyScheduler:
             self.daily_task.cancel()
         if hasattr(self, "digest_task") and self.digest_task and self.digest_task.is_running():
             self.digest_task.cancel()
+        if hasattr(self, "fishing_task") and self.fishing_task and self.fishing_task.is_running():
+            self.fishing_task.cancel()
         await self.engine.dispose()
 
     async def _init_db(self) -> None:
@@ -391,6 +398,9 @@ class DerbyScheduler:
                 "daily_min": ("INTEGER", "NULL"),
                 "daily_max": ("INTEGER", "NULL"),
                 "racer_emoji": ("TEXT", "NULL"),
+                # Fishing (Lazy Lures)
+                "fishing_bait_costs": ("TEXT", "NULL"),
+                "fishing_cast_multiplier": ("REAL", "NULL"),
             }
             for col_name, (col_type, default) in gs_migrations.items():
                 if col_name not in gs_columns:
@@ -2178,3 +2188,91 @@ class DerbyScheduler:
             except (discord.Forbidden, discord.HTTPException):
                 return
             await asyncio.sleep(delay)
+
+    # ------------------------------------------------------------------
+    # Fishing
+    # ------------------------------------------------------------------
+
+    async def _fishing_tick(self) -> None:
+        """Process all fishing sessions whose catch timer has elapsed."""
+        from datetime import timedelta
+
+        from economy import repositories as wallet_repo
+        from fishing import logic as fish_logic
+        from fishing import repositories as fish_repo
+
+        await self._init_db()
+        now = datetime.now(timezone.utc)
+
+        async with self.sessionmaker() as session:
+            due_sessions = await fish_repo.get_all_due_sessions(session, now)
+            if not due_sessions:
+                return
+
+            locations = fish_logic.load_locations()
+
+            for fs in due_sessions:
+                try:
+                    location_data = locations.get(fs.location_name)
+                    if location_data is None:
+                        # Location YAML removed — end gracefully
+                        await fish_repo.end_session(session, fs.id)
+                        continue
+
+                    rod_data = fish_logic.get_rod(fs.rod_id)
+
+                    # Resolve the catch
+                    catch = fish_logic.select_catch(
+                        location_data, rod_data, fs.bait_type
+                    )
+
+                    # Credit coins to wallet
+                    if catch["value"] > 0:
+                        wallet = await wallet_repo.get_wallet(
+                            session, fs.user_id, fs.guild_id
+                        )
+                        if wallet is None:
+                            wallet = await wallet_repo.create_wallet(
+                                session,
+                                user_id=fs.user_id,
+                                guild_id=fs.guild_id,
+                            )
+                        wallet.balance += catch["value"]
+
+                    # Calculate next cast
+                    new_remaining = fs.bait_remaining - 1
+                    next_catch = now + timedelta(
+                        seconds=fish_logic.calculate_cast_time(
+                            location_data["base_cast_time"],
+                            rod_data,
+                            fs.bait_type,
+                        )
+                    )
+
+                    is_fish = not catch["is_trash"]
+                    update_kwargs: dict[str, Any] = {
+                        "total_fish": fs.total_fish + (1 if is_fish else 0),
+                        "total_coins": fs.total_coins + catch["value"],
+                        "last_catch_name": catch["name"],
+                        "last_catch_value": catch["value"],
+                        "last_catch_length": catch.get("length"),
+                        "bait_remaining": new_remaining,
+                        "next_catch_at": next_catch,
+                    }
+
+                    session_ended = new_remaining <= 0
+                    end_reason = None
+                    if session_ended:
+                        update_kwargs["active"] = False
+                        end_reason = "Ran out of bait!"
+
+                    await fish_repo.update_session(session, fs.id, **update_kwargs)
+
+                except Exception:
+                    self.bot.logger.error(
+                        "Fishing tick error for user %s guild %s",
+                        fs.user_id,
+                        fs.guild_id,
+                        exc_info=True,
+                    )
+
