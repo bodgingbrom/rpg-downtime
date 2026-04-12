@@ -2,47 +2,47 @@ name: Deep Lake
 description: A vast, dark lake rumored to hold ancient creatures in its depths.
 theme: lake
 skill_level: 3
-base_cast_time: 1500
+base_cast_time: 2100
 
 fish:
   - name: Lake Sturgeon
     rarity: common
-    value_range: [12, 20]
+    value_range: [7, 12]
     length_range: [14, 24]
     preferred_bait: worm
     weight: 30
 
   - name: Blackfin Catfish
     rarity: common
-    value_range: [14, 22]
+    value_range: [8, 13]
     length_range: [16, 28]
     preferred_bait: insect
     weight: 25
 
   - name: Deepwater Walleye
     rarity: uncommon
-    value_range: [24, 40]
+    value_range: [14, 24]
     length_range: [20, 32]
     preferred_bait: shiny_lure
     weight: 20
 
   - name: Abyssal Char
     rarity: rare
-    value_range: [50, 90]
+    value_range: [30, 54]
     length_range: [22, 38]
     preferred_bait: shiny_lure
     weight: 10
 
   - name: Ironjaw Muskie
     rarity: rare
-    value_range: [60, 100]
+    value_range: [36, 60]
     length_range: [28, 46]
     preferred_bait: premium
     weight: 6
 
   - name: Leviathan's Shadow
     rarity: legendary
-    value_range: [200, 350]
+    value_range: [120, 210]
     length_range: [40, 60]
     required_bait: premium
     weight: 1
