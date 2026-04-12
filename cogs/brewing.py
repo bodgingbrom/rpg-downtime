@@ -4,6 +4,7 @@ import random
 from datetime import datetime, timezone
 
 import discord
+import checks
 from discord import app_commands
 from discord.ext import commands
 from discord.ext.commands import Context
@@ -112,6 +113,9 @@ async def _all_ingredient_autocomplete(
 class Brewing(commands.Cog, name="brewing"):
     def __init__(self, bot) -> None:
         self.bot = bot
+
+    async def cog_check(self, ctx: Context) -> bool:
+        return await checks.in_bot_channel(ctx)
 
     @commands.hybrid_group(name="ingredients", description="Potion Panic ingredient commands")
     async def ingredients(self, context: Context) -> None:

@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands
 from discord.ext.commands import Context
 
+import checks
 from config import resolve_guild_setting
 from derby import descriptions, logic
 from derby import repositories as repo
@@ -16,6 +17,9 @@ from economy import repositories as wallet_repo
 class Economy(commands.Cog, name="economy"):
     def __init__(self, bot) -> None:
         self.bot = bot
+
+    async def cog_check(self, ctx: Context) -> bool:
+        return await checks.in_bot_channel(ctx)
 
     @commands.hybrid_command(name="wallet", description="Show your wallet balance")
     async def wallet(self, context: Context) -> None:

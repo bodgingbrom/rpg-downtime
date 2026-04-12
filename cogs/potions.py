@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 
 import discord
+import checks
 from discord import app_commands
 from discord.ext import commands
 from discord.ext.commands import Context
@@ -142,6 +143,9 @@ class TemperamentSelect(discord.ui.Select):
 class Potions(commands.Cog, name="potions"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+
+    async def cog_check(self, ctx: Context) -> bool:
+        return await checks.in_bot_channel(ctx)
 
     @commands.hybrid_group(name="potion", description="Potion Panic potion commands")
     async def potion(self, context: Context) -> None:
