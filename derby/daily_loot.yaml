@@ -1,0 +1,182 @@
+# Daily reward loot tables by rank tier.
+# Each entry is a short item name that a racer might "find" between races.
+# The LLM uses a few sampled items as inspiration; without the LLM,
+# one item is picked at random for the fallback flavor text.
+
+D:
+  # Worthless junk — funny, gross, or useless finds
+  - a rusty horseshoe
+  - a half-eaten apple
+  - a cracked monocle
+  - someone's lost sock
+  - a dented tin cup
+  - a handful of lint
+  - a muddy boot (just one)
+  - a broken compass
+  - a tattered map to nowhere
+  - a jar of suspicious jam
+  - a wooden spoon with bite marks
+  - a rock that looks like a face
+  - a soggy pamphlet
+  - an expired coupon
+  - a bent fork
+  - a bag of mystery dust
+  - a deflated ball
+  - a chipped ceramic frog
+  - a bundle of twigs tied with string
+  - a stale bread roll
+  - a rusted belt buckle
+  - a crumpled love letter (not for them)
+  - an old bird's nest (empty)
+  - a button collection (3 buttons)
+  - a jar of pickled nothing
+  - a suspicious mushroom
+  - someone's grocery list
+  - a snapped fishing hook
+  - a gnawed bone
+  - a very small hat
+
+C:
+  # Modest finds — useful but unremarkable
+  - a dull copper dagger
+  - a pouch of mixed herbs
+  - a frayed rope (still usable)
+  - a cracked healing potion
+  - a leather coin purse (empty, but nice)
+  - a scratched silver ring
+  - a bundle of tallow candles
+  - a well-used whetstone
+  - a tarnished compass
+  - a half-decent bedroll
+  - a bag of dried rations
+  - a set of bone dice
+  - a faded cloak
+  - a tin of boot polish
+  - a copper bracelet
+  - a small hand mirror (slightly warped)
+  - an iron cooking pot
+  - a stack of blank parchment
+  - a jar of lamp oil
+  - a leather-bound journal (mostly empty)
+  - a chipped quartz crystal
+  - a rolled-up hammock
+  - a bronze arrowhead
+  - a pouch of flint and steel
+  - a coil of decent wire
+  - an old almanac
+  - a wooden chess piece (a knight)
+  - a serviceable leather belt
+  - a small tin whistle
+  - a pewter tankard
+
+B:
+  # Decent loot — genuinely useful and worth something
+  - a polished steel shortsword
+  - a silver-tipped arrow quiver
+  - a vial of healing salve
+  - a reinforced leather bracer
+  - a silk-lined traveling cloak
+  - a jar of imported spice
+  - a crystal vial of perfume
+  - a silver pendant on a chain
+  - a well-crafted lockpick set
+  - a pouch of quality tobacco
+  - a master-crafted belt knife
+  - a small telescope
+  - a hardwood walking staff
+  - an embroidered saddlebag
+  - a set of ivory chess pieces
+  - a bundle of fine parchment
+  - a stoppered bottle of ink (shimmer blue)
+  - a velvet-lined ring box (ring sold separately)
+  - a quality leather map case
+  - a flask of aged brandy
+  - a pair of fur-lined gloves
+  - a set of carved wooden runes
+  - a brass astrolabe
+  - a polished jade figurine
+  - a rolled bolt of linen
+  - a silvered hand mirror
+  - a toolkit of precision instruments
+  - a carved bone flute
+  - a bottle of fine red wine
+  - a steel-capped quarterstaff
+
+A:
+  # Valuable treasure — impressive and coveted
+  - a gold-inlaid scabbard
+  - a sapphire-set brooch
+  - a vial of phoenix ash
+  - an enchanted quill (never runs dry)
+  - a masterwork chain shirt
+  - a ruby-eyed skull amulet
+  - a tome of forgotten lore
+  - a gold signet ring
+  - a jeweled letter opener
+  - a scroll of minor warding
+  - an ornate silver chalice
+  - a pouch of star-metal shavings
+  - a pair of mithril cufflinks
+  - a bottle of liquid moonlight
+  - a silk tapestry (rolled)
+  - an opal-studded hairpin
+  - a gold-bound spellbook (half-filled)
+  - a dragonscale coin purse
+  - a crystal ball (cloudy, but real)
+  - an ivory chess set (complete)
+  - a diamond-dust hourglass
+  - an enchanted compass (always finds north)
+  - a platinum flask engraved with runes
+  - a phoenix feather quill
+  - a lock of unicorn mane (preserved)
+  - a jar of everburning embers
+  - a gemstone-studded dagger hilt
+  - a map to a minor treasure hoard
+  - an emerald the size of a thumb
+  - a crown of woven silver wire
+
+S:
+  # Legendary prizes — the stuff of myth and hero tales
+  - a shard of a broken god's blade
+  - a vial of dragon's blood (still warm)
+  - a flawless star sapphire
+  - an ancient scroll of gate magic
+  - a ring of whispered secrets
+  - a feather from a celestial hawk
+  - a bottled memory of a lich
+  - a titan's fossilized tooth
+  - a cloak woven from shadow silk
+  - an hourglass that runs upward
+  - a compass that points to desire
+  - a fragment of the first dawn
+  - a demon lord's chess piece (the queen)
+  - a coin from a civilization that never existed
+  - a frozen lightning bolt in crystal
+  - a mirror that shows tomorrow
+  - a seed from the World Tree
+  - a page torn from the Book of Names
+  - an echo of a dead god's laughter (jarred)
+  - a crown jewel from a lost empire
+  - a key that fits no known lock
+  - a shard of crystallized time
+  - a phoenix egg (dormant)
+  - a star chart drawn by an archfey
+  - a bottle of concentrated luck
+  - a fragment of pure void-stone
+  - a golden apple from an immortal orchard
+  - a wand carved from a dragon's rib
+  - a gem that hums a forgotten melody
+  - a letter of recommendation from Death herself
+
+no_racer:
+  # Fallback for players with no racers
+  - some coins wedged between cobblestones
+  - a dropped coin purse near the stands
+  - loose change from under a bleacher seat
+  - a few coins in an old coat pocket
+  - a tip jar someone forgot
+  - a winning ticket stub someone dropped
+  - a coin stuck in a drain grate
+  - some spare change behind the hay bales
+  - a small stash hidden in a stable wall
+  - a coin pouch left on a fence post
