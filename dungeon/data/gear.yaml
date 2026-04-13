@@ -1,0 +1,175 @@
+weapons:
+  # Common tier
+  - id: rusty_dagger
+    name: Rusty Dagger
+    rarity: common
+    dice: "1d4"
+    bonus: 0
+    cost: 15
+    description: "Barely sharp enough to cut bread."
+  - id: wooden_club
+    name: Wooden Club
+    rarity: common
+    dice: "1d4"
+    bonus: 1
+    cost: 25
+    description: "A stout branch, roughly shaped into a weapon."
+  - id: shortsword
+    name: Shortsword
+    rarity: common
+    dice: "1d6"
+    bonus: 0
+    cost: 40
+    description: "A reliable blade for close quarters."
+  - id: handaxe
+    name: Handaxe
+    rarity: common
+    dice: "1d6"
+    bonus: 0
+    cost: 40
+    description: "Good for chopping wood and goblins alike."
+
+  # Uncommon tier
+  - id: longsword
+    name: Longsword
+    rarity: uncommon
+    dice: "1d8"
+    bonus: 0
+    cost: 100
+    description: "A well-forged blade with good reach."
+  - id: war_hammer
+    name: War Hammer
+    rarity: uncommon
+    dice: "1d8"
+    bonus: 1
+    cost: 120
+    description: "Heavy enough to dent plate armor."
+  - id: battle_axe
+    name: Battle Axe
+    rarity: uncommon
+    dice: "1d8"
+    bonus: 0
+    cost: 100
+    description: "A wickedly sharp crescent blade."
+
+  # Rare tier
+  - id: greataxe
+    name: Greataxe
+    rarity: rare
+    dice: "1d10"
+    bonus: 1
+    cost: 250
+    description: "Requires two hands and a strong spine."
+  - id: flaming_sword
+    name: Flaming Sword
+    rarity: rare
+    dice: "1d8"
+    bonus: 3
+    cost: 300
+    description: "The blade flickers with an unnatural heat."
+
+  # Epic tier
+  - id: greatsword_of_ruin
+    name: Greatsword of Ruin
+    rarity: epic
+    dice: "1d12"
+    bonus: 2
+    cost: 600
+    description: "An ancient blade that hums with destructive energy."
+  - id: vorpal_dagger
+    name: Vorpal Dagger
+    rarity: epic
+    dice: "1d4"
+    bonus: 6
+    cost: 550
+    description: "Small but impossibly sharp. It cuts through anything."
+
+armors:
+  # Common tier
+  - id: padded_armor
+    name: Padded Armor
+    rarity: common
+    defense: 1
+    cost: 20
+    description: "Layered cloth. Better than nothing."
+  - id: leather_armor
+    name: Leather Armor
+    rarity: common
+    defense: 2
+    cost: 40
+    description: "Sturdy hide, well-tanned and fitted."
+
+  # Uncommon tier
+  - id: chain_shirt
+    name: Chain Shirt
+    rarity: uncommon
+    defense: 3
+    cost: 100
+    description: "Interlocking steel rings that turn aside blades."
+  - id: scale_mail
+    name: Scale Mail
+    rarity: uncommon
+    defense: 4
+    cost: 140
+    description: "Overlapping metal scales riveted to a leather backing."
+
+  # Rare tier
+  - id: half_plate
+    name: Half Plate
+    rarity: rare
+    defense: 5
+    cost: 300
+    description: "Shaped steel plates covering your chest and shoulders."
+
+  # Epic tier
+  - id: adamantine_plate
+    name: Adamantine Plate
+    rarity: epic
+    defense: 7
+    cost: 650
+    description: "Near-indestructible armor forged from a rare metal."
+
+accessories:
+  # Common tier
+  - id: iron_ring
+    name: Iron Ring
+    rarity: common
+    effect: {type: max_hp_bonus, value: 4}
+    cost: 25
+    description: "A plain ring that fortifies your resolve."
+
+  # Uncommon tier
+  - id: lucky_charm
+    name: Lucky Charm
+    rarity: uncommon
+    effect: {type: crit_bonus, value: 3}
+    cost: 80
+    description: "A rabbit's foot. The rabbit wasn't so lucky."
+  - id: boots_of_evasion
+    name: Boots of Evasion
+    rarity: uncommon
+    effect: {type: flee_bonus, value: 3}
+    cost: 90
+    description: "Light boots that make running away feel dignified."
+
+  # Rare tier
+  - id: amulet_of_vitality
+    name: Amulet of Vitality
+    rarity: rare
+    effect: {type: max_hp_bonus, value: 10}
+    cost: 250
+    description: "A warm emerald set in silver. You feel heartier wearing it."
+  - id: ring_of_precision
+    name: Ring of Precision
+    rarity: rare
+    effect: {type: crit_bonus, value: 5}
+    cost: 280
+    description: "Your strikes find weak points you didn't know existed."
+
+  # Epic tier
+  - id: cloak_of_shadows
+    name: Cloak of Shadows
+    rarity: epic
+    effect: {type: dodge_bonus, value: 4}
+    cost: 500
+    description: "Enemies struggle to land a clean hit while you wear this."

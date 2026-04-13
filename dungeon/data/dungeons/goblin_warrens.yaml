@@ -1,0 +1,240 @@
+id: goblin_warrens
+name: The Goblin Warrens
+description: "A network of damp tunnels beneath the hills, crawling with goblins and worse."
+
+floors:
+  - floor: 1
+    theme: musty_tunnels
+    rooms: [5, 6]
+    room_weights:
+      combat: 50
+      treasure: 20
+      trap: 15
+      rest: 15
+    monsters:
+      - id: sewer_rat
+        name: Sewer Rat
+        description: "A mangy rat the size of a small dog."
+        hp: 6
+        defense: 0
+        attack_dice: "1d4"
+        attack_bonus: -1
+        xp: 5
+        gold: [1, 4]
+        ai: {attack: 80, heavy: 20}
+        loot: []
+      - id: goblin
+        name: Goblin
+        description: "A sneering little wretch with a rusty blade."
+        hp: 12
+        defense: 0
+        attack_dice: "1d4"
+        attack_bonus: 1
+        xp: 10
+        gold: [3, 8]
+        ai: {attack: 60, heavy: 20, defend: 20}
+        loot:
+          - {item_id: health_potion, chance: 15}
+      - id: giant_spider
+        name: Giant Spider
+        description: "Eight legs, eight eyes, and dripping fangs."
+        hp: 10
+        defense: 0
+        attack_dice: "1d4"
+        attack_bonus: 0
+        xp: 8
+        gold: [1, 5]
+        ai: {attack: 70, heavy: 30}
+        loot: []
+    traps:
+      - id: pit_trap
+        name: Pit Trap
+        damage: [3, 8]
+        dex_dc: 12
+        flavor_success: "You spot the crumbling floor and leap across the gap."
+        flavor_fail: "The floor gives way beneath you and you tumble into a shallow pit!"
+      - id: dart_trap
+        name: Dart Trap
+        damage: [2, 6]
+        dex_dc: 11
+        flavor_success: "You hear a click and duck just as darts whistle overhead."
+        flavor_fail: "A tripwire snaps and poisoned darts pepper your side!"
+    treasure_tier: common
+    rest_shrines: 1
+    boss:
+      id: goblin_chief
+      name: Goblin Chief
+      description: "A hulking goblin in patchwork armor, wielding a jagged cleaver."
+      hp: 30
+      defense: 2
+      attack_dice: "1d6"
+      attack_bonus: 2
+      xp: 30
+      gold: [15, 30]
+      ai: {attack: 50, heavy: 30, defend: 20}
+      loot:
+        - {item_id: shortsword, chance: 100, type: gear}
+
+  - floor: 2
+    theme: flooded_tunnels
+    rooms: [6, 7]
+    room_weights:
+      combat: 55
+      treasure: 15
+      trap: 20
+      rest: 10
+    monsters:
+      - id: goblin_archer
+        name: Goblin Archer
+        description: "A goblin perched on a ledge, bow drawn."
+        hp: 10
+        defense: 0
+        attack_dice: "1d6"
+        attack_bonus: 1
+        xp: 12
+        gold: [4, 10]
+        ai: {attack: 70, heavy: 20, defend: 10}
+        loot: []
+      - id: goblin_shaman
+        name: Goblin Shaman
+        description: "A hunched goblin muttering curses, eyes glowing faintly."
+        hp: 14
+        defense: 1
+        attack_dice: "1d6"
+        attack_bonus: 2
+        xp: 18
+        gold: [6, 14]
+        ai: {attack: 50, heavy: 30, defend: 20}
+        loot:
+          - {item_id: health_potion, chance: 20}
+      - id: cave_leech
+        name: Cave Leech
+        description: "A bloated, slimy worm that drops from the ceiling."
+        hp: 8
+        defense: 0
+        attack_dice: "1d6"
+        attack_bonus: 0
+        xp: 10
+        gold: [2, 6]
+        ai: {attack: 90, heavy: 10}
+        loot: []
+      - id: wolf
+        name: Dire Wolf
+        description: "A massive wolf with matted fur and bared fangs."
+        hp: 18
+        defense: 1
+        attack_dice: "1d6"
+        attack_bonus: 2
+        xp: 15
+        gold: [3, 8]
+        ai: {attack: 60, heavy: 30, defend: 10}
+        loot: []
+    traps:
+      - id: collapsing_floor
+        name: Collapsing Floor
+        damage: [4, 10]
+        dex_dc: 13
+        flavor_success: "The stones shift underfoot but you scramble to solid ground."
+        flavor_fail: "The tunnel floor collapses and you crash through rotten timbers!"
+      - id: poison_gas
+        name: Poison Gas Vent
+        damage: [3, 8]
+        dex_dc: 14
+        flavor_success: "You hold your breath and rush past the hissing vents."
+        flavor_fail: "A cloud of acrid green gas envelops you before you can react!"
+      - id: tripwire
+        name: Tripwire
+        damage: [2, 5]
+        dex_dc: 12
+        flavor_success: "You step carefully over the nearly invisible wire."
+        flavor_fail: "Your boot catches a wire and a log swings down from the ceiling!"
+    treasure_tier: uncommon
+    rest_shrines: 1
+    boss:
+      id: troll_guardian
+      name: Troll Guardian
+      description: "A massive troll hunched in the doorway, knuckles dragging through the water."
+      hp: 50
+      defense: 3
+      attack_dice: "1d8"
+      attack_bonus: 3
+      xp: 50
+      gold: [25, 50]
+      ai: {attack: 45, heavy: 35, defend: 20}
+      loot:
+        - {item_id: chain_shirt, chance: 100, type: gear}
+        - {item_id: greater_health_potion, chance: 50}
+
+  - floor: 3
+    theme: goblin_throne
+    rooms: [6, 8]
+    room_weights:
+      combat: 60
+      treasure: 15
+      trap: 20
+      rest: 5
+    monsters:
+      - id: goblin_elite
+        name: Goblin Elite
+        description: "A well-armed goblin in actual armor. These ones are dangerous."
+        hp: 20
+        defense: 2
+        attack_dice: "1d6"
+        attack_bonus: 3
+        xp: 20
+        gold: [8, 16]
+        ai: {attack: 50, heavy: 30, defend: 20}
+        loot:
+          - {item_id: health_potion, chance: 25}
+      - id: ogre
+        name: Ogre
+        description: "Enormous and dim-witted, but each swing could be your last."
+        hp: 30
+        defense: 2
+        attack_dice: "1d8"
+        attack_bonus: 3
+        xp: 25
+        gold: [10, 20]
+        ai: {attack: 60, heavy: 30, defend: 10}
+        loot: []
+      - id: goblin_assassin
+        name: Goblin Assassin
+        description: "You barely see the glint of the blade before it strikes."
+        hp: 14
+        defense: 1
+        attack_dice: "1d8"
+        attack_bonus: 2
+        xp: 22
+        gold: [8, 18]
+        ai: {attack: 55, heavy: 35, defend: 10}
+        loot:
+          - {item_id: smoke_bomb, chance: 15}
+    traps:
+      - id: blade_trap
+        name: Blade Trap
+        damage: [6, 14]
+        dex_dc: 15
+        flavor_success: "You flatten against the wall as whirling blades sweep past."
+        flavor_fail: "Spinning blades erupt from the walls and catch you across the ribs!"
+      - id: falling_cage
+        name: Falling Cage
+        damage: [4, 10]
+        dex_dc: 14
+        flavor_success: "You dive forward as an iron cage crashes down behind you."
+        flavor_fail: "An iron cage drops from the ceiling, slamming you to the floor!"
+    treasure_tier: rare
+    rest_shrines: 1
+    boss:
+      id: goblin_king
+      name: The Goblin King
+      description: "Draped in stolen finery and wielding a wicked crown-shaped mace. He will not share his hoard."
+      hp: 70
+      defense: 4
+      attack_dice: "1d10"
+      attack_bonus: 4
+      xp: 80
+      gold: [50, 100]
+      ai: {attack: 40, heavy: 35, defend: 25}
+      loot:
+        - {item_id: greataxe, chance: 100, type: gear}
+        - {item_id: greater_health_potion, chance: 100}
