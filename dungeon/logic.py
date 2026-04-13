@@ -330,7 +330,10 @@ def generate_rooms(
             guaranteed_rest -= 1
         else:
             room_type = rng.choices(room_types, weights=room_weights, k=1)[0]
-            if room_type == "rest" and guaranteed_rest <= 0 and any(
+            # Never place a rest shrine as the very first room
+            if room_type == "rest" and i == 0:
+                room_type = "combat"
+            elif room_type == "rest" and guaranteed_rest <= 0 and any(
                 r["type"] == "rest" for r in rooms
             ):
                 # Don't place extra rest rooms beyond what's guaranteed
