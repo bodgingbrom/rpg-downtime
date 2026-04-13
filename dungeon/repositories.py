@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import BestiaryEntry, DungeonPlayer, DungeonRun
+from .models import BestiaryEntry, DungeonPlayer, DungeonRun, PlayerGear, PlayerItem
 
 
 # ---------------------------------------------------------------------------
@@ -159,3 +159,129 @@ async def get_bestiary_entries(
         )
     )
     return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Player gear inventory
+# ---------------------------------------------------------------------------
+
+
+async def get_player_gear(
+    session: AsyncSession, user_id: int, guild_id: int
+) -> list[PlayerGear]:
+    result = await session.execute(
+        select(PlayerGear).where(
+            PlayerGear.user_id == user_id,
+            PlayerGear.guild_id == guild_id,
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def has_gear(
+    session: AsyncSession, user_id: int, guild_id: int, gear_id: str
+) -> bool:
+    """Check if a player owns a specific gear piece (in inventory or equipped)."""
+    result = await session.execute(
+        select(PlayerGear).where(
+            PlayerGear.user_id == user_id,
+            PlayerGear.guild_id == guild_id,
+            PlayerGear.gear_id == gear_id,
+        )
+    )
+    return result.scalars().first() is not None
+
+
+async def add_gear(
+    session: AsyncSession, user_id: int, guild_id: int, gear_id: str
+) -> PlayerGear:
+    """Add a gear piece to the player's inventory."""
+    entry = PlayerGear(user_id=user_id, guild_id=guild_id, gear_id=gear_id)
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    return entry
+
+
+async def remove_gear(
+    session: AsyncSession, user_id: int, guild_id: int, gear_id: str
+) -> bool:
+    """Remove a gear piece from the player's inventory. Returns True if found."""
+    result = await session.execute(
+        select(PlayerGear).where(
+            PlayerGear.user_id == user_id,
+            PlayerGear.guild_id == guild_id,
+            PlayerGear.gear_id == gear_id,
+        )
+    )
+    entry = result.scalars().first()
+    if entry is None:
+        return False
+    await session.delete(entry)
+    await session.commit()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Player item (consumable) inventory
+# ---------------------------------------------------------------------------
+
+
+async def get_player_items(
+    session: AsyncSession, user_id: int, guild_id: int
+) -> list[PlayerItem]:
+    result = await session.execute(
+        select(PlayerItem).where(
+            PlayerItem.user_id == user_id,
+            PlayerItem.guild_id == guild_id,
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def add_item(
+    session: AsyncSession, user_id: int, guild_id: int, item_id: str, quantity: int = 1
+) -> PlayerItem:
+    """Add consumable items (or increment quantity if already owned)."""
+    result = await session.execute(
+        select(PlayerItem).where(
+            PlayerItem.user_id == user_id,
+            PlayerItem.guild_id == guild_id,
+            PlayerItem.item_id == item_id,
+        )
+    )
+    existing = result.scalars().first()
+    if existing:
+        existing.quantity += quantity
+        await session.commit()
+        await session.refresh(existing)
+        return existing
+
+    entry = PlayerItem(
+        user_id=user_id, guild_id=guild_id, item_id=item_id, quantity=quantity
+    )
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+    return entry
+
+
+async def remove_item(
+    session: AsyncSession, user_id: int, guild_id: int, item_id: str, quantity: int = 1
+) -> bool:
+    """Remove consumable items. Returns True if successful."""
+    result = await session.execute(
+        select(PlayerItem).where(
+            PlayerItem.user_id == user_id,
+            PlayerItem.guild_id == guild_id,
+            PlayerItem.item_id == item_id,
+        )
+    )
+    existing = result.scalars().first()
+    if existing is None or existing.quantity < quantity:
+        return False
+    existing.quantity -= quantity
+    if existing.quantity <= 0:
+        await session.delete(existing)
+    await session.commit()
+    return True

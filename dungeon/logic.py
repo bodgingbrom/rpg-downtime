@@ -47,6 +47,14 @@ RARITY_COLORS: dict[str, int] = {
     "epic": 0x9B59B6,        # purple
 }
 
+# Minimum player level to buy each rarity tier
+RARITY_LEVEL_GATES: dict[str, int] = {
+    "common": 1,
+    "uncommon": 3,
+    "rare": 5,
+    "epic": 8,
+}
+
 # Death penalty
 DEATH_GOLD_PENALTY = 0.5  # lose 50% of run gold
 
@@ -480,3 +488,41 @@ def roll_loot_drops(
         if rng.randint(1, 100) <= entry.get("chance", 0):
             drops.append(entry)
     return drops
+
+
+# ---------------------------------------------------------------------------
+# Shop helpers
+# ---------------------------------------------------------------------------
+
+
+def get_shop_gear(slot: str, player_level: int) -> list[dict[str, Any]]:
+    """Return gear available for purchase in a given slot, filtered by level.
+
+    slot should be one of: 'weapons', 'armors', 'accessories'.
+    """
+    gear = load_gear()
+    items = gear.get(slot, [])
+    return [
+        g for g in items
+        if player_level >= RARITY_LEVEL_GATES.get(g.get("rarity", "common"), 1)
+    ]
+
+
+def get_shop_items(player_level: int) -> list[dict[str, Any]]:
+    """Return consumable items available for purchase."""
+    return list(load_items())
+
+
+def get_gear_slot(gear_id: str) -> str | None:
+    """Determine which equipment slot a gear piece belongs to."""
+    gear = load_gear()
+    for item in gear.get("weapons", []):
+        if item["id"] == gear_id:
+            return "weapon"
+    for item in gear.get("armors", []):
+        if item["id"] == gear_id:
+            return "armor"
+    for item in gear.get("accessories", []):
+        if item["id"] == gear_id:
+            return "accessory"
+    return None
