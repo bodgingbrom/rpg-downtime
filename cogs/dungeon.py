@@ -54,56 +54,30 @@ def _status_line(run, player) -> str:
     )
 
 
-def build_explore_embed(
-    run, player, room_data: dict[str, Any], dungeon_data: dict[str, Any]
+def build_combat_start_embed(
+    run, player, monster_data: dict[str, Any], dungeon_data: dict[str, Any],
 ) -> discord.Embed:
-    """Build the embed for entering a new room (before resolving it)."""
-    room_type = room_data["type"]
-    floor_num = run.floor
-    room_num = run.room_index + 1
+    """Build the embed when combat begins (monster appears)."""
+    is_boss = run.state == "boss"
     rooms = json.loads(run.rooms_json)
+    room_num = run.room_index + 1
     total_rooms = len(rooms)
 
     embed = discord.Embed(
-        title=f"{dungeon_data['name']} — Floor {floor_num}",
-        color=EMBED_COLOR,
+        title=f"{dungeon_data['name']} — Floor {run.floor}",
+        color=EMBED_COLOR_BOSS if is_boss else EMBED_COLOR_COMBAT,
     )
-
-    if room_type == "combat" or room_type == "boss":
-        monster = room_data["monster"]
-        prefix = "**BOSS:** " if room_type == "boss" else ""
-        embed.color = EMBED_COLOR_BOSS if room_type == "boss" else EMBED_COLOR_COMBAT
-        embed.description = (
-            f"Room {room_num}/{total_rooms}\n\n"
-            f"{prefix}A **{monster['name']}** blocks your path!\n"
-            f"*{monster.get('description', '')}*"
-        )
-        embed.add_field(
-            name=monster["name"],
-            value=f"HP {monster['hp']}/{monster['hp']} {_hp_bar(monster['hp'], monster['hp'])}",
-            inline=False,
-        )
-    elif room_type == "treasure":
-        embed.color = EMBED_COLOR_LOOT
-        embed.description = (
-            f"Room {room_num}/{total_rooms}\n\n"
-            f"You discover a chest glinting in the torchlight!"
-        )
-    elif room_type == "trap":
-        trap = room_data.get("trap", {})
-        embed.color = EMBED_COLOR_TRAP
-        embed.description = (
-            f"Room {room_num}/{total_rooms}\n\n"
-            f"You sense danger... a **{trap.get('name', 'trap')}** lies ahead!"
-        )
-    elif room_type == "rest":
-        embed.color = EMBED_COLOR_REST
-        embed.description = (
-            f"Room {room_num}/{total_rooms}\n\n"
-            f"A peaceful shrine glows softly in the darkness. "
-            f"You feel your wounds beginning to mend."
-        )
-
+    prefix = "**BOSS:** " if is_boss else ""
+    embed.description = (
+        f"Room {room_num}/{total_rooms}\n\n"
+        f"{prefix}A **{monster_data['name']}** ambushes you!\n"
+        f"*{monster_data.get('description', '')}*"
+    )
+    embed.add_field(
+        name=monster_data["name"],
+        value=f"HP {monster_data['hp']}/{monster_data['hp']} {_hp_bar(monster_data['hp'], monster_data['hp'])}",
+        inline=False,
+    )
     embed.set_footer(text=_status_line(run, player))
     return embed
 
@@ -307,11 +281,11 @@ class DungeonView(discord.ui.View):
                 item.disabled = True
 
 
-class ExploreView(DungeonView):
-    """Buttons shown when exploring between rooms."""
+class ContinueView(DungeonView):
+    """Buttons shown between rooms: continue blind or retreat."""
 
-    @discord.ui.button(label="Enter Next Room", style=discord.ButtonStyle.primary, emoji="\u2694\ufe0f")
-    async def enter_room(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Continue Deeper", style=discord.ButtonStyle.primary, emoji="\u2694\ufe0f")
+    async def continue_deeper(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _handle_enter_room(interaction, self.run_id, self.user_id, self.sessionmaker)
 
     @discord.ui.button(label="Retreat to Town", style=discord.ButtonStyle.secondary, emoji="\U0001f3e0")
@@ -339,12 +313,12 @@ class CombatView(DungeonView):
         await _handle_combat_action(interaction, self.run_id, self.user_id, self.sessionmaker, "flee")
 
 
-class PostCombatView(DungeonView):
-    """Buttons shown after winning a combat (loot screen)."""
+class PostRoomView(DungeonView):
+    """Buttons shown after resolving any room (loot, trap result, rest, etc.)."""
 
-    @discord.ui.button(label="Continue", style=discord.ButtonStyle.primary, emoji="\u27a1\ufe0f")
-    async def continue_explore(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _handle_advance(interaction, self.run_id, self.user_id, self.sessionmaker)
+    @discord.ui.button(label="Continue Deeper", style=discord.ButtonStyle.primary, emoji="\u2694\ufe0f")
+    async def continue_deeper(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _handle_enter_room(interaction, self.run_id, self.user_id, self.sessionmaker)
 
     @discord.ui.button(label="Retreat to Town", style=discord.ButtonStyle.secondary, emoji="\U0001f3e0")
     async def retreat(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -405,7 +379,7 @@ async def _load_run_context(session, run_id):
 
 
 async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
-    """Process entering the next room."""
+    """Blindly enter the next room and resolve it immediately."""
     async with sessionmaker() as session:
         ctx = await _load_run_context(session, run_id)
         if ctx is None:
@@ -433,7 +407,7 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
             await session.commit()
             await session.refresh(run)
 
-            embed = build_explore_embed(run, player, room_data, dungeon_data)
+            embed = build_combat_start_embed(run, player, monster, dungeon_data)
             view = CombatView(run_id, user_id, sessionmaker)
             await interaction.response.edit_message(embed=embed, view=view)
 
@@ -448,7 +422,7 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
             await session.refresh(run)
 
             embed = build_loot_embed(run, player, gold, [], dungeon_data)
-            view = PostCombatView(run_id, user_id, sessionmaker)
+            view = PostRoomView(run_id, user_id, sessionmaker)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif room_type == "trap":
@@ -472,7 +446,7 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
                 return
 
             embed = build_trap_result_embed(run, player, trap, avoided, damage, dungeon_data)
-            view = PostCombatView(run_id, user_id, sessionmaker)
+            view = PostRoomView(run_id, user_id, sessionmaker)
             await interaction.response.edit_message(embed=embed, view=view)
 
         elif room_type == "rest":
@@ -485,7 +459,7 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
             await session.refresh(run)
 
             embed = build_rest_embed(run, player, heal_amount, dungeon_data)
-            view = PostCombatView(run_id, user_id, sessionmaker)
+            view = PostRoomView(run_id, user_id, sessionmaker)
             await interaction.response.edit_message(embed=embed, view=view)
 
 
@@ -516,7 +490,7 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
                 await session.refresh(run)
 
                 embed = build_combat_embed(run, player, monster, narrative, dungeon_data)
-                view = PostCombatView(run_id, user_id, sessionmaker)
+                view = PostRoomView(run_id, user_id, sessionmaker)
                 await interaction.response.edit_message(embed=embed, view=view)
                 return
             else:
@@ -668,7 +642,7 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
                 await session.refresh(run)
 
                 embed = build_loot_embed(run, player, gold_gained, loot_drops, dungeon_data)
-                view = PostCombatView(run_id, user_id, sessionmaker)
+                view = PostRoomView(run_id, user_id, sessionmaker)
                 await interaction.response.edit_message(embed=embed, view=view)
             return
 
@@ -764,7 +738,7 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
                 description="\n".join(narrative),
             )
             embed.set_footer(text=_status_line(run, player))
-            view = PostCombatView(run_id, user_id, sessionmaker)
+            view = PostRoomView(run_id, user_id, sessionmaker)
         else:
             # Healed mid-combat, rebuild combat embed
             rooms = json.loads(run.rooms_json)
@@ -775,7 +749,7 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
 
         # Edit the original dungeon message
         try:
-            channel = interaction.client.get_channel(run.channel_id)
+            channel = interaction.client.get_channel(run.thread_id or run.channel_id)
             if channel:
                 msg = channel.get_partial_message(run.message_id)
                 await msg.edit(embed=embed, view=view)
@@ -786,39 +760,6 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
             "\n".join(narrative) if narrative else "Item used!",
             ephemeral=True,
         )
-
-
-async def _handle_advance(interaction, run_id, user_id, sessionmaker):
-    """Advance to the next room (after loot/trap/rest)."""
-    async with sessionmaker() as session:
-        ctx = await _load_run_context(session, run_id)
-        if ctx is None:
-            await interaction.response.send_message("Run not found.", ephemeral=True)
-            return
-        run, player, dungeon_data = ctx
-
-        rooms = json.loads(run.rooms_json)
-        if run.room_index >= len(rooms):
-            # Floor complete (shouldn't get here normally)
-            run.state = "floor_complete"
-            await session.commit()
-            await session.refresh(run)
-            embed = build_floor_complete_embed(run, player, dungeon_data)
-            max_floor = dungeon_logic.get_max_floor(dungeon_data)
-            can_descend = run.floor < max_floor
-            view = FloorCompleteView(run_id, user_id, sessionmaker, can_descend)
-            await interaction.response.edit_message(embed=embed, view=view)
-            return
-
-        # Show preview of next room with ExploreView for all types
-        room_data = rooms[run.room_index]
-        run.state = "exploring"
-        await session.commit()
-        await session.refresh(run)
-
-        embed = build_explore_embed(run, player, room_data, dungeon_data)
-        view = ExploreView(run_id, user_id, sessionmaker)
-        await interaction.response.edit_message(embed=embed, view=view)
 
 
 async def _handle_descend(interaction, run_id, user_id, sessionmaker):
@@ -855,15 +796,17 @@ async def _handle_descend(interaction, run_id, user_id, sessionmaker):
         await session.commit()
         await session.refresh(run)
 
-        # Show first room of new floor
-        room_data = rooms[0]
-        embed = build_explore_embed(run, player, room_data, dungeon_data)
-
-        if room_data["type"] in ("combat", "boss"):
-            view = ExploreView(run_id, user_id, sessionmaker)
-        else:
-            view = ExploreView(run_id, user_id, sessionmaker)
-
+        # Show a "descending" message — player must press Continue to enter first room
+        embed = discord.Embed(
+            title=f"{dungeon_data['name']} — Floor {run.floor}",
+            color=EMBED_COLOR,
+            description=(
+                f"You descend deeper into the darkness...\n\n"
+                f"The air grows heavier. Something stirs ahead."
+            ),
+        )
+        embed.set_footer(text=_status_line(run, player))
+        view = ContinueView(run_id, user_id, sessionmaker)
         await interaction.response.edit_message(embed=embed, view=view)
 
 
@@ -920,6 +863,7 @@ async def _process_death(session, run, player, dungeon_data, interaction, narrat
         embed.description = "\n".join(narrative) + "\n\n" + embed.description
     view = discord.ui.View()  # Empty view, no buttons
     await interaction.response.edit_message(embed=embed, view=view)
+    await _archive_thread(interaction, run)
 
 
 async def _process_return(session, run, player, dungeon_data, interaction):
@@ -967,6 +911,18 @@ async def _process_return(session, run, player, dungeon_data, interaction):
     embed = build_return_embed(run, player, levels_gained, dungeon_data)
     view = discord.ui.View()  # Empty view, no buttons
     await interaction.response.edit_message(embed=embed, view=view)
+    await _archive_thread(interaction, run)
+
+
+async def _archive_thread(interaction, run):
+    """Archive the dungeon thread when a run ends."""
+    if run.thread_id:
+        try:
+            thread = interaction.client.get_channel(run.thread_id)
+            if thread and isinstance(thread, discord.Thread):
+                await thread.edit(archived=True)
+        except Exception:
+            pass
 
 
 # ===========================================================================
@@ -1049,22 +1005,32 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
             rooms = dungeon_logic.generate_rooms(floor_data, seed)
             rooms_json = json.dumps(rooms)
 
-            # Send initial embed (need message_id)
-            first_room = rooms[0]
+            # Create a thread for this run
+            display_name = context.author.display_name
+            thread_name = f"Monster Mash — {display_name} — {dungeon_data['name']}"
+            thread = await context.channel.create_thread(
+                name=thread_name[:100],
+                type=discord.ChannelType.public_thread,
+                auto_archive_duration=60,
+            )
 
-            # Create a placeholder embed
+            # Post intro embed inside the thread
             embed = discord.Embed(
                 title=f"Entering {dungeon_data['name']}...",
-                description=f"*{dungeon_data.get('description', '')}*",
+                description=(
+                    f"*{dungeon_data.get('description', '')}*\n\n"
+                    f"You steel yourself and step into the darkness.\n"
+                    f"There's no telling what lies ahead."
+                ),
                 color=EMBED_COLOR,
             )
             embed.add_field(
-                name="Preparing your descent...",
-                value=f"HP: {max_hp}/{max_hp}\nFloor 1",
+                name="Ready?",
+                value=f"HP: {max_hp}/{max_hp}  |  Floor 1",
                 inline=False,
             )
 
-            msg = await context.send(embed=embed)
+            msg = await thread.send(embed=embed)
             message_id = msg.id
             channel_id = context.channel.id
 
@@ -1075,6 +1041,7 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 user_id=user_id,
                 guild_id=guild_id,
                 channel_id=channel_id,
+                thread_id=thread.id,
                 message_id=message_id,
                 dungeon_id=dungeon_key,
                 floor=1,
@@ -1089,10 +1056,15 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 started_at=now,
             )
 
-            # Now update embed with first room
-            embed = build_explore_embed(run, player, first_room, dungeon_data)
-            view = ExploreView(run.id, user_id, self.bot.scheduler.sessionmaker)
+            # Add ContinueView — first room is blind
+            view = ContinueView(run.id, user_id, self.bot.scheduler.sessionmaker)
             await msg.edit(embed=embed, view=view)
+
+            # Notify in main channel
+            await context.send(
+                f"Your dungeon run has started! Head to {thread.mention} to begin your delve.",
+                ephemeral=True,
+            )
 
     # ------------------------------------------------------------------
     # /dungeon stats

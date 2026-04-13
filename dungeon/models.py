@@ -38,6 +38,7 @@ class DungeonRun(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
     channel_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    thread_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     message_id: Mapped[int] = mapped_column(Integer, nullable=False)
     dungeon_id: Mapped[str] = mapped_column(String, nullable=False)
     floor: Mapped[int] = mapped_column(Integer, default=1)
