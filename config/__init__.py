@@ -15,7 +15,13 @@ class Settings(BaseSettings):
     countdown_total: int = 10
     max_racers_per_race: int = 6
     commentary_delay: float = 6.0
-    channel_name: str | None = None
+    channel_name: str | None = None  # legacy single-channel fallback
+
+    # Per-game channel restrictions
+    derby_channel: str | None = "downtime-derby"
+    brewing_channel: str | None = "potion-panic"
+    fishing_channel: str | None = "lazy-lures"
+    dungeon_channel: str | None = "monster-mash"
     racer_buy_base: int = 20
     racer_buy_multiplier: int = 5
     racer_sell_fraction: float = 0.5

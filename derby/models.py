@@ -103,6 +103,12 @@ class GuildSettings(Base):
     max_racers_per_race: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     commentary_delay: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     channel_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
+    # Per-game channel restrictions
+    derby_channel: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    brewing_channel: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    fishing_channel: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    dungeon_channel: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     racer_buy_base: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     racer_buy_multiplier: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     racer_sell_fraction: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)

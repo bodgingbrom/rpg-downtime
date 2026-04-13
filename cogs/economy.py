@@ -19,7 +19,7 @@ class Economy(commands.Cog, name="economy"):
         self.bot = bot
 
     async def cog_check(self, ctx: Context) -> bool:
-        return await checks.in_bot_channel(ctx)
+        return await checks.in_any_game_channel(ctx)
 
     @commands.hybrid_command(name="wallet", description="Show your wallet balance")
     async def wallet(self, context: Context) -> None:

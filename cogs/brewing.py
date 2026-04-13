@@ -115,7 +115,7 @@ class Brewing(commands.Cog, name="brewing"):
         self.bot = bot
 
     async def cog_check(self, ctx: Context) -> bool:
-        return await checks.in_bot_channel(ctx)
+        return await checks.in_bot_channel(ctx, "brewing_channel")
 
     @commands.hybrid_group(name="ingredients", description="Potion Panic ingredient commands")
     async def ingredients(self, context: Context) -> None:

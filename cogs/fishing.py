@@ -35,7 +35,7 @@ class Fishing(commands.Cog, name="fishing"):
         self.bot = bot
 
     async def cog_check(self, ctx: Context) -> bool:
-        return await checks.in_bot_channel(ctx)
+        return await checks.in_bot_channel(ctx, "fishing_channel")
         # Pre-load data caches
         fish_logic.load_rods()
         fish_logic.load_locations()

@@ -78,9 +78,13 @@ class DerbyScheduler:
         self,
         guild: discord.Guild,
         guild_settings: models.GuildSettings | None = None,
+        channel_key: str = "derby_channel",
     ) -> discord.abc.Messageable | None:
         """Return the configured channel for the guild or a sensible default."""
-        name = self._resolve("channel_name", guild_settings)
+        # Try per-game channel first, then legacy channel_name fallback
+        name = self._resolve(channel_key, guild_settings)
+        if not name:
+            name = self._resolve("channel_name", guild_settings)
         if name:
             for channel in guild.text_channels:
                 if getattr(channel, "name", None) == name:
@@ -401,6 +405,11 @@ class DerbyScheduler:
                 "daily_max": ("INTEGER", "NULL"),
                 "racer_emoji": ("TEXT", "NULL"),
                 "max_trains_per_race": ("INTEGER", "NULL"),
+                # Per-game channel restrictions
+                "derby_channel": ("TEXT", "NULL"),
+                "brewing_channel": ("TEXT", "NULL"),
+                "fishing_channel": ("TEXT", "NULL"),
+                "dungeon_channel": ("TEXT", "NULL"),
                 # Fishing (Lazy Lures)
                 "fishing_bait_costs": ("TEXT", "NULL"),
                 "fishing_cast_multiplier": ("REAL", "NULL"),

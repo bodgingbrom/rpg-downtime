@@ -1402,7 +1402,7 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
         self.bot = bot
 
     async def cog_check(self, ctx: Context) -> bool:
-        return await checks.in_bot_channel(ctx)
+        return await checks.in_bot_channel(ctx, "dungeon_channel")
 
     # ------------------------------------------------------------------
     # /dungeon  (top-level group)

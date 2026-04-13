@@ -390,7 +390,7 @@ async def test_config_channel_used(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
-        channel_name="special",
+        derby_channel="special",
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -501,7 +501,7 @@ async def test_guild_isolation(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_guild_settings_channel_override(tmp_path: Path) -> None:
-    """Guild-specific channel_name should be used when set."""
+    """Guild-specific derby_channel should be used when set."""
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
         race_times=["12:00"],
@@ -510,7 +510,7 @@ async def test_guild_settings_channel_override(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
         commentary_delay=0,
-        channel_name=None,  # global default: use system_channel
+        derby_channel=None,  # global default: use system_channel
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)
@@ -525,11 +525,13 @@ async def test_guild_settings_channel_override(tmp_path: Path) -> None:
     channel = scheduler._get_channel(guild)
     assert channel is guild.system_channel
 
-    # Set per-guild override
+    # Set per-guild override via derby_channel
     async with scheduler.sessionmaker() as session:
-        await repo.create_guild_settings(
-            session, guild_id=GUILD_ID, channel_name="arena"
-        )
+        gs = await repo.get_guild_settings(session, guild.id)
+        if gs is None:
+            gs = await repo.create_guild_settings(session, guild_id=GUILD_ID)
+        gs.derby_channel = "arena"
+        await session.commit()
     gs = await scheduler._load_guild_settings(GUILD_ID)
     channel = scheduler._get_channel(guild, gs)
     assert channel is arena
