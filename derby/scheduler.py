@@ -2354,27 +2354,28 @@ class DerbyScheduler:
                     # Log the catch and check trophy
                     trophy_just_earned = False
                     if is_fish:
-                        await fish_repo.upsert_fish_catch(
+                        fish_catch = await fish_repo.upsert_fish_catch(
                             session, fs.user_id, fs.guild_id,
                             catch["name"], fs.location_name,
                             catch.get("rarity", "common"),
                             catch.get("length") or 0,
                             catch["value"], now,
                         )
-                        # Check if this catch completed the location trophy
-                        caught_species = await fish_repo.get_caught_species_at_location(
-                            session, fs.user_id, fs.guild_id, fs.location_name
-                        )
-                        has_trophy_now = fish_logic.has_location_trophy(
-                            caught_species, location_data
-                        )
-                        had_trophy_before = fish_logic.has_location_trophy(
-                            caught_species - {catch["name"]}, location_data
-                        )
-                        trophy_just_earned = has_trophy_now and not had_trophy_before
+                        # Only check trophy if this was a NEW species discovery
+                        first_discovery = fish_catch.catch_count == 1
+                        if first_discovery:
+                            caught_species = await fish_repo.get_caught_species_at_location(
+                                session, fs.user_id, fs.guild_id, fs.location_name
+                            )
+                            trophy_just_earned = fish_logic.has_location_trophy(
+                                caught_species, location_data
+                            )
+                        else:
+                            caught_species = await fish_repo.get_caught_species_at_location(
+                                session, fs.user_id, fs.guild_id, fs.location_name
+                            )
                     else:
                         caught_species = set()
-                        has_trophy_now = False
 
                     # Update daily summary for digest
                     date_str = now.strftime("%Y-%m-%d")
@@ -2383,12 +2384,15 @@ class DerbyScheduler:
                     )
 
                     # Calculate next cast with skill + trophy bonuses
+                    has_trophy = fish_logic.has_location_trophy(
+                        caught_species, location_data
+                    )
                     new_remaining = fs.bait_remaining - 1
                     skill_reduction = fish_logic.get_skill_cast_reduction(
                         new_level, location_data.get("skill_level", 1)
                     )
                     trophy_reduction = (
-                        fish_logic.TROPHY_CAST_REDUCTION if has_trophy_now else 0.0
+                        fish_logic.TROPHY_CAST_REDUCTION if has_trophy else 0.0
                     )
                     next_catch = now + timedelta(
                         seconds=fish_logic.calculate_cast_time(
