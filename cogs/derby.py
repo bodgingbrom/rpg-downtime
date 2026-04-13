@@ -286,6 +286,47 @@ BREWING_HELP_CATEGORIES = {
 }
 
 
+DUNGEON_HELP_CATEGORIES = {
+    "Getting Started": (
+        "Delve into dungeons, fight monsters, and keep what you find.\n"
+        "`/dungeon delve [dungeon]` — Start a dungeon run (creates a private thread)\n"
+        "`/dungeon stats` — View your character sheet\n"
+        "`/dungeon abandon` — Abandon your current run (lose all loot)"
+    ),
+    "Combat & Exploration": (
+        "Rooms are revealed one at a time — no peeking ahead!\n"
+        "**Combat** — Attack, Defend, Use Item, or Flee each round\n"
+        "**Treasure** — Free gold, scaled by dungeon tier\n"
+        "**Traps** — DEX check to avoid damage\n"
+        "**Rest Shrines** — Heal 30% of your max HP\n"
+        "**Bosses** — Tougher monsters guarding the floor exit\n"
+        "Defeat the boss to descend or retreat with your loot."
+    ),
+    "Stats & Leveling": (
+        "Earn XP from kills to level up and gain stat points.\n"
+        "`/dungeon allocate <stat>` — Spend a stat point on STR, DEX, or CON\n"
+        "**STR** — Melee damage bonus\n"
+        "**DEX** — Dodge, trap avoidance, flee chance\n"
+        "**CON** — Max HP (HP = CON × 2 + accessory bonus)"
+    ),
+    "Gear & Shop": (
+        "Buy gear with gold and manage your loadout.\n"
+        "`/dungeon shop` — Browse weapons, armor, accessories, and consumables\n"
+        "`/dungeon inventory` — Equip, unequip, and view your stash\n"
+        "Gear tiers unlock as you level: common (Lv1), uncommon (Lv3), "
+        "rare (Lv5), epic (Lv8).\n"
+        "Gear found in dungeons is kept on safe return, lost on death."
+    ),
+    "Death & Rewards": (
+        "**Safe return** — Keep all gold and found gear/items\n"
+        "**Death** — Lose 50% of run gold and all found gear. XP is kept.\n"
+        "Gold is deposited into your shared wallet on return.\n"
+        "Consumables from your inventory persist between runs — "
+        "found consumables are added to your stash on return."
+    ),
+}
+
+
 class Derby(commands.Cog, name="derby"):
     def __init__(self, bot) -> None:
         self.bot = bot
@@ -311,7 +352,8 @@ class Derby(commands.Cog, name="derby"):
                 "Pick a topic to learn more:\n\n"
                 f"{emoji} `/help derby` — Racing, betting, stables, breeding, and tournaments\n"
                 "\U0001f9ea `/help brewing` — Potion Panic ingredient brewing\n"
-                "\U0001f3a3 `/help fishing` — Lazy Lures AFK fishing and progression"
+                "\U0001f3a3 `/help fishing` — Lazy Lures AFK fishing and progression\n"
+                "\U0001f9df `/help dungeon` — Monster Mash dungeon crawling"
             ),
             color=0x3498DB,
         )
@@ -355,6 +397,18 @@ class Derby(commands.Cog, name="derby"):
         for category, text in FISHING_HELP_CATEGORIES.items():
             embed.add_field(name=category, value=text, inline=False)
         embed.set_footer(text="Use /fish notify to toggle DM alerts for each catch.")
+        await context.send(embed=embed, ephemeral=True)
+
+    @help_command.command(name="dungeon", description="Show Monster Mash dungeon crawling commands and tips")
+    async def help_dungeon(self, context: Context) -> None:
+        embed = discord.Embed(
+            title="\U0001f9df Monster Mash — Help",
+            description="Fight monsters, dodge traps, and loot dungeons — solo and turn-by-turn.",
+            color=0xE74C3C,
+        )
+        for category, text in DUNGEON_HELP_CATEGORIES.items():
+            embed.add_field(name=category, value=text, inline=False)
+        embed.set_footer(text="Each run is played in a private thread. Good luck in there!")
         await context.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_group(name="race", description="Race commands")
