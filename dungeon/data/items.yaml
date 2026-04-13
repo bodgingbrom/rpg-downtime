@@ -1,0 +1,23 @@
+- id: health_potion
+  name: Health Potion
+  description: "A bubbling red liquid. Restores 8 HP."
+  effect: {type: heal, value: 8}
+  cost: 12
+
+- id: greater_health_potion
+  name: Greater Health Potion
+  description: "A deep crimson brew. Restores 20 HP."
+  effect: {type: heal, value: 20}
+  cost: 35
+
+- id: antidote
+  name: Antidote
+  description: "Clears poison from your system."
+  effect: {type: cure_poison}
+  cost: 15
+
+- id: smoke_bomb
+  name: Smoke Bomb
+  description: "Guarantees a successful flee attempt."
+  effect: {type: guaranteed_flee}
+  cost: 25
