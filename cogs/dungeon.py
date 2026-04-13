@@ -1654,9 +1654,10 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
             )
 
         stat_label = stat.upper()[:3]
+        remaining = player.unspent_stat_points
         await context.send(
             f"**{stat_label}** increased to **{new_value}** "
-            f"({player.unspent_stat_points - 1} point(s) remaining).",
+            f"({remaining} point(s) remaining).",
             ephemeral=True,
         )
 
