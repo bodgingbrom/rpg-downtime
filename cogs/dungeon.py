@@ -364,6 +364,439 @@ class ItemSelectView(DungeonView):
 
 
 # ---------------------------------------------------------------------------
+# Shop & Inventory Views (standalone, no run_id needed)
+# ---------------------------------------------------------------------------
+
+SHOP_CATEGORIES = ["weapons", "armors", "accessories", "items"]
+SHOP_CATEGORY_LABELS = {
+    "weapons": "Weapons",
+    "armors": "Armor",
+    "accessories": "Accessories",
+    "items": "Consumables",
+}
+SHOP_CATEGORY_EMOJIS = {
+    "weapons": "\u2694\ufe0f",
+    "armors": "\U0001f6e1\ufe0f",
+    "accessories": "\U0001f48d",
+    "items": "\U0001f9ea",
+}
+
+
+def _build_shop_embed(
+    category: str, player_level: int, balance: int, owned_gear_ids: set[str],
+    equipped_ids: set[str],
+) -> discord.Embed:
+    """Build a shop embed for a given category."""
+    label = SHOP_CATEGORY_LABELS[category]
+    emoji = SHOP_CATEGORY_EMOJIS[category]
+    embed = discord.Embed(
+        title=f"{emoji} Monster Mash Shop — {label}",
+        color=EMBED_COLOR_LOOT,
+    )
+
+    if category == "items":
+        items = dungeon_logic.get_shop_items(player_level)
+        if not items:
+            embed.description = "Nothing for sale here."
+            return embed
+        lines = []
+        for item in items:
+            cost = item.get("cost", 0)
+            desc = item.get("description", "")
+            affordable = "\u2705" if balance >= cost else "\u274c"
+            lines.append(f"{affordable} **{item['name']}** — {cost}g\n> {desc}")
+        embed.description = "\n".join(lines)
+    else:
+        gear_list = dungeon_logic.get_shop_gear(category, player_level)
+        if not gear_list:
+            embed.description = "Nothing available at your level."
+            return embed
+        lines = []
+        for g in gear_list:
+            cost = g.get("cost", 0)
+            rarity = g.get("rarity", "common")
+            affordable = "\u2705" if balance >= cost else "\u274c"
+            owned = " *(owned)*" if g["id"] in owned_gear_ids else ""
+            equipped = " **[EQUIPPED]**" if g["id"] in equipped_ids else ""
+
+            # Stat summary
+            if "dice" in g:
+                bonus = g.get("bonus", 0)
+                bonus_str = f"+{bonus}" if bonus else ""
+                stat = f"{g['dice']}{bonus_str}"
+            elif "defense" in g:
+                stat = f"+{g['defense']} DEF"
+            elif "effect" in g:
+                eff = g["effect"]
+                stat = f"{eff.get('type', '').replace('_', ' ')}: +{eff.get('value', '')}"
+            else:
+                stat = ""
+
+            lines.append(
+                f"{affordable} **{g['name']}** ({rarity}) — {cost}g — {stat}{equipped}{owned}"
+            )
+            if g.get("description"):
+                lines.append(f"> {g['description']}")
+        embed.description = "\n".join(lines)
+
+    embed.set_footer(text=f"Your gold: {balance}  |  Level {player_level}")
+    return embed
+
+
+class ShopView(discord.ui.View):
+    """Paginated shop view with category tabs and buy button."""
+
+    def __init__(
+        self, user_id: int, sessionmaker, player_level: int, balance: int,
+        owned_gear_ids: set[str], equipped_ids: set[str], category: str = "weapons",
+    ):
+        super().__init__(timeout=VIEW_TIMEOUT)
+        self.user_id = user_id
+        self.sessionmaker = sessionmaker
+        self.player_level = player_level
+        self.balance = balance
+        self.owned_gear_ids = owned_gear_ids
+        self.equipped_ids = equipped_ids
+        self.category = category
+
+        # Add category select
+        options = []
+        for cat in SHOP_CATEGORIES:
+            options.append(discord.SelectOption(
+                label=SHOP_CATEGORY_LABELS[cat],
+                value=cat,
+                emoji=SHOP_CATEGORY_EMOJIS[cat],
+                default=(cat == category),
+            ))
+        self.category_select = discord.ui.Select(
+            placeholder="Browse category...", options=options, row=0,
+        )
+        self.category_select.callback = self._category_callback
+        self.add_item(self.category_select)
+
+        # Add buy select for current category
+        self._add_buy_select()
+
+    def _add_buy_select(self):
+        """Add a buy select menu for items in the current category."""
+        if self.category == "items":
+            items = dungeon_logic.get_shop_items(self.player_level)
+            options = []
+            for item in items[:25]:
+                cost = item.get("cost", 0)
+                options.append(discord.SelectOption(
+                    label=f"{item['name']} — {cost}g",
+                    value=item["id"],
+                    description=item.get("description", "")[:100],
+                ))
+        else:
+            gear_list = dungeon_logic.get_shop_gear(self.category, self.player_level)
+            options = []
+            for g in gear_list[:25]:
+                cost = g.get("cost", 0)
+                owned = " (owned)" if g["id"] in self.owned_gear_ids or g["id"] in self.equipped_ids else ""
+                options.append(discord.SelectOption(
+                    label=f"{g['name']} — {cost}g{owned}",
+                    value=g["id"],
+                    description=g.get("description", "")[:100],
+                ))
+
+        if not options:
+            return
+
+        self.buy_select = discord.ui.Select(
+            placeholder="Buy an item...", options=options, row=1,
+        )
+        self.buy_select.callback = self._buy_callback
+        self.add_item(self.buy_select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your shop!", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _category_callback(self, interaction: discord.Interaction):
+        self.category = self.category_select.values[0]
+        # Rebuild the view with the new category — reload balance
+        async with self.sessionmaker() as session:
+            wallet = await wallet_repo.get_wallet(session, self.user_id, interaction.guild.id if interaction.guild else 0)
+            self.balance = wallet.balance if wallet else 0
+            gear_inv = await dungeon_repo.get_player_gear(session, self.user_id, interaction.guild.id if interaction.guild else 0)
+            self.owned_gear_ids = {g.gear_id for g in gear_inv}
+            player = await dungeon_repo.get_player(session, self.user_id, interaction.guild.id if interaction.guild else 0)
+            if player:
+                self.equipped_ids = {
+                    gid for gid in [player.weapon_id, player.armor_id, player.accessory_id] if gid
+                }
+
+        # Rebuild view
+        new_view = ShopView(
+            self.user_id, self.sessionmaker, self.player_level, self.balance,
+            self.owned_gear_ids, self.equipped_ids, self.category,
+        )
+        embed = _build_shop_embed(
+            self.category, self.player_level, self.balance,
+            self.owned_gear_ids, self.equipped_ids,
+        )
+        await interaction.response.edit_message(embed=embed, view=new_view)
+
+    async def _buy_callback(self, interaction: discord.Interaction):
+        item_id = self.buy_select.values[0]
+        guild_id = interaction.guild.id if interaction.guild else 0
+
+        async with self.sessionmaker() as session:
+            player = await dungeon_repo.get_or_create_player(session, self.user_id, guild_id)
+            wallet = await wallet_repo.get_wallet(session, self.user_id, guild_id)
+            balance = wallet.balance if wallet else 0
+
+            if self.category == "items":
+                item_def = dungeon_logic.get_item_by_id(item_id)
+                if item_def is None:
+                    await interaction.response.send_message("Item not found.", ephemeral=True)
+                    return
+                cost = item_def.get("cost", 0)
+                if balance < cost:
+                    await interaction.response.send_message(
+                        f"Not enough gold! You need **{cost}g** but have **{balance}g**.",
+                        ephemeral=True,
+                    )
+                    return
+                wallet.balance -= cost
+                await dungeon_repo.add_item(session, self.user_id, guild_id, item_id)
+                self.balance = wallet.balance
+                confirm_msg = f"Purchased **{item_def['name']}** for **{cost}g**!"
+            else:
+                gear_def = dungeon_logic.get_gear_by_id(item_id)
+                if gear_def is None:
+                    await interaction.response.send_message("Gear not found.", ephemeral=True)
+                    return
+                cost = gear_def.get("cost", 0)
+                if balance < cost:
+                    await interaction.response.send_message(
+                        f"Not enough gold! You need **{cost}g** but have **{balance}g**.",
+                        ephemeral=True,
+                    )
+                    return
+                # Check if already owned or equipped
+                equipped_ids = {
+                    gid for gid in [player.weapon_id, player.armor_id, player.accessory_id] if gid
+                }
+                already_has = await dungeon_repo.has_gear(session, self.user_id, guild_id, item_id)
+                if already_has or item_id in equipped_ids:
+                    await interaction.response.send_message(
+                        f"You already own **{gear_def['name']}**!", ephemeral=True
+                    )
+                    return
+
+                wallet.balance -= cost
+                await dungeon_repo.add_gear(session, self.user_id, guild_id, item_id)
+                self.balance = wallet.balance
+                self.owned_gear_ids.add(item_id)
+                confirm_msg = (
+                    f"Purchased **{gear_def['name']}** for **{cost}g**! "
+                    f"Use `/dungeon inventory` to equip it."
+                )
+
+            # Refresh the shop embed with updated balance and ownership
+            embed = _build_shop_embed(
+                self.category, self.player_level, self.balance,
+                self.owned_gear_ids, self.equipped_ids,
+            )
+            new_view = ShopView(
+                self.user_id, self.sessionmaker, self.player_level, self.balance,
+                self.owned_gear_ids, self.equipped_ids, self.category,
+            )
+            await interaction.response.edit_message(embed=embed, view=new_view)
+            await interaction.followup.send(confirm_msg, ephemeral=True)
+
+
+class InventoryView(discord.ui.View):
+    """View for managing equipment — equip/unequip gear."""
+
+    def __init__(self, user_id: int, sessionmaker, player, gear_inventory: list, item_inventory: list):
+        super().__init__(timeout=VIEW_TIMEOUT)
+        self.user_id = user_id
+        self.sessionmaker = sessionmaker
+
+        # Build equip select from owned (unequipped) gear
+        equip_options = []
+        for pg in gear_inventory[:25]:
+            gear_def = dungeon_logic.get_gear_by_id(pg.gear_id)
+            if gear_def is None:
+                continue
+            slot = dungeon_logic.get_gear_slot(pg.gear_id)
+            slot_label = f"[{slot}]" if slot else ""
+            equip_options.append(discord.SelectOption(
+                label=f"{gear_def['name']} {slot_label}",
+                value=pg.gear_id,
+                description=gear_def.get("description", "")[:100],
+            ))
+
+        if equip_options:
+            self.equip_select = discord.ui.Select(
+                placeholder="Equip gear...", options=equip_options, row=0,
+            )
+            self.equip_select.callback = self._equip_callback
+            self.add_item(self.equip_select)
+
+        # Build unequip buttons for equipped items
+        equipped = []
+        if player.weapon_id:
+            equipped.append(("weapon", player.weapon_id))
+        if player.armor_id:
+            equipped.append(("armor", player.armor_id))
+        if player.accessory_id:
+            equipped.append(("accessory", player.accessory_id))
+
+        if equipped:
+            unequip_options = []
+            for slot, gid in equipped:
+                gear_def = dungeon_logic.get_gear_by_id(gid)
+                name = gear_def["name"] if gear_def else gid
+                unequip_options.append(discord.SelectOption(
+                    label=f"Unequip {name} ({slot})",
+                    value=f"{slot}:{gid}",
+                ))
+            self.unequip_select = discord.ui.Select(
+                placeholder="Unequip gear...", options=unequip_options, row=1,
+            )
+            self.unequip_select.callback = self._unequip_callback
+            self.add_item(self.unequip_select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your inventory!", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _equip_callback(self, interaction: discord.Interaction):
+        gear_id = self.equip_select.values[0]
+        guild_id = interaction.guild.id if interaction.guild else 0
+
+        async with self.sessionmaker() as session:
+            player = await dungeon_repo.get_or_create_player(session, self.user_id, guild_id)
+            gear_def = dungeon_logic.get_gear_by_id(gear_id)
+            if gear_def is None:
+                await interaction.response.send_message("Gear not found.", ephemeral=True)
+                return
+
+            slot = dungeon_logic.get_gear_slot(gear_id)
+            if slot is None:
+                await interaction.response.send_message("Unknown gear slot.", ephemeral=True)
+                return
+
+            # Get the currently equipped item in that slot
+            slot_attr = f"{slot}_id"
+            old_equipped_id = getattr(player, slot_attr)
+
+            # Remove new gear from inventory
+            removed = await dungeon_repo.remove_gear(session, self.user_id, guild_id, gear_id)
+            if not removed:
+                await interaction.response.send_message("You don't have that gear!", ephemeral=True)
+                return
+
+            # If there was something equipped, put it back in inventory
+            if old_equipped_id:
+                await dungeon_repo.add_gear(session, self.user_id, guild_id, old_equipped_id)
+
+            # Equip the new gear
+            setattr(player, slot_attr, gear_id)
+            await session.commit()
+
+            old_name = ""
+            if old_equipped_id:
+                old_def = dungeon_logic.get_gear_by_id(old_equipped_id)
+                old_name = f" (unequipped **{old_def['name']}**)" if old_def else ""
+
+            # Rebuild inventory
+            gear_inv = await dungeon_repo.get_player_gear(session, self.user_id, guild_id)
+            item_inv = await dungeon_repo.get_player_items(session, self.user_id, guild_id)
+            await session.refresh(player)
+
+        embed = _build_inventory_embed(player, gear_inv, item_inv, interaction.user.display_name)
+        new_view = InventoryView(self.user_id, self.sessionmaker, player, gear_inv, item_inv)
+        await interaction.response.edit_message(embed=embed, view=new_view)
+
+    async def _unequip_callback(self, interaction: discord.Interaction):
+        value = self.unequip_select.values[0]
+        slot, gear_id = value.split(":", 1)
+        guild_id = interaction.guild.id if interaction.guild else 0
+
+        async with self.sessionmaker() as session:
+            player = await dungeon_repo.get_or_create_player(session, self.user_id, guild_id)
+
+            slot_attr = f"{slot}_id"
+            if getattr(player, slot_attr) != gear_id:
+                await interaction.response.send_message("That item isn't equipped!", ephemeral=True)
+                return
+
+            # Move to inventory
+            await dungeon_repo.add_gear(session, self.user_id, guild_id, gear_id)
+            setattr(player, slot_attr, None)
+            await session.commit()
+
+            gear_inv = await dungeon_repo.get_player_gear(session, self.user_id, guild_id)
+            item_inv = await dungeon_repo.get_player_items(session, self.user_id, guild_id)
+            await session.refresh(player)
+
+        gear_def = dungeon_logic.get_gear_by_id(gear_id)
+        name = gear_def["name"] if gear_def else gear_id
+        embed = _build_inventory_embed(player, gear_inv, item_inv, interaction.user.display_name)
+        new_view = InventoryView(self.user_id, self.sessionmaker, player, gear_inv, item_inv)
+        await interaction.response.edit_message(embed=embed, view=new_view)
+
+
+def _build_inventory_embed(player, gear_inventory, item_inventory, display_name: str) -> discord.Embed:
+    """Build the inventory embed showing equipped gear and owned items."""
+    embed = discord.Embed(
+        title=f"Inventory — {display_name}",
+        color=EMBED_COLOR,
+    )
+
+    # Equipped gear
+    weapon_name = _gear_display(player.weapon_id, "Fists (1d4)")
+    armor_name = _gear_display(player.armor_id, "None")
+    accessory_name = _gear_display(player.accessory_id, "None")
+    equipped_text = (
+        f"\u2694\ufe0f **Weapon:** {weapon_name}\n"
+        f"\U0001f6e1\ufe0f **Armor:** {armor_name}\n"
+        f"\U0001f48d **Accessory:** {accessory_name}"
+    )
+    embed.add_field(name="Equipped", value=equipped_text, inline=False)
+
+    # Owned (unequipped) gear
+    if gear_inventory:
+        lines = []
+        for pg in gear_inventory:
+            gear_def = dungeon_logic.get_gear_by_id(pg.gear_id)
+            if gear_def:
+                lines.append(f"- {gear_def['name']} ({gear_def.get('rarity', 'common')})")
+            else:
+                lines.append(f"- {pg.gear_id}")
+        embed.add_field(name="Gear Stash", value="\n".join(lines) or "Empty", inline=False)
+    else:
+        embed.add_field(name="Gear Stash", value="Empty", inline=False)
+
+    # Consumables
+    if item_inventory:
+        lines = []
+        for pi in item_inventory:
+            item_def = dungeon_logic.get_item_by_id(pi.item_id)
+            name = item_def["name"] if item_def else pi.item_id
+            lines.append(f"- {name} x{pi.quantity}")
+        embed.add_field(name="Consumables", value="\n".join(lines), inline=False)
+    else:
+        embed.add_field(name="Consumables", value="None", inline=False)
+
+    return embed
+
+
+# ---------------------------------------------------------------------------
 # Button action handlers
 # ---------------------------------------------------------------------------
 
@@ -656,7 +1089,7 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
 
 
 async def _handle_use_item(interaction, run_id, user_id, sessionmaker):
-    """Show item selection menu."""
+    """Show item selection menu (found items + persistent inventory)."""
     async with sessionmaker() as session:
         ctx = await _load_run_context(session, run_id)
         if ctx is None:
@@ -664,8 +1097,18 @@ async def _handle_use_item(interaction, run_id, user_id, sessionmaker):
             return
         run, player, dungeon_data = ctx
 
+        # Merge found consumables + persistent inventory
         found_items = json.loads(run.found_items_json)
-        consumables = [i for i in found_items if i.get("type") != "gear"]
+        found_consumables = [i for i in found_items if i.get("type") != "gear"]
+        persistent_items = await dungeon_repo.get_player_items(session, run.user_id, run.guild_id)
+
+        # Build unified list: [{item_id, source: "found"|"inventory"}]
+        consumables = []
+        for fc in found_consumables:
+            consumables.append({"item_id": fc["item_id"], "source": "found"})
+        for pi in persistent_items:
+            for _ in range(pi.quantity):
+                consumables.append({"item_id": pi.item_id, "source": "inventory"})
 
         if not consumables:
             await interaction.response.send_message(
@@ -673,7 +1116,16 @@ async def _handle_use_item(interaction, run_id, user_id, sessionmaker):
             )
             return
 
-        view = ItemSelectView(run_id, user_id, sessionmaker, consumables)
+        # Deduplicate for display: show unique item_ids with source preference
+        seen = {}
+        display_items = []
+        for c in consumables:
+            key = c["item_id"]
+            if key not in seen:
+                seen[key] = c
+                display_items.append(c)
+
+        view = ItemSelectView(run_id, user_id, sessionmaker, display_items)
         await interaction.response.send_message(
             "Choose an item to use:", view=view, ephemeral=True
         )
@@ -693,7 +1145,7 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
             await interaction.response.send_message("Item not found.", ephemeral=True)
             return
 
-        # Remove one of this item from found_items
+        # Try to remove from found_items first, then from persistent inventory
         found_items = json.loads(run.found_items_json)
         removed = False
         for i, fi in enumerate(found_items):
@@ -701,6 +1153,12 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
                 found_items.pop(i)
                 removed = True
                 break
+
+        if not removed:
+            # Try persistent inventory
+            removed = await dungeon_repo.remove_item(
+                session, run.user_id, run.guild_id, item_id
+            )
 
         if not removed:
             await interaction.response.send_message("You don't have that item!", ephemeral=True)
@@ -887,18 +1345,27 @@ async def _process_return(session, run, player, dungeon_data, interaction):
                 session, user_id=run.user_id, guild_id=run.guild_id, balance=run.run_gold
             )
 
-    # Move found gear to equipped slots (auto-equip if slot is empty)
+    # Save found gear to inventory (auto-equip if slot is empty)
     found_items = json.loads(run.found_items_json)
     for item in found_items:
         if item.get("type") == "gear":
             gear_def = dungeon_logic.get_gear_by_id(item["item_id"])
             if gear_def:
-                if "dice" in gear_def and player.weapon_id is None:
-                    player.weapon_id = item["item_id"]
-                elif "defense" in gear_def and player.armor_id is None:
-                    player.armor_id = item["item_id"]
-                elif "effect" in gear_def and player.accessory_id is None:
-                    player.accessory_id = item["item_id"]
+                slot = dungeon_logic.get_gear_slot(item["item_id"])
+                slot_attr = f"{slot}_id" if slot else None
+                if slot_attr and getattr(player, slot_attr) is None:
+                    # Auto-equip to empty slot
+                    setattr(player, slot_attr, item["item_id"])
+                else:
+                    # Store in inventory
+                    await dungeon_repo.add_gear(
+                        session, run.user_id, run.guild_id, item["item_id"]
+                    )
+        else:
+            # Consumable — add to persistent inventory
+            await dungeon_repo.add_item(
+                session, run.user_id, run.guild_id, item["item_id"]
+            )
 
     # Update career stats
     player.total_runs += 1
@@ -1192,6 +1659,52 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
             f"({player.unspent_stat_points - 1} point(s) remaining).",
             ephemeral=True,
         )
+
+    # ------------------------------------------------------------------
+    # /dungeon shop
+    # ------------------------------------------------------------------
+
+    @dungeon.command(name="shop", description="Browse and buy gear and items")
+    async def dungeon_shop(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            player = await dungeon_repo.get_or_create_player(session, user_id, guild_id)
+            wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
+            balance = wallet.balance if wallet else 0
+            gear_inv = await dungeon_repo.get_player_gear(session, user_id, guild_id)
+            owned_gear_ids = {g.gear_id for g in gear_inv}
+            equipped_ids = {
+                gid for gid in [player.weapon_id, player.armor_id, player.accessory_id] if gid
+            }
+
+        embed = _build_shop_embed("weapons", player.level, balance, owned_gear_ids, equipped_ids)
+        view = ShopView(
+            user_id, self.bot.scheduler.sessionmaker, player.level, balance,
+            owned_gear_ids, equipped_ids, "weapons",
+        )
+        await context.send(embed=embed, view=view, ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # /dungeon inventory
+    # ------------------------------------------------------------------
+
+    @dungeon.command(name="inventory", description="View and manage your equipment")
+    async def dungeon_inventory(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            player = await dungeon_repo.get_or_create_player(session, user_id, guild_id)
+            gear_inv = await dungeon_repo.get_player_gear(session, user_id, guild_id)
+            item_inv = await dungeon_repo.get_player_items(session, user_id, guild_id)
+
+        embed = _build_inventory_embed(player, gear_inv, item_inv, context.author.display_name)
+        view = InventoryView(user_id, self.bot.scheduler.sessionmaker, player, gear_inv, item_inv)
+        await context.send(embed=embed, view=view, ephemeral=True)
 
     # ------------------------------------------------------------------
     # /dungeon abandon — cancel an active run

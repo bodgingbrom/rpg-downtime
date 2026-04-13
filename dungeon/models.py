@@ -75,8 +75,39 @@ class BestiaryEntry(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class PlayerGear(Base):
+    """Owned gear items in a player's inventory (not currently equipped)."""
+
+    __tablename__ = "dungeon_player_gear"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guild_id", "gear_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    gear_id: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class PlayerItem(Base):
+    """Persistent consumable inventory between runs."""
+
+    __tablename__ = "dungeon_player_items"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guild_id", "item_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    item_id: Mapped[str] = mapped_column(String, nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+
+
 __all__ = [
     "DungeonPlayer",
     "DungeonRun",
     "BestiaryEntry",
+    "PlayerGear",
+    "PlayerItem",
 ]
