@@ -427,6 +427,19 @@ class DerbyScheduler:
                         )
                     )
 
+            # Add thread_id column to dungeon_runs if missing
+            if "dungeon_runs" in tables:
+                dr_cols = await conn.run_sync(
+                    lambda c: get_table_columns(c, "dungeon_runs")
+                )
+                if "thread_id" not in dr_cols:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE dungeon_runs "
+                            "ADD COLUMN thread_id INTEGER DEFAULT NULL"
+                        )
+                    )
+
         # Seed brewing reference data (ingredients + dangerous triples)
         async with self.sessionmaker() as session:
             from brewing.seed_data import seed_if_empty
