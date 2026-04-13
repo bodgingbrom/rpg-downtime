@@ -66,7 +66,7 @@ floors:
       name: Goblin Chief
       description: "A hulking goblin in patchwork armor, wielding a jagged cleaver."
       hp: 30
-      defense: 2
+      defense: 1
       attack_dice: "1d6"
       attack_bonus: 2
       xp: 30

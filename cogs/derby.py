@@ -332,7 +332,7 @@ class Derby(commands.Cog, name="derby"):
         self.bot = bot
 
     async def cog_check(self, ctx: Context) -> bool:
-        return await checks.in_bot_channel(ctx)
+        return await checks.in_bot_channel(ctx, "derby_channel")
 
     def _racer_emoji(self, gs=None) -> str:
         """Return the configured racer emoji for the guild."""
@@ -1767,6 +1767,10 @@ class Derby(commands.Cog, name="derby"):
         "daily_max",
         "racer_emoji",
         "max_trains_per_race",
+        "derby_channel",
+        "brewing_channel",
+        "fishing_channel",
+        "dungeon_channel",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -1897,7 +1901,7 @@ class Stable(commands.Cog, name="stable"):
         self.bot = bot
 
     async def cog_check(self, ctx: Context) -> bool:
-        return await checks.in_bot_channel(ctx)
+        return await checks.in_bot_channel(ctx, "derby_channel")
 
     def _resolve(self, key: str, gs) -> int | float | str:
         return resolve_guild_setting(gs, self.bot.settings, key)
@@ -3257,7 +3261,7 @@ class Tournament(commands.Cog, name="tournament_cog"):
         self.bot = bot
 
     async def cog_check(self, ctx: Context) -> bool:
-        return await checks.in_bot_channel(ctx)
+        return await checks.in_bot_channel(ctx, "derby_channel")
 
     tournament = app_commands.Group(
         name="tournament", description="Tournament commands"
