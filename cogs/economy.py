@@ -98,8 +98,10 @@ class Economy(commands.Cog, name="economy"):
                             pass
 
                     if not flavor_text:
+                        loot_items = descriptions.get_random_loot(rank, 1)
+                        item = loot_items[0] if loot_items else "something interesting"
                         flavor_text = (
-                            f"{best.name} found something worth **{amount} coins** "
+                            f"{best.name} found {item} worth **{amount} coins** "
                             f"while out exploring!"
                         )
 
@@ -115,8 +117,9 @@ class Economy(commands.Cog, name="economy"):
                     )
                 else:
                     amount = random.randint(daily_min, daily_max)
+                    snippet = descriptions.get_no_racer_loot()
                     flavor_text = (
-                        f"You scavenged **{amount} coins** from around the track."
+                        f"You found {snippet} worth **{amount} coins**!"
                     )
                     reward = await repo.create_daily_reward(
                         session,

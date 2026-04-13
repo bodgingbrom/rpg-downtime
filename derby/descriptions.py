@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 
 logger = logging.getLogger("discord_bot")
 
@@ -163,13 +164,56 @@ async def generate_description(
 # Daily reward flavor text
 # ---------------------------------------------------------------------------
 
-_RANK_ITEM_HINTS = {
-    "D": "worthless junk — rusty nails, tattered rags, chipped stones, old bones",
-    "C": "modest finds — dull blades, copper coins, cracked potions, frayed rope",
-    "B": "decent loot — polished weapons, silver trinkets, useful herbs, leather goods",
-    "A": "valuable treasure — enchanted gear, gold artifacts, rare scrolls, fine gems",
-    "S": "legendary prizes — magical relics, flawless gemstones, ancient spell scrolls, mythic artifacts",
+# ---------------------------------------------------------------------------
+# Daily loot tables (loaded once from YAML)
+# ---------------------------------------------------------------------------
+
+_LOOT_DIR = os.path.dirname(__file__)
+_daily_loot: dict[str, list[str]] | None = None
+
+_RANK_TIER_LABELS = {
+    "D": "worthless junk",
+    "C": "modest finds",
+    "B": "decent loot",
+    "A": "valuable treasure",
+    "S": "legendary prizes",
 }
+
+
+def _load_daily_loot() -> dict[str, list[str]]:
+    """Load and cache the daily loot table from YAML."""
+    global _daily_loot
+    if _daily_loot is not None:
+        return _daily_loot
+
+    import yaml
+
+    loot_path = os.path.join(_LOOT_DIR, "daily_loot.yaml")
+    try:
+        with open(loot_path, encoding="utf-8") as f:
+            _daily_loot = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        logger.warning("daily_loot.yaml not found — using empty loot tables")
+        _daily_loot = {}
+    return _daily_loot
+
+
+def get_random_loot(rank: str, count: int = 1) -> list[str]:
+    """Return *count* random loot items for the given rank tier."""
+    loot = _load_daily_loot()
+    items = loot.get(rank, loot.get("D", []))
+    if not items:
+        return []
+    return random.sample(items, min(count, len(items)))
+
+
+def get_no_racer_loot() -> str:
+    """Return a random fallback flavor snippet for players with no racer."""
+    loot = _load_daily_loot()
+    items = loot.get("no_racer", [])
+    if not items:
+        return "some coins from around the track"
+    return random.choice(items)
 
 
 async def generate_daily_flavor(
@@ -186,13 +230,22 @@ async def generate_daily_flavor(
     if client is None:
         return None
 
-    item_hint = _RANK_ITEM_HINTS.get(rank, _RANK_ITEM_HINTS["D"])
+    # Sample 5 items from the loot table to seed variety
+    sampled = get_random_loot(rank, 5)
+    tier_label = _RANK_TIER_LABELS.get(rank, "miscellaneous loot")
+
+    if sampled:
+        item_hint = f"{tier_label} like: {', '.join(sampled)}"
+    else:
+        item_hint = tier_label
 
     system_prompt = (
         f"You are narrating a racing creature game themed around: {flavor}.\n"
         "Write exactly ONE short, fun sentence (under 25 words) about a racing "
         "creature finding/discovering an item while exploring between races.\n"
         f"The item should be {item_hint}.\n"
+        "Pick ONE of the suggested items (or invent something similar) — "
+        "don't list multiple items.\n"
         "Match the item's value to the coin amount given. "
         "Be creative, specific, and playful. Include the racer's name. "
         "Do NOT mention coins, currency, or game mechanics."

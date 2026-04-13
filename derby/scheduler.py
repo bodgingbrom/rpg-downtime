@@ -818,8 +818,11 @@ class DerbyScheduler:
                             pass  # Fall through to generic
 
                     if not flavor_text:
+                        from derby.descriptions import get_random_loot
+                        loot_items = get_random_loot(rank, 1)
+                        item = loot_items[0] if loot_items else "something interesting"
                         flavor_text = (
-                            f"{best.name} found something worth **{amount} coins** "
+                            f"{best.name} found {item} worth **{amount} coins** "
                             f"while out exploring!"
                         )
 
@@ -852,8 +855,10 @@ class DerbyScheduler:
                         continue
 
                     amount = random.randint(daily_min, daily_max)
+                    from derby.descriptions import get_no_racer_loot
+                    snippet = get_no_racer_loot()
                     flavor_text = (
-                        f"You scavenged **{amount} coins** from around the track."
+                        f"You found {snippet} worth **{amount} coins**!"
                     )
                     await repo.create_daily_reward(
                         session,
