@@ -144,7 +144,7 @@ async def test_race_upcoming(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -180,7 +180,7 @@ async def _make_bet_env(tmp_path, num_racers=2):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -436,7 +436,7 @@ async def test_give_coins_positive(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=100,
         retirement_threshold=65, bet_window=0, countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -462,7 +462,7 @@ async def test_give_coins_negative(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=100,
         retirement_threshold=65, bet_window=0, countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -486,7 +486,7 @@ async def test_give_coins_overdraft_rejected(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=100,
         retirement_threshold=65, bet_window=0, countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -512,7 +512,7 @@ async def test_give_coins_zero_rejected(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=100,
         retirement_threshold=65, bet_window=0, countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -552,7 +552,7 @@ async def test_wallet_command_creates_and_returns_balance(tmp_path: Path) -> Non
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = economy_cog.Economy(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -583,7 +583,7 @@ async def test_racer_delete(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -637,6 +637,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
         _announce_placement_prizes=noop,
         _create_next_race=noop,
         active_races=set(),
+        betting_races=set(),
     )
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
@@ -707,7 +708,7 @@ async def test_debug_race(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -741,7 +742,7 @@ async def test_race_history(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -793,7 +794,7 @@ async def test_add_racer_with_stats(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -831,7 +832,7 @@ async def test_add_racer_random_stats(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -871,7 +872,7 @@ async def test_add_racer_default_name(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -902,7 +903,7 @@ async def test_add_racer_default_name_avoids_taken(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -935,7 +936,7 @@ async def test_edit_racer_stats(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -967,7 +968,7 @@ async def test_edit_racer_owner(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -1001,7 +1002,7 @@ async def test_race_info_bands(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -1039,7 +1040,7 @@ async def test_race_info_mood_label(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -1070,7 +1071,7 @@ async def test_guild_settings_override_default_wallet(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = economy_cog.Economy(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -1105,7 +1106,7 @@ async def test_settings_show(tmp_path: Path) -> None:
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     await bot.add_cog(cog)
     ctx = DummyContext(bot)
@@ -1139,7 +1140,7 @@ async def test_stable_buy(tmp_path: Path) -> None:
         racer_buy_multiplier=2,
         max_racers_per_owner=3,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1183,7 +1184,7 @@ async def test_stable_buy_insufficient_funds(tmp_path: Path) -> None:
         racer_buy_multiplier=2,
         max_racers_per_owner=3,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1221,7 +1222,7 @@ async def test_stable_sell(tmp_path: Path) -> None:
         racer_buy_multiplier=2,
         racer_sell_fraction=0.5,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1255,7 +1256,7 @@ async def test_stable_sell_not_owner(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=100)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1278,7 +1279,7 @@ async def test_stable_rename(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=100)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1305,7 +1306,7 @@ async def test_stable_rename_taken(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=100)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1341,7 +1342,7 @@ async def test_stable_train_success(tmp_path: Path) -> None:
         training_base=10,
         training_multiplier=2,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1380,7 +1381,7 @@ async def test_stable_train_not_owner(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1407,7 +1408,7 @@ async def test_stable_train_insufficient_funds(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=5,
         training_base=10, training_multiplier=2,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1439,7 +1440,7 @@ async def test_stable_train_max_stat(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1463,7 +1464,7 @@ async def test_stable_train_retired(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, training_base=10, training_multiplier=2)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1491,7 +1492,7 @@ async def test_stable_train_failure(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=200,
         training_base=10, training_multiplier=2,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1541,7 +1542,7 @@ async def test_stable_train_mood_floor(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=200,
         training_base=10, training_multiplier=2,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1577,7 +1578,7 @@ async def test_stable_rest_success(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, rest_cost=15)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1612,7 +1613,7 @@ async def test_stable_rest_not_owner(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, rest_cost=15)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1636,7 +1637,7 @@ async def test_stable_rest_already_max(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, rest_cost=15)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1660,7 +1661,7 @@ async def test_stable_rest_insufficient_funds(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=5, rest_cost=15)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1692,7 +1693,7 @@ async def test_stable_feed_success(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, feed_cost=30)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1727,7 +1728,7 @@ async def test_stable_feed_caps_at_5(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, feed_cost=30)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1757,7 +1758,7 @@ async def test_stable_feed_retired(tmp_path: Path) -> None:
         await conn.run_sync(Base.metadata.create_all)
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
     bot.settings = Settings(race_times=["12:00"], default_wallet=200, feed_cost=30)
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1789,7 +1790,7 @@ async def test_stable_upgrade_success(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=200,
         max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1824,7 +1825,7 @@ async def test_stable_upgrade_at_max(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=200,
         max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1851,7 +1852,7 @@ async def test_stable_upgrade_insufficient_funds(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=50,
         max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1879,7 +1880,7 @@ async def test_buy_respects_upgraded_slots(tmp_path: Path) -> None:
         racer_buy_base=20, racer_buy_multiplier=2,
         max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1924,7 +1925,7 @@ async def test_stable_counts_retired_toward_limit(tmp_path: Path) -> None:
         racer_buy_base=20, racer_buy_multiplier=2,
         max_racers_per_owner=3, stable_upgrade_costs="500,1000,2000",
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -1978,7 +1979,7 @@ async def test_stable_breed_success(tmp_path: Path) -> None:
         breeding_cooldown=6, min_races_to_breed=5,
         max_foals_per_female=3,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2042,7 +2043,7 @@ async def test_stable_breed_insufficient_funds(tmp_path: Path) -> None:
         max_racers_per_owner=6, breeding_fee=25,
         min_races_to_breed=5, max_foals_per_female=3,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2078,7 +2079,7 @@ async def test_stable_breed_same_racer_rejected(tmp_path: Path) -> None:
         race_times=["12:00"], default_wallet=200,
         max_racers_per_owner=6, breeding_fee=25,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2108,7 +2109,7 @@ async def test_stable_breed_validation_error(tmp_path: Path) -> None:
         max_racers_per_owner=6, breeding_fee=25,
         min_races_to_breed=5, max_foals_per_female=3,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2152,7 +2153,7 @@ async def _make_view_env(tmp_path, **racer_kwargs):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2288,7 +2289,7 @@ async def test_stable_view_with_lineage(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2333,7 +2334,7 @@ async def test_set_flavor(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
 
@@ -2365,7 +2366,7 @@ async def test_flavor_shows_in_settings(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
 
@@ -2403,7 +2404,7 @@ async def _make_view_env_with_flavor(tmp_path, flavor="cyberpunk lizards", **rac
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     stable_cog = derby_cog.Stable(bot)
     derby_cog_inst = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
@@ -2499,7 +2500,7 @@ async def test_add_racer_generates_description(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
     owner = types.SimpleNamespace(id=42, mention="@TestUser")
@@ -2537,7 +2538,7 @@ async def test_add_racer_no_flavor_no_description(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Derby(bot)
     ctx = DummyContext(bot)
     owner = types.SimpleNamespace(id=42, mention="@TestUser")
@@ -2563,7 +2564,7 @@ async def test_breed_generates_foal_description(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2611,7 +2612,7 @@ async def test_breed_no_parent_desc_no_foal_desc(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2657,7 +2658,7 @@ async def test_training_recalculates_rank(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2703,7 +2704,7 @@ async def test_training_no_rank_change(tmp_path):
         bet_window=0,
         countdown_total=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set())
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, active_races=set(), betting_races=set())
     cog = derby_cog.Stable(bot)
     ctx = DummyContext(bot)
 

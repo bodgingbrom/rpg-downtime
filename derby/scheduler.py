@@ -57,7 +57,8 @@ class DerbyScheduler:
         self.task: tasks.Loop | None = None
         self.tournament_task: tasks.Loop | None = None
         self.commentaries: dict[int, tasks.Loop] = {}
-        self.active_races: set[int] = set()  # race IDs currently in progress
+        self.active_races: set[int] = set()  # race IDs currently simulating (bets closed)
+        self.betting_races: set[int] = set()  # race IDs in bet window (bets open)
         self._last_tournament_tick: str | None = None  # "weekday-hour-minute" debounce
 
     def _resolve(
@@ -477,7 +478,7 @@ class DerbyScheduler:
                 )
                 race = result.scalars().first()
 
-            if race is None or race.id in self.active_races:
+            if race is None or race.id in self.active_races or race.id in self.betting_races:
                 continue
 
             # Load stored participants
@@ -1176,13 +1177,14 @@ class DerbyScheduler:
     async def _run_race(
         self, race_id: int, guild_id: int, participants: list[models.Racer]
     ) -> None:
-        if race_id in self.active_races:
+        if race_id in self.active_races or race_id in self.betting_races:
             return  # another coroutine is already handling this race
-        self.active_races.add(race_id)
+        self.betting_races.add(race_id)
         try:
             await self._run_race_inner(race_id, guild_id, participants)
         finally:
             self.active_races.discard(race_id)
+            self.betting_races.discard(race_id)
 
     async def _run_race_inner(
         self, race_id: int, guild_id: int, participants: list[models.Racer]
@@ -1201,6 +1203,10 @@ class DerbyScheduler:
             guild_settings=gs,
         )
         await asyncio.sleep(self._resolve("bet_window", gs))
+        # Transition from betting → active: bets are now closed,
+        # autocomplete will stop showing this race's racers.
+        self.betting_races.discard(race_id)
+        self.active_races.add(race_id)
         self.bot.logger.info(
             "Race starting",
             extra={"guild_id": guild_id, "race_id": race_id},

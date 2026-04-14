@@ -1540,7 +1540,7 @@ class Derby(commands.Cog, name="derby"):
             if race is None:
                 await context.send("No pending race found", ephemeral=True)
                 return
-            if race.id in self.bot.scheduler.active_races:
+            if race.id in self.bot.scheduler.active_races or race.id in self.bot.scheduler.betting_races:
                 await context.send(
                     f"Race {race.id} is already in progress!", ephemeral=True
                 )
