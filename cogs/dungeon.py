@@ -984,7 +984,10 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
         elif room_type == "treasure":
             # Resolve treasure immediately
             tier = room_data.get("tier", "common")
-            gold = dungeon_logic.roll_treasure_gold(tier, race=race)
+            gold = dungeon_logic.roll_treasure_gold(
+                tier,
+                double_roll=get_racial_modifier(race, "dungeon.treasure_double_roll", False),
+            )
             run.run_gold += gold
             run.room_index += 1
             run.state = "exploring"
@@ -999,7 +1002,10 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
             # Resolve trap immediately
             trap = room_data.get("trap", {})
             trap_dc = trap.get("dex_dc", 12)
-            avoided = dungeon_logic.check_trap(player.dexterity, trap_dc, race=race)
+            avoided = dungeon_logic.check_trap(
+                player.dexterity, trap_dc,
+                save_bonus=get_racial_modifier(race, "dungeon.trap_save_bonus", 0),
+            )
             damage = 0
             if not avoided:
                 damage = dungeon_logic.roll_trap_damage(trap.get("damage", [1, 4]))
@@ -1058,7 +1064,10 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
         narrative: list[str] = []
 
         if action == "flee":
-            fled = dungeon_logic.check_flee(player.dexterity, race=race)
+            fled = dungeon_logic.check_flee(
+                player.dexterity,
+                flee_dc=get_racial_modifier(race, "dungeon.flee_dc", dungeon_logic.FLEE_BASE_DC),
+            )
             if fled:
                 narrative.append("You turn and run! You escape the fight.")
                 run.room_index += 1
@@ -1106,16 +1115,25 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
         was_crit = False
         if action == "attack":
             d20 = dungeon_logic.roll_d20()
-            was_crit = dungeon_logic.is_crit(d20, race=race)
+            was_crit = dungeon_logic.is_crit(
+                d20,
+                crit_threshold=get_racial_modifier(race, "dungeon.crit_threshold", 20),
+            )
             crit_bonus = dungeon_logic.get_crit_bonus(player.accessory_id)
             if not was_crit and crit_bonus > 0:
                 was_crit = d20 >= (20 - crit_bonus)
             weapon_dice = dungeon_logic.get_weapon_dice(player.weapon_id)
             weapon_bonus = dungeon_logic.get_weapon_bonus(player.weapon_id)
             str_mod = dungeon_logic.get_modifier(player.strength)
+            # Compose damage modifiers from race (+ future gear/buff sources)
+            has_bloodrage = get_racial_modifier(race, "dungeon.bloodrage", False)
+            bloodrage_active = (
+                has_bloodrage and run.max_hp > 0 and run.current_hp <= run.max_hp // 2
+            )
             player_dmg, _ = dungeon_logic.calc_player_damage(
                 weapon_dice, str_mod, weapon_bonus, monster.get("defense", 0), was_crit,
-                race=race, current_hp=run.current_hp, max_hp=run.max_hp,
+                damage_advantage=bloodrage_active,
+                bonus_penalty=get_racial_modifier(race, "dungeon.weapon_bonus_penalty", 0),
             )
             crit_text = " **CRITICAL HIT!**" if was_crit else ""
             narrative.append(f"You strike the {monster['name']} for **{player_dmg}** damage!{crit_text}")
@@ -1184,7 +1202,10 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
             xp_gained = monster.get("xp", 0)
             gold_range = monster.get("gold", [0, 0])
             gold_gained = dungeon_logic.roll_monster_gold(gold_range)
-            loot_drops = dungeon_logic.roll_loot_drops(monster.get("loot", []), race=race)
+            loot_drops = dungeon_logic.roll_loot_drops(
+                monster.get("loot", []),
+                loot_chance_bonus=get_racial_modifier(race, "dungeon.loot_chance_bonus", 0),
+            )
 
             run.run_xp += xp_gained
             run.run_gold += gold_gained
@@ -1678,7 +1699,10 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
 
             # Calculate starting HP
             hp_bonus = dungeon_logic.get_accessory_hp_bonus(player.accessory_id)
-            max_hp = dungeon_logic.get_max_hp(player.constitution, hp_bonus, race=race)
+            max_hp = dungeon_logic.get_max_hp(
+                player.constitution, hp_bonus,
+                hp_multiplier=get_racial_modifier(race, "dungeon.hp_multiplier", 2.0),
+            )
 
             # Generate floor 1 rooms
             floor_data = dungeon_logic.get_floor_data(dungeon_data, 1)
@@ -1775,7 +1799,10 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
 
             # HP
             hp_bonus = dungeon_logic.get_accessory_hp_bonus(player.accessory_id)
-            max_hp = dungeon_logic.get_max_hp(player.constitution, hp_bonus, race=race)
+            max_hp = dungeon_logic.get_max_hp(
+                player.constitution, hp_bonus,
+                hp_multiplier=get_racial_modifier(race, "dungeon.hp_multiplier", 2.0),
+            )
 
             # XP progress
             progress = dungeon_logic.xp_progress(player.xp)

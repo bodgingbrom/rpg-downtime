@@ -1337,22 +1337,21 @@ INJURY_DESCRIPTIONS = [
 def check_injury_risk(
     result: RaceResult,
     rng: random.Random | None = None,
-    owner_races: dict[int, str] | None = None,
+    injury_multipliers: dict[int, float] | None = None,
 ) -> list[tuple[int, str, int]]:
     """Check for post-race injuries based on stumbles and last place.
 
     Each stumble during the race gives a 5% injury chance (nat 1 on d20).
     Last place gets one additional 5% check.
 
-    *owner_races*: ``{racer_id: owner_race_str}`` — Orc owners halve
-    their racers' injury chance (roll must be nat 1 AND pass a coin flip).
+    *injury_multipliers*: ``{racer_id: multiplier}`` — values below 1.0
+    reduce injury chance (e.g. 0.5 = halved).  Callers should compose
+    racial, gear, and buff contributions before passing.
 
     Returns list of ``(racer_id, injury_description, recovery_races)``.
     """
     if rng is None:
         rng = random.Random()
-
-    from rpg.logic import get_racial_modifier
 
     injuries: list[tuple[int, str, int]] = []
     if not result.placements:
@@ -1369,20 +1368,13 @@ def check_injury_risk(
         if rid == last_place_id:
             num_stumble_rolls += 1
 
-        # Orc injury chance multiplier (0.50 = halved)
-        injury_mult = 1.0
-        if owner_races:
-            owner_race = owner_races.get(rid)
-            if owner_race:
-                injury_mult = get_racial_modifier(
-                    owner_race, "racing.injury_chance_multiplier", 1.0
-                )
+        injury_mult = (injury_multipliers or {}).get(rid, 1.0)
 
         for _ in range(num_stumble_rolls):
             if rng.randint(1, 20) == 1:  # nat 1 = 5%
-                # Orc halves injury chance: must also pass a coin flip
+                # Reduced injury chance: nat 1 AND coin flip
                 if injury_mult < 1.0 and rng.random() >= injury_mult:
-                    continue  # Orc toughness saves the racer
+                    continue  # toughness saves the racer
                 description = rng.choice(INJURY_DESCRIPTIONS)
                 recovery = rng.randint(1, 4) + rng.randint(1, 4)  # 2d4
                 injuries.append((rid, description, recovery))
@@ -1417,7 +1409,7 @@ async def apply_mood_drift(
     session: AsyncSession,
     placements: list[int],
     participants: list[models.Racer] | None = None,
-    owner_races: dict[int, str] | None = None,
+    mood_floors: dict[int, int] | None = None,
 ) -> dict[int, tuple[int, int]]:
     """Adjust racer moods after a race and return changes.
 
@@ -1425,15 +1417,14 @@ async def apply_mood_drift(
     All other racers drift one step toward neutral (3) — this keeps
     unowned racers from spiralling into permanent bad mood.
 
-    *owner_races*: ``{racer_id: owner_race_str}`` — used to apply
-    Elf mood floor (racers owned by an Elf cannot drop below mood 2).
+    *mood_floors*: ``{racer_id: minimum_mood}`` — racers cannot drop
+    below this value.  Callers should compose racial, gear, and buff
+    contributions before passing.
 
     Returns ``{racer_id: (old_mood, new_mood)}`` for racers that changed.
     """
     if not placements:
         return {}
-
-    from rpg.logic import get_racial_modifier
 
     changes: dict[int, tuple[int, int]] = {}
     winner_id = placements[0]
@@ -1463,12 +1454,10 @@ async def apply_mood_drift(
             else:
                 new_mood = old_mood
 
-        # Elf mood floor: racers owned by an Elf can't drop below mood 2
-        if owner_races:
-            owner_race = owner_races.get(rid)
-            if owner_race:
-                mood_floor = get_racial_modifier(owner_race, "racing.mood_floor", 1)
-                new_mood = max(mood_floor, new_mood)
+        # Apply mood floor (e.g. Elf racial, stable upgrades, etc.)
+        if mood_floors:
+            floor = mood_floors.get(rid, 1)
+            new_mood = max(floor, new_mood)
 
         if new_mood != old_mood:
             racer.mood = new_mood

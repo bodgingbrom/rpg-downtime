@@ -141,13 +141,14 @@ def calculate_cast_time(
     bait_type: str,
     skill_reduction: float = 0.0,
     trophy_reduction: float = 0.0,
-    race_multiplier: float = 1.0,
+    cast_multiplier: float = 1.0,
 ) -> int:
     """Return seconds until next catch.
 
-    Formula: ``base * (1 - rod) * (1 - bait) * (1 - skill) * (1 - trophy) * race``
+    Formula: ``base * (1 - rod) * (1 - bait) * (1 - skill) * (1 - trophy) * mult``
 
-    *race_multiplier* defaults to 1.0; Orc gets 0.90 (10% faster).
+    *cast_multiplier* is a final multiplier on cast time.  Callers should
+    compose racial, gear, and buff contributions (e.g. ``0.90 * 0.95``).
     """
     rod_reduction = rod_data.get("cast_reduction", 0.0)
     bait_info = BAIT_TYPES.get(bait_type, {})
@@ -159,7 +160,7 @@ def calculate_cast_time(
         * (1 - bait_reduction)
         * (1 - skill_reduction)
         * (1 - trophy_reduction)
-        * race_multiplier
+        * cast_multiplier
     )
     return max(int(result), 60)  # minimum 60 seconds
 

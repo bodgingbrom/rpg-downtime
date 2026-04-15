@@ -1255,23 +1255,31 @@ class DerbyScheduler:
                 session, result.placements, participants,
                 guild_id=guild_id, prize_list=prize_list,
             )
-            # Build owner race lookup for racial modifiers
+            # Build per-racer modifier dicts from owner races
             _owner_ids = {r.id: r.owner_id for r in participants if r.owner_id}
-            _owner_races: dict[int, str] = {}
+            _mood_floors: dict[int, int] = {}
+            _injury_mults: dict[int, float] = {}
             if _owner_ids:
                 from rpg import repositories as _rpg_repo
+                from rpg.logic import get_racial_modifier as _get_rm
                 _seen_owners: dict[int, str] = {}
                 for _rid, _oid in _owner_ids.items():
                     if _oid not in _seen_owners:
                         _prof = await _rpg_repo.get_or_create_profile(session, _oid, guild_id)
                         _seen_owners[_oid] = _prof.race
-                    _owner_races[_rid] = _seen_owners[_oid]
+                    _race = _seen_owners[_oid]
+                    _mf = _get_rm(_race, "racing.mood_floor", 1)
+                    if _mf > 1:
+                        _mood_floors[_rid] = _mf
+                    _im = _get_rm(_race, "racing.injury_chance_multiplier", 1.0)
+                    if _im != 1.0:
+                        _injury_mults[_rid] = _im
             mood_changes = await logic.apply_mood_drift(
                 session, result.placements, participants,
-                owner_races=_owner_races,
+                mood_floors=_mood_floors or None,
             )
             new_injuries = logic.check_injury_risk(
-                result, owner_races=_owner_races,
+                result, injury_multipliers=_injury_mults or None,
             )
             await logic.apply_injuries(session, new_injuries, participants)
             healed = await self._tick_injury_recovery(session, guild_id)
@@ -2492,7 +2500,7 @@ class DerbyScheduler:
                             fs.bait_type,
                             skill_reduction=skill_reduction,
                             trophy_reduction=trophy_reduction,
-                            race_multiplier=cast_mult,
+                            cast_multiplier=cast_mult,
                         )
                     )
 

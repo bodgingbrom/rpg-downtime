@@ -8,8 +8,6 @@ from typing import Any
 
 import yaml
 
-from rpg.logic import get_racial_modifier
-
 # ---------------------------------------------------------------------------
 # Directory / cache setup
 # ---------------------------------------------------------------------------
@@ -151,14 +149,14 @@ def get_modifier(stat_value: int) -> int:
 
 
 def get_max_hp(
-    constitution: int, accessory_bonus: int = 0, race: str = "human"
+    constitution: int, accessory_bonus: int = 0, *, hp_multiplier: float = 2.0
 ) -> int:
     """Max HP derived from CON, plus accessory bonuses.
 
-    Base multiplier is 2.0 but races may override (Elf 1.75, Orc 2.25).
+    *hp_multiplier* scales the CON base (default 2.0).  Sources such as
+    racial passives, gear, or buffs should be composed by the caller.
     """
-    multiplier = get_racial_modifier(race, "dungeon.hp_multiplier", 2.0)
-    return int(constitution * multiplier) + accessory_bonus
+    return int(constitution * hp_multiplier) + accessory_bonus
 
 
 # ---------------------------------------------------------------------------
@@ -301,10 +299,13 @@ def roll_d20(rng: random.Random | None = None) -> int:
     return rng.randint(1, 20)
 
 
-def is_crit(d20_roll: int, race: str = "human") -> bool:
-    """Check if a d20 roll is a crit (default: nat 20; Elf: 19-20)."""
-    threshold = get_racial_modifier(race, "dungeon.crit_threshold", 20)
-    return d20_roll >= threshold
+def is_crit(d20_roll: int, *, crit_threshold: int = 20) -> bool:
+    """Check if a d20 roll meets or exceeds the crit threshold.
+
+    Default is nat-20 only.  Callers should lower the threshold to
+    account for racial passives, gear, or buffs.
+    """
+    return d20_roll >= crit_threshold
 
 
 # ---------------------------------------------------------------------------
@@ -415,21 +416,23 @@ def calc_player_damage(
     is_crit_hit: bool,
     rng: random.Random | None = None,
     *,
-    race: str = "human",
+    damage_advantage: bool = False,
     current_hp: int = 0,
     max_hp: int = 1,
+    bonus_penalty: int = 0,
+    damage_bonus: int = 0,
 ) -> tuple[int, int]:
     """Calculate player damage. Returns (damage, raw_roll).
 
-    Racial modifiers:
-    - Orc Bloodrage: when below 50% HP, roll dice twice keep higher.
-    - Halfling: weapon bonus reduced by 1 (min 0).
+    *damage_advantage*: roll dice twice keep higher (e.g. Orc Bloodrage
+    when below 50 % HP).  The caller decides when to enable this.
+    *bonus_penalty*: subtracted from weapon_bonus (min 0).
+    *damage_bonus*: flat additive bonus after all other calculation.
     """
     rng = rng or random.Random()
 
-    # Orc Bloodrage: advantage on damage dice when below 50% HP
-    bloodrage = get_racial_modifier(race, "dungeon.bloodrage", False)
-    if bloodrage and max_hp > 0 and current_hp <= max_hp // 2:
+    # Damage advantage: roll dice twice keep higher
+    if damage_advantage:
         roll_a = roll_dice(weapon_dice, rng)
         roll_b = roll_dice(weapon_dice, rng)
         raw_roll = max(roll_a, roll_b)
@@ -439,11 +442,9 @@ def calc_player_damage(
     if is_crit_hit:
         raw_roll += roll_dice(weapon_dice, rng)  # double dice on crit
 
-    # Halfling weapon penalty
-    bonus_penalty = get_racial_modifier(race, "dungeon.weapon_bonus_penalty", 0)
     effective_bonus = max(weapon_bonus - bonus_penalty, 0)
 
-    damage = max(raw_roll + str_mod + effective_bonus - monster_defense, 1)
+    damage = max(raw_roll + str_mod + effective_bonus + damage_bonus - monster_defense, 1)
     return damage, raw_roll
 
 
@@ -472,29 +473,28 @@ def select_monster_action(ai_weights: dict[str, int], rng: random.Random | None 
 
 
 def check_flee(
-    dex: int, rng: random.Random | None = None, race: str = "human"
+    dex: int, rng: random.Random | None = None, *, flee_dc: int = FLEE_BASE_DC
 ) -> bool:
-    """DEX-based flee check. Roll d20 + DEX modifier vs flee DC.
+    """DEX-based flee check. Roll d20 + DEX modifier vs *flee_dc*.
 
-    Racial DCs: Halfling 10, Dwarf 14, default 12.
+    Callers should adjust the DC for racial passives, gear, or debuffs.
     """
     rng = rng or random.Random()
     roll = rng.randint(1, 20)
-    dc = get_racial_modifier(race, "dungeon.flee_dc", FLEE_BASE_DC)
-    return (roll + get_modifier(dex)) >= dc
+    return (roll + get_modifier(dex)) >= flee_dc
 
 
 def check_trap(
-    dex: int, trap_dc: int, rng: random.Random | None = None, race: str = "human"
+    dex: int, trap_dc: int, rng: random.Random | None = None, *, save_bonus: int = 0
 ) -> bool:
-    """DEX-based trap avoidance. Roll d20 + DEX modifier + racial bonus vs DC.
+    """DEX-based trap avoidance. Roll d20 + DEX modifier + *save_bonus* vs DC.
 
-    Racial bonus: Elf +2, Dwarf -1, default 0.
+    *save_bonus* is additive — combine racial, gear, and buff bonuses
+    before passing.
     """
     rng = rng or random.Random()
     roll = rng.randint(1, 20)
-    bonus = get_racial_modifier(race, "dungeon.trap_save_bonus", 0)
-    return (roll + get_modifier(dex) + bonus) >= trap_dc
+    return (roll + get_modifier(dex) + save_bonus) >= trap_dc
 
 
 def roll_trap_damage(
@@ -514,16 +514,16 @@ def roll_monster_gold(
 
 
 def roll_treasure_gold(
-    tier: str, rng: random.Random | None = None, race: str = "human"
+    tier: str, rng: random.Random | None = None, *, double_roll: bool = False
 ) -> int:
     """Roll gold for a treasure room based on tier.
 
-    Halfling *Lucky*: roll twice, keep the better result.
+    *double_roll*: roll twice, keep the better result (e.g. Halfling Lucky).
     """
     rng = rng or random.Random()
     gold_range = TREASURE_GOLD.get(tier, TREASURE_GOLD["common"])
     roll = rng.randint(gold_range[0], gold_range[1])
-    if get_racial_modifier(race, "dungeon.treasure_double_roll", False):
+    if double_roll:
         roll = max(roll, rng.randint(gold_range[0], gold_range[1]))
     return roll
 
@@ -531,17 +531,18 @@ def roll_treasure_gold(
 def roll_loot_drops(
     loot_table: list[dict[str, Any]],
     rng: random.Random | None = None,
-    race: str = "human",
+    *,
+    loot_chance_bonus: int = 0,
 ) -> list[dict[str, Any]]:
     """Roll each loot entry against its chance. Returns list of dropped items.
 
-    Halfling *Lucky*: +5% additive bonus to every drop chance.
+    *loot_chance_bonus*: additive percentage bonus to every drop chance.
+    Combine racial, gear, and buff bonuses before passing.
     """
     rng = rng or random.Random()
-    bonus = get_racial_modifier(race, "dungeon.loot_chance_bonus", 0)
     drops: list[dict[str, Any]] = []
     for entry in loot_table:
-        if rng.randint(1, 100) <= entry.get("chance", 0) + bonus:
+        if rng.randint(1, 100) <= entry.get("chance", 0) + loot_chance_bonus:
             drops.append(entry)
     return drops
 
