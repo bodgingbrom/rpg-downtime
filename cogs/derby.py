@@ -371,7 +371,7 @@ class QuickBetModal(discord.ui.Modal, title="Place Bet"):
                 self.bot, interaction.user.id, guild_id,
                 self.race, self.racers, "win", [self.racer_id], amount,
             )
-            await interaction.response.send_message(msg, ephemeral=True)
+            await interaction.response.send_message(msg)
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
 
@@ -770,13 +770,16 @@ class BettingView(discord.ui.View):
                 self.bot, self.user_id, self.guild_id,
                 self.race, self.racers, self.bet_type, self.picks, self.amount,
             )
-            embed = discord.Embed(
+            # Edit the ephemeral bet slip to show done state
+            done_embed = discord.Embed(
                 title="\U0001f3b0 Bet Confirmed!",
-                description=msg,
+                description="Your bet has been placed.",
                 color=0x2ECC71,
             )
             self.state = "done"
-            await interaction.response.edit_message(embed=embed, view=None)
+            await interaction.response.edit_message(embed=done_embed, view=None)
+            # Post the bet publicly so everyone can see it
+            await interaction.followup.send(msg)
             self.stop()
         except ValueError as e:
             await interaction.response.send_message(str(e), ephemeral=True)
