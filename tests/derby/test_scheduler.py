@@ -40,7 +40,8 @@ class DummyChannel:
         self.messages: list[str] = []
 
     async def send(
-        self, content: str | None = None, *, embed: discord.Embed | None = None
+        self, content: str | None = None, *, embed: discord.Embed | None = None,
+        view=None,
     ) -> "DummyMessage":
         text = ""
         if embed is not None and embed.description is not None:
@@ -111,6 +112,7 @@ async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
         countdown_total=0,
         commentary_delay=0,
         min_pool_size=0,
+        min_training_to_race=0,
     )
     bot = DummyBot(settings)
     guild = DummyGuild(GUILD_ID)

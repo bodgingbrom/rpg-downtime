@@ -1758,6 +1758,11 @@ class DerbyScheduler:
         channel = self._get_channel(guild, guild_settings)
         if channel is None:
             return
+        # Fetch race object for quick-bet view
+        async with self.sessionmaker() as session:
+            race_obj = await repo.get_race(session, race_id)
+        if race_obj is None:
+            return
         odds = logic.calculate_odds(racers, [], 0.1, race_map=race_map)
         minutes = self._resolve("bet_window", guild_settings) // 60
         desc = f"Race {race_id} begins in {minutes} minutes. Place your bets!"
@@ -1812,19 +1817,23 @@ class DerbyScheduler:
                 inline=False,
             )
         embed.add_field(
-            name="\U0001f3b0 Bet Types",
+            name="\U0001f3b0 Place Your Bets!",
             value=(
-                "**/race bet-win** \u2014 pick the winner\n"
-                "**/race bet-place** \u2014 pick 1st or 2nd\n"
-                "**/race bet-exacta** \u2014 exact 1st & 2nd\n"
-                "**/race bet-trifecta** \u2014 exact 1st, 2nd & 3rd\n"
-                "**/race bet-superfecta** \u2014 all 6 in exact order"
+                "Click a racer button below for a quick **win bet**, "
+                "or use **/race bet** for the full betting slip "
+                "(Place, Exacta, Trifecta, Superfecta)."
             ),
             inline=False,
         )
         embed.set_footer(text="One bet per type \u2014 up to 5 bets per race!")
+
+        # Attach quick-bet buttons
+        from cogs.derby import QuickBetView
+        bet_window = self._resolve("bet_window", guild_settings)
+        view = QuickBetView(self.bot, race_obj, racers, odds, timeout=float(bet_window))
         try:
-            await channel.send(embed=embed)
+            msg = await channel.send(embed=embed, view=view)
+            view.message = msg
         except (discord.Forbidden, discord.HTTPException):
             return
 
