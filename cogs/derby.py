@@ -180,6 +180,641 @@ async def viewable_racer_autocomplete(
     return (owned + others)[:25]
 
 
+# ---------------------------------------------------------------------------
+# Betting UI Components
+# ---------------------------------------------------------------------------
+
+BET_TYPE_LABELS = {
+    "win": "Win",
+    "place": "Place",
+    "exacta": "Exacta",
+    "trifecta": "Trifecta",
+    "superfecta": "Superfecta",
+}
+
+BET_PICK_COUNTS = {
+    "win": 1,
+    "place": 1,
+    "exacta": 2,
+    "trifecta": 3,
+    "superfecta": 6,
+}
+
+AMOUNT_PRESETS = [10, 25, 50, 100]
+
+
+async def _execute_bet(
+    bot,
+    user_id: int,
+    guild_id: int,
+    race: models.Race,
+    racers: list[models.Racer],
+    bet_type: str,
+    picks: list[int],
+    amount: int,
+) -> str:
+    """Place a bet and return a result message string.
+
+    This is shared by both the interactive UI and the slash commands.
+    Raises ValueError with a user-facing message on validation failure.
+    """
+    FREE_BET_AMOUNT = 10
+
+    if amount < 0:
+        raise ValueError("Bet amount must be positive.")
+
+    if bet_type == "superfecta" and len(racers) < 6:
+        raise ValueError("Superfecta requires exactly 6 racers in the field.")
+
+    racer_ids_in_race = [r.id for r in racers]
+    for pick in picks:
+        if pick not in racer_ids_in_race:
+            raise ValueError("That racer isn't in the next race.")
+    if len(picks) != len(set(picks)):
+        raise ValueError("Each racer can only appear once in your picks.")
+
+    multiplier = logic.calculate_bet_odds(racers, None, 0.1, bet_type, picks)
+    racer_ids_json = json.dumps(picks)
+    primary_racer_id = picks[0]
+    pick_names = [
+        next((r.name for r in racers if r.id == p), f"Racer {p}")
+        for p in picks
+    ]
+    label = BET_TYPE_LABELS.get(bet_type, bet_type)
+
+    async with bot.scheduler.sessionmaker() as session:
+        wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
+        if wallet is None:
+            gs = await repo.get_guild_settings(session, guild_id)
+            default_bal = resolve_guild_setting(gs, bot.settings, "default_wallet")
+            wallet = await wallet_repo.create_wallet(
+                session, user_id=user_id, guild_id=guild_id, balance=default_bal,
+            )
+
+        is_free = False
+        if amount == 0:
+            if wallet.balance > 0:
+                raise ValueError("You can only place a free bet when your balance is 0.")
+            free_check = await session.execute(
+                select(models.Bet).where(
+                    models.Bet.race_id == race.id,
+                    models.Bet.user_id == user_id,
+                    models.Bet.is_free.is_(True),
+                )
+            )
+            if free_check.scalars().first() is not None:
+                raise ValueError("You already have a free bet on this race.")
+            is_free = True
+            amount = FREE_BET_AMOUNT
+
+        payout = int(amount * multiplier)
+
+        bet_result = await session.execute(
+            select(models.Bet).where(
+                models.Bet.race_id == race.id,
+                models.Bet.user_id == user_id,
+                models.Bet.bet_type == bet_type,
+            )
+        )
+        existing_bet = bet_result.scalars().first()
+        old_amount = 0
+        if existing_bet is not None:
+            old_amount = existing_bet.amount
+            if not existing_bet.is_free:
+                wallet.balance += existing_bet.amount
+        if not is_free and wallet.balance < amount:
+            await session.commit()
+            raise ValueError("Insufficient balance.")
+        if not is_free:
+            wallet.balance -= amount
+        await session.commit()
+        if existing_bet is None:
+            await repo.create_bet(
+                session,
+                race_id=race.id,
+                user_id=user_id,
+                racer_id=primary_racer_id,
+                amount=amount,
+                payout_multiplier=multiplier,
+                bet_type=bet_type,
+                racer_ids=racer_ids_json,
+                is_free=is_free,
+            )
+        else:
+            await repo.update_bet(
+                session,
+                existing_bet.id,
+                racer_id=primary_racer_id,
+                amount=amount,
+                payout_multiplier=multiplier,
+                racer_ids=racer_ids_json,
+                is_free=is_free,
+            )
+
+    if bet_type in ("win", "place"):
+        pick_desc = f"**{pick_names[0]}**"
+    else:
+        pick_desc = " \u2192 ".join(f"**{n}**" for n in pick_names)
+
+    free_tag = " (Free House Bet)" if is_free else ""
+    if is_free:
+        return (
+            f"\U0001f3b0 **{label}**{free_tag}\n"
+            f"The house backs you on {pick_desc} for {amount} coins "
+            f"({multiplier:.1f}x \u2014 win pays {payout})"
+        )
+    elif old_amount > 0:
+        return (
+            f"\U0001f3b0 **{label}**\n"
+            f"Bet changed ({old_amount} coins refunded) to {pick_desc} "
+            f"for {amount} coins ({multiplier:.1f}x \u2014 win pays {payout})"
+        )
+    else:
+        return (
+            f"\U0001f3b0 **{label}**\n"
+            f"Bet placed on {pick_desc} for {amount} coins "
+            f"({multiplier:.1f}x \u2014 win pays {payout})"
+        )
+
+
+# --- Quick-Bet (on race announcement) ---
+
+
+class QuickBetModal(discord.ui.Modal, title="Place Bet"):
+    """Modal that asks for the bet amount when quick-betting from the announcement."""
+
+    bet_amount = discord.ui.TextInput(
+        label="How much do you want to bet?",
+        placeholder="Enter amount",
+        required=True,
+        max_length=10,
+    )
+
+    def __init__(self, bot, race, racers, racer_id: int):
+        super().__init__()
+        self.bot = bot
+        self.race = race
+        self.racers = racers
+        self.racer_id = racer_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            amount = int(self.bet_amount.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "Please enter a valid number.", ephemeral=True
+            )
+            return
+        guild_id = interaction.guild_id or 0
+        try:
+            msg = await _execute_bet(
+                self.bot, interaction.user.id, guild_id,
+                self.race, self.racers, "win", [self.racer_id], amount,
+            )
+            await interaction.response.send_message(msg, ephemeral=True)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+
+
+class QuickBetButton(discord.ui.Button):
+    """A single racer button on the race announcement for quick win bets."""
+
+    def __init__(self, bot, race, racers, racer: models.Racer, odds: float):
+        label = f"{racer.name} ({odds:.1f}x)"
+        super().__init__(label=label[:80], style=discord.ButtonStyle.blurple)
+        self.bot = bot
+        self.race = race
+        self.racers = racers
+        self.racer_id = racer.id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        modal = QuickBetModal(self.bot, self.race, self.racers, self.racer_id)
+        await interaction.response.send_modal(modal)
+
+
+class QuickBetView(discord.ui.View):
+    """Attached to the race announcement — one button per racer for quick win bets."""
+
+    def __init__(self, bot, race, racers, odds: dict[int, float], timeout: float = 120):
+        super().__init__(timeout=timeout)
+        for racer in sorted(racers, key=lambda r: r.name.lower()):
+            mult = odds.get(racer.id, 2.0)
+            self.add_item(QuickBetButton(bot, race, racers, racer, mult))
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except (discord.NotFound, discord.HTTPException):
+                pass
+
+
+# --- Full Interactive Bet Slip (/race bet) ---
+
+
+class CustomAmountModal(discord.ui.Modal, title="Custom Bet Amount"):
+    """Modal for entering a custom bet amount in the full bet slip."""
+
+    bet_amount = discord.ui.TextInput(
+        label="Enter your bet amount",
+        placeholder="Enter amount",
+        required=True,
+        max_length=10,
+    )
+
+    def __init__(self, view: "BettingView"):
+        super().__init__()
+        self.betting_view = view
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            amount = int(self.bet_amount.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "Please enter a valid number.", ephemeral=True
+            )
+            return
+        if amount < 0:
+            await interaction.response.send_message(
+                "Amount must be positive.", ephemeral=True
+            )
+            return
+        self.betting_view.amount = amount
+        self.betting_view.state = "confirm"
+        await interaction.response.edit_message(
+            embed=self.betting_view.build_embed(),
+            view=self.betting_view.build_view(),
+        )
+
+
+class BettingView(discord.ui.View):
+    """Interactive multi-step betting slip.
+
+    States: type_select → picking → amount → confirm → done
+    """
+
+    def __init__(
+        self,
+        bot,
+        user_id: int,
+        race: models.Race,
+        racers: list[models.Racer],
+        odds: dict[int, float],
+        *,
+        timeout: float = 180,
+    ):
+        super().__init__(timeout=timeout)
+        self.bot = bot
+        self.user_id = user_id
+        self.race = race
+        self.racers = racers
+        self.odds = odds
+        self.guild_id = race.guild_id
+
+        self.state = "type_select"
+        self.bet_type: str | None = None
+        self.picks: list[int] = []
+        self.amount: int | None = None
+        self.message: discord.Message | None = None
+
+        self._rebuild()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This bet slip isn't yours!", ephemeral=True
+            )
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        if self.message:
+            embed = discord.Embed(
+                title="\U0001f3b0 Bet Slip — Expired",
+                description="This bet slip has timed out.",
+                color=0x95A5A6,
+            )
+            try:
+                await self.message.edit(embed=embed, view=None)
+            except (discord.NotFound, discord.HTTPException):
+                pass
+
+    # --- Embed builder ---
+
+    def build_embed(self) -> discord.Embed:
+        if self.state == "type_select":
+            desc = "Choose your bet type:"
+            embed = discord.Embed(
+                title="\U0001f3b0 Bet Slip",
+                description=desc,
+                color=0xE67E22,
+            )
+            # Show the field
+            for r in sorted(self.racers, key=lambda r: r.name.lower()):
+                mult = self.odds.get(r.id, 2.0)
+                embed.add_field(
+                    name=r.name, value=f"{mult:.1f}x odds", inline=True,
+                )
+            return embed
+
+        label = BET_TYPE_LABELS.get(self.bet_type, self.bet_type)
+        needed = BET_PICK_COUNTS.get(self.bet_type, 1)
+
+        if self.state == "picking":
+            picked_names = [
+                next((r.name for r in self.racers if r.id == p), "?")
+                for p in self.picks
+            ]
+            lines = []
+            ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th"]
+            for i, name in enumerate(picked_names):
+                lines.append(f"{ordinals[i]}: **{name}** \u2713")
+            pick_num = len(self.picks) + 1
+            if needed == 1:
+                prompt = "Pick the winner:" if self.bet_type == "win" else "Pick your racer:"
+            else:
+                prompt = f"Pick {ordinals[pick_num - 1]} place:"
+            lines.append(f"\n{prompt}")
+
+            embed = discord.Embed(
+                title=f"\U0001f3b0 Bet Slip — {label}",
+                description="\n".join(lines),
+                color=0xE67E22,
+            )
+            return embed
+
+        if self.state == "amount":
+            picked_names = [
+                next((r.name for r in self.racers if r.id == p), "?")
+                for p in self.picks
+            ]
+            if self.bet_type in ("win", "place"):
+                pick_desc = f"**{picked_names[0]}**"
+            else:
+                pick_desc = " \u2192 ".join(f"**{n}**" for n in picked_names)
+
+            mult = logic.calculate_bet_odds(self.racers, None, 0.1, self.bet_type, self.picks)
+            embed = discord.Embed(
+                title=f"\U0001f3b0 Bet Slip — {label}",
+                description=(
+                    f"Picks: {pick_desc}\n"
+                    f"Odds: **{mult:.1f}x**\n\n"
+                    "Choose your bet amount:"
+                ),
+                color=0xE67E22,
+            )
+            return embed
+
+        if self.state == "confirm":
+            picked_names = [
+                next((r.name for r in self.racers if r.id == p), "?")
+                for p in self.picks
+            ]
+            if self.bet_type in ("win", "place"):
+                pick_desc = f"**{picked_names[0]}**"
+            else:
+                pick_desc = " \u2192 ".join(f"**{n}**" for n in picked_names)
+
+            mult = logic.calculate_bet_odds(self.racers, None, 0.1, self.bet_type, self.picks)
+            payout = int(self.amount * mult)
+            embed = discord.Embed(
+                title=f"\U0001f3b0 Bet Slip — {label}",
+                description=(
+                    f"Picks: {pick_desc}\n"
+                    f"Amount: **{self.amount} coins**\n"
+                    f"Odds: **{mult:.1f}x** \u2014 win pays **{payout}**\n\n"
+                    "Confirm your bet?"
+                ),
+                color=0x2ECC71,
+            )
+            return embed
+
+        # done state
+        return discord.Embed(
+            title="\U0001f3b0 Bet Confirmed!",
+            description="Your bet has been placed.",
+            color=0x2ECC71,
+        )
+
+    # --- View builder ---
+
+    def build_view(self) -> "BettingView":
+        """Rebuild all children for the current state."""
+        self.clear_items()
+        self._rebuild()
+        return self
+
+    def _rebuild(self) -> None:
+        if self.state == "type_select":
+            styles = {
+                "win": discord.ButtonStyle.blurple,
+                "place": discord.ButtonStyle.blurple,
+                "exacta": discord.ButtonStyle.grey,
+                "trifecta": discord.ButtonStyle.grey,
+                "superfecta": discord.ButtonStyle.grey,
+            }
+            for bt, lbl in BET_TYPE_LABELS.items():
+                if bt == "superfecta" and len(self.racers) < 6:
+                    continue
+                btn = discord.ui.Button(
+                    label=lbl, style=styles.get(bt, discord.ButtonStyle.grey),
+                    custom_id=f"bettype_{bt}", row=0,
+                )
+                btn.callback = self._make_type_callback(bt)
+                self.add_item(btn)
+            cancel = discord.ui.Button(
+                label="Cancel", style=discord.ButtonStyle.danger,
+                custom_id="bet_cancel", row=4,
+            )
+            cancel.callback = self._cancel_callback
+            self.add_item(cancel)
+
+        elif self.state == "picking":
+            sorted_racers = sorted(self.racers, key=lambda r: r.name.lower())
+            for i, r in enumerate(sorted_racers):
+                disabled = r.id in self.picks
+                style = discord.ButtonStyle.success if disabled else discord.ButtonStyle.blurple
+                btn = discord.ui.Button(
+                    label=r.name[:80],
+                    style=style,
+                    custom_id=f"pick_{r.id}",
+                    disabled=disabled,
+                    row=i // 3,  # 3 per row, fits 6 in rows 0-1
+                )
+                btn.callback = self._make_pick_callback(r.id)
+                self.add_item(btn)
+            back = discord.ui.Button(
+                label="Back", style=discord.ButtonStyle.secondary,
+                custom_id="bet_back", row=4,
+            )
+            back.callback = self._back_to_type
+            self.add_item(back)
+            cancel = discord.ui.Button(
+                label="Cancel", style=discord.ButtonStyle.danger,
+                custom_id="bet_cancel", row=4,
+            )
+            cancel.callback = self._cancel_callback
+            self.add_item(cancel)
+
+        elif self.state == "amount":
+            for preset in AMOUNT_PRESETS:
+                btn = discord.ui.Button(
+                    label=str(preset), style=discord.ButtonStyle.blurple,
+                    custom_id=f"amt_{preset}", row=2,
+                )
+                btn.callback = self._make_amount_callback(preset)
+                self.add_item(btn)
+            allin = discord.ui.Button(
+                label="All-In", style=discord.ButtonStyle.danger,
+                custom_id="amt_allin", row=2,
+            )
+            allin.callback = self._allin_callback
+            self.add_item(allin)
+            custom = discord.ui.Button(
+                label="Custom", style=discord.ButtonStyle.grey,
+                custom_id="amt_custom", row=3,
+            )
+            custom.callback = self._custom_callback
+            self.add_item(custom)
+            back = discord.ui.Button(
+                label="Back", style=discord.ButtonStyle.secondary,
+                custom_id="bet_back", row=4,
+            )
+            back.callback = self._back_to_picking
+            self.add_item(back)
+            cancel = discord.ui.Button(
+                label="Cancel", style=discord.ButtonStyle.danger,
+                custom_id="bet_cancel", row=4,
+            )
+            cancel.callback = self._cancel_callback
+            self.add_item(cancel)
+
+        elif self.state == "confirm":
+            confirm = discord.ui.Button(
+                label="Confirm \u2713", style=discord.ButtonStyle.success,
+                custom_id="bet_confirm", row=4,
+            )
+            confirm.callback = self._confirm_callback
+            self.add_item(confirm)
+            back = discord.ui.Button(
+                label="Back", style=discord.ButtonStyle.secondary,
+                custom_id="bet_back", row=4,
+            )
+            back.callback = self._back_to_amount
+            self.add_item(back)
+            cancel = discord.ui.Button(
+                label="Cancel", style=discord.ButtonStyle.danger,
+                custom_id="bet_cancel", row=4,
+            )
+            cancel.callback = self._cancel_callback
+            self.add_item(cancel)
+
+    # --- Callbacks ---
+
+    def _make_type_callback(self, bt: str):
+        async def callback(interaction: discord.Interaction):
+            self.bet_type = bt
+            self.picks = []
+            self.amount = None
+            self.state = "picking"
+            await interaction.response.edit_message(
+                embed=self.build_embed(), view=self.build_view(),
+            )
+        return callback
+
+    def _make_pick_callback(self, racer_id: int):
+        async def callback(interaction: discord.Interaction):
+            self.picks.append(racer_id)
+            needed = BET_PICK_COUNTS.get(self.bet_type, 1)
+            if len(self.picks) >= needed:
+                self.state = "amount"
+            await interaction.response.edit_message(
+                embed=self.build_embed(), view=self.build_view(),
+            )
+        return callback
+
+    def _make_amount_callback(self, amount: int):
+        async def callback(interaction: discord.Interaction):
+            self.amount = amount
+            self.state = "confirm"
+            await interaction.response.edit_message(
+                embed=self.build_embed(), view=self.build_view(),
+            )
+        return callback
+
+    async def _allin_callback(self, interaction: discord.Interaction):
+        async with self.bot.scheduler.sessionmaker() as session:
+            wallet = await wallet_repo.get_wallet(
+                session, self.user_id, self.guild_id
+            )
+            balance = wallet.balance if wallet else 0
+        if balance <= 0:
+            self.amount = 0  # triggers free bet path
+        else:
+            self.amount = balance
+        self.state = "confirm"
+        await interaction.response.edit_message(
+            embed=self.build_embed(), view=self.build_view(),
+        )
+
+    async def _custom_callback(self, interaction: discord.Interaction):
+        modal = CustomAmountModal(self)
+        await interaction.response.send_modal(modal)
+
+    async def _confirm_callback(self, interaction: discord.Interaction):
+        try:
+            msg = await _execute_bet(
+                self.bot, self.user_id, self.guild_id,
+                self.race, self.racers, self.bet_type, self.picks, self.amount,
+            )
+            embed = discord.Embed(
+                title="\U0001f3b0 Bet Confirmed!",
+                description=msg,
+                color=0x2ECC71,
+            )
+            self.state = "done"
+            await interaction.response.edit_message(embed=embed, view=None)
+            self.stop()
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
+
+    async def _cancel_callback(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="\U0001f3b0 Bet Cancelled",
+            description="No bet was placed.",
+            color=0x95A5A6,
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()
+
+    async def _back_to_type(self, interaction: discord.Interaction):
+        self.state = "type_select"
+        self.bet_type = None
+        self.picks = []
+        self.amount = None
+        await interaction.response.edit_message(
+            embed=self.build_embed(), view=self.build_view(),
+        )
+
+    async def _back_to_picking(self, interaction: discord.Interaction):
+        self.state = "picking"
+        self.picks = []
+        self.amount = None
+        await interaction.response.edit_message(
+            embed=self.build_embed(), view=self.build_view(),
+        )
+
+    async def _back_to_amount(self, interaction: discord.Interaction):
+        self.state = "amount"
+        self.amount = None
+        await interaction.response.edit_message(
+            embed=self.build_embed(), view=self.build_view(),
+        )
+
+
 DERBY_HELP_CATEGORIES = {
     "Getting Started": (
         "New here? Start with these:\n"
@@ -191,11 +826,8 @@ DERBY_HELP_CATEGORIES = {
     "Racing & Betting": (
         "Races run on a schedule. Bet before they start!\n"
         "`/race upcoming` — See next race, racers, and odds\n"
-        "`/race bet-win <racer> <amount>` — Bet on 1st place\n"
-        "`/race bet-place <racer> <amount>` — Bet on top 2\n"
-        "`/race bet-exacta <1st> <2nd> <amount>` — Predict exact 1st & 2nd\n"
-        "`/race bet-trifecta <1st> <2nd> <3rd> <amount>` — Predict exact top 3\n"
-        "`/race bet-superfecta <1st>...<6th> <amount>` — Predict entire finish\n"
+        "`/race bet` — Open the interactive betting slip\n"
+        "Or click the quick-bet buttons on the race announcement!\n"
         "`/race history` — Recent race results\n"
         "*Broke? Bet with amount 0 for a free house bet!*"
     ),
@@ -517,14 +1149,6 @@ class Derby(commands.Cog, name="derby"):
         embed.set_footer(text="Use /race bet to place your bet!")
         await context.send(embed=embed)
 
-    BET_TYPE_LABELS = {
-        "win": "Win",
-        "place": "Place",
-        "exacta": "Exacta",
-        "trifecta": "Trifecta",
-        "superfecta": "Superfecta",
-    }
-
     async def _find_next_race(self, guild_id: int):
         """Return (race, racers) for the next bettable race, or (None, [])."""
         async with self.bot.scheduler.sessionmaker() as session:
@@ -544,8 +1168,6 @@ class Derby(commands.Cog, name="derby"):
             racers = await repo.get_race_participants(session, race.id)
         return race, racers
 
-    FREE_BET_AMOUNT = 10
-
     async def _place_bet(
         self,
         context: Context,
@@ -553,166 +1175,35 @@ class Derby(commands.Cog, name="derby"):
         picks: list[int],
         amount: int,
     ) -> None:
-        """Shared logic for all bet commands."""
-        if amount < 0:
-            await context.send("Bet amount must be positive.", ephemeral=True)
-            return
-
+        """Shared logic for all slash-command bet commands."""
         guild_id = context.guild.id if context.guild else 0
         race, racers = await self._find_next_race(guild_id)
         if race is None or not racers:
             await context.send("No race available.", ephemeral=True)
             return
-
-        # Superfecta requires exactly 6 racers in the field
-        if bet_type == "superfecta" and len(racers) < 6:
-            await context.send(
-                "Superfecta requires exactly 6 racers in the field.",
-                ephemeral=True,
+        try:
+            msg = await _execute_bet(
+                self.bot, context.author.id, guild_id,
+                race, racers, bet_type, picks, amount,
             )
+            await context.send(msg)
+        except ValueError as e:
+            await context.send(str(e), ephemeral=True)
+
+    @race.command(name="bet", description="Open the interactive betting slip")
+    async def race_bet(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        race, racers = await self._find_next_race(guild_id)
+        if race is None or not racers:
+            await context.send("No race available.", ephemeral=True)
             return
-
-        racer_ids_in_race = [r.id for r in racers]
-
-        # Validate all picks are in the race
-        for pick in picks:
-            if pick not in racer_ids_in_race:
-                await context.send(
-                    "That racer isn't in the next race.", ephemeral=True
-                )
-                return
-
-        # Validate no duplicate picks
-        if len(picks) != len(set(picks)):
-            await context.send(
-                "Each racer can only appear once in your picks.", ephemeral=True
-            )
-            return
-
-        multiplier = logic.calculate_bet_odds(racers, None, 0.1, bet_type, picks)
-        racer_ids_json = json.dumps(picks)
-        primary_racer_id = picks[0]
-        pick_names = [
-            next((r.name for r in racers if r.id == p), f"Racer {p}")
-            for p in picks
-        ]
-        label = self.BET_TYPE_LABELS.get(bet_type, bet_type)
-
-        async with self.bot.scheduler.sessionmaker() as session:
-            wallet = await wallet_repo.get_wallet(
-                session, context.author.id, guild_id
-            )
-            if wallet is None:
-                gs = await repo.get_guild_settings(session, guild_id)
-                default_bal = resolve_guild_setting(
-                    gs, self.bot.settings, "default_wallet"
-                )
-                wallet = await wallet_repo.create_wallet(
-                    session,
-                    user_id=context.author.id,
-                    guild_id=guild_id,
-                    balance=default_bal,
-                )
-
-            # --- Free bet handling ---
-            is_free = False
-            if amount == 0:
-                if wallet.balance > 0:
-                    await context.send(
-                        "You can only place a free bet when your balance is 0.",
-                        ephemeral=True,
-                    )
-                    return
-                # One free bet per race (any type)
-                free_check = await session.execute(
-                    select(models.Bet).where(
-                        models.Bet.race_id == race.id,
-                        models.Bet.user_id == context.author.id,
-                        models.Bet.is_free.is_(True),
-                    )
-                )
-                if free_check.scalars().first() is not None:
-                    await context.send(
-                        "You already have a free bet on this race.",
-                        ephemeral=True,
-                    )
-                    return
-                is_free = True
-                amount = self.FREE_BET_AMOUNT
-
-            payout = int(amount * multiplier)
-
-            # Check for existing bet of the SAME type
-            bet_result = await session.execute(
-                select(models.Bet)
-                .where(
-                    models.Bet.race_id == race.id,
-                    models.Bet.user_id == context.author.id,
-                    models.Bet.bet_type == bet_type,
-                )
-            )
-            existing_bet = bet_result.scalars().first()
-            old_amount = 0
-            if existing_bet is not None:
-                old_amount = existing_bet.amount
-                # Only refund to wallet if the old bet was paid (not free)
-                if not existing_bet.is_free:
-                    wallet.balance += existing_bet.amount
-            if not is_free and wallet.balance < amount:
-                await session.commit()
-                await context.send("Insufficient balance.", ephemeral=True)
-                return
-            if not is_free:
-                wallet.balance -= amount
-            await session.commit()
-            if existing_bet is None:
-                await repo.create_bet(
-                    session,
-                    race_id=race.id,
-                    user_id=context.author.id,
-                    racer_id=primary_racer_id,
-                    amount=amount,
-                    payout_multiplier=multiplier,
-                    bet_type=bet_type,
-                    racer_ids=racer_ids_json,
-                    is_free=is_free,
-                )
-            else:
-                await repo.update_bet(
-                    session,
-                    existing_bet.id,
-                    racer_id=primary_racer_id,
-                    amount=amount,
-                    payout_multiplier=multiplier,
-                    racer_ids=racer_ids_json,
-                    is_free=is_free,
-                )
-
-        # Build pick description
-        if bet_type in ("win", "place"):
-            pick_desc = f"**{pick_names[0]}**"
-        else:
-            pick_desc = " \u2192 ".join(f"**{n}**" for n in pick_names)
-
-        free_tag = " (Free House Bet)" if is_free else ""
-        if is_free:
-            await context.send(
-                f"\U0001f3b0 **{label}**{free_tag} \u2014 Race {race.id}\n"
-                f"The house backs you on {pick_desc} for {amount} coins "
-                f"({multiplier:.1f}x \u2014 win pays {payout})"
-            )
-        elif old_amount > 0:
-            await context.send(
-                f"\U0001f3b0 **{label}** \u2014 Race {race.id}\n"
-                f"Bet changed ({old_amount} coins refunded) to {pick_desc} "
-                f"for {amount} coins ({multiplier:.1f}x \u2014 win pays {payout})"
-            )
-        else:
-            await context.send(
-                f"\U0001f3b0 **{label}** \u2014 Race {race.id}\n"
-                f"Bet placed on {pick_desc} for {amount} coins "
-                f"({multiplier:.1f}x \u2014 win pays {payout})"
-            )
+        odds = logic.calculate_odds(racers, [], 0.1)
+        view = BettingView(
+            self.bot, context.author.id, race, racers, odds,
+        )
+        msg = await context.send(embed=view.build_embed(), view=view)
+        view.message = msg
 
     @race.command(name="bet-win", description="Bet on a racer to win (1st place)")
     @app_commands.describe(racer="Racer to bet on", amount="Amount to bet")
