@@ -71,7 +71,10 @@ class Economy(commands.Cog, name="economy"):
             reward = await repo.get_daily_reward(session, user_id, guild_id, today)
 
             if reward is not None and reward.claimed:
-                await context.send("You already claimed today's reward! Check back tomorrow.")
+                await context.send(
+                    "You already claimed today's reward! Check back tomorrow.",
+                    ephemeral=True,
+                )
                 return
 
             # Generate on the spot if no pre-generated reward exists
