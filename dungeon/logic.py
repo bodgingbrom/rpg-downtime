@@ -505,6 +505,7 @@ def get_shop_gear(slot: str, player_level: int) -> list[dict[str, Any]]:
     return [
         g for g in items
         if player_level >= RARITY_LEVEL_GATES.get(g.get("rarity", "common"), 1)
+        and g.get("shop", True)
     ]
 
 
@@ -526,3 +527,42 @@ def get_gear_slot(gear_id: str) -> str | None:
         if item["id"] == gear_id:
             return "accessory"
     return None
+
+
+def check_stat_requirement(
+    gear_id: str, player_str: int, player_dex: int
+) -> tuple[bool, str]:
+    """Check if a player meets the stat requirements for a piece of gear.
+
+    Returns ``(meets_requirement, failure_reason)``.
+    """
+    gear = get_gear_by_id(gear_id)
+    if gear is None:
+        return True, ""
+
+    str_req = gear.get("str_requirement", 0)
+    if str_req > 0 and player_str < str_req:
+        return False, f"Requires STR {str_req} (you have {player_str})"
+
+    dex_req = gear.get("dex_requirement", 0)
+    if dex_req > 0 and player_dex < dex_req:
+        return False, f"Requires DEX {dex_req} (you have {player_dex})"
+
+    return True, ""
+
+
+def get_all_monsters() -> list[dict[str, Any]]:
+    """Return all unique monsters across every dungeon (regulars + bosses)."""
+    seen_ids: set[str] = set()
+    monsters: list[dict[str, Any]] = []
+    for dungeon_data in load_dungeons().values():
+        for floor in dungeon_data.get("floors", []):
+            for m in floor.get("monsters", []):
+                if m["id"] not in seen_ids:
+                    seen_ids.add(m["id"])
+                    monsters.append(m)
+            boss = floor.get("boss")
+            if boss and boss["id"] not in seen_ids:
+                seen_ids.add(boss["id"])
+                monsters.append(boss)
+    return monsters
