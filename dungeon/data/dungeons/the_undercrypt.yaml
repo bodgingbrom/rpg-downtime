@@ -1,0 +1,297 @@
+id: the_undercrypt
+name: The Undercrypt
+description: "A forgotten burial complex beneath the old cathedral. The dead do not rest easily here."
+
+floors:
+  - floor: 1
+    theme: crumbling_tombs
+    rooms: [5, 6]
+    room_weights:
+      combat: 50
+      treasure: 20
+      trap: 15
+      rest: 15
+    monsters:
+      - id: shambling_corpse
+        name: Shambling Corpse
+        description: "A half-rotted body dragging itself forward, jaw slack and eyes hollow."
+        hp: 10
+        defense: 0
+        attack_dice: "1d4"
+        attack_bonus: 0
+        xp: 6
+        gold: [1, 5]
+        ai: {attack: 80, heavy: 20}
+        loot:
+          - {item_id: worm, chance: 25, type: cross_game_bait}
+          - {item_id: Wraith Moss, chance: 10, type: cross_game_ingredient, name: Wraith Moss}
+          - {item_id: Gloomcap, chance: 8, type: cross_game_ingredient, name: Gloomcap}
+      - id: bone_rat
+        name: Bone Rat
+        description: "A skeletal rat held together by spite and dark magic."
+        hp: 5
+        defense: 0
+        attack_dice: "1d4"
+        attack_bonus: -1
+        xp: 4
+        gold: [1, 3]
+        ai: {attack: 90, heavy: 10}
+        loot:
+          - {item_id: worm, chance: 30, type: cross_game_bait}
+          - {item_id: Echo Bone, chance: 5, type: cross_game_ingredient, name: Echo Bone}
+      - id: restless_skeleton
+        name: Restless Skeleton
+        description: "Bones clatter as it raises a rusted sword. It has no eyes, but it sees you."
+        hp: 14
+        defense: 1
+        attack_dice: "1d4"
+        attack_bonus: 1
+        xp: 10
+        gold: [3, 8]
+        ai: {attack: 60, heavy: 20, defend: 20}
+        loot:
+          - {item_id: health_potion, chance: 15}
+          - {item_id: worm, chance: 20, type: cross_game_bait}
+          - {item_id: Brimstone Dust, chance: 8, type: cross_game_ingredient, name: Brimstone Dust}
+          - {item_id: Iron Root, chance: 8, type: cross_game_ingredient, name: Iron Root}
+    traps:
+      - id: collapsing_sarcophagus
+        name: Collapsing Sarcophagus
+        damage: [3, 7]
+        dex_dc: 11
+        flavor_success: "The stone lid slides and you leap back before it crashes to the floor."
+        flavor_fail: "A sarcophagus lid topples onto you with a sickening crunch!"
+      - id: grave_gas
+        name: Grave Gas
+        damage: [2, 6]
+        dex_dc: 12
+        flavor_success: "You hold your breath as foul vapors hiss from a cracked tomb."
+        flavor_fail: "A pocket of corpse gas bursts from the wall and fills your lungs!"
+    treasure_tier: common
+    rest_shrines: 1
+    boss:
+      id: crypt_warden
+      name: Crypt Warden
+      description: "An armored skeleton standing vigil before a sealed iron door, its eyes burning with pale fire."
+      hp: 32
+      defense: 2
+      attack_dice: "1d6"
+      attack_bonus: 2
+      xp: 30
+      gold: [15, 30]
+      ai: {attack: 45, heavy: 25, defend: 30}
+      loot:
+        - {item_id: health_potion, chance: 100}
+        - {item_id: worm, chance: 30, type: cross_game_bait}
+        - {item_id: insect, chance: 20, type: cross_game_bait}
+        - {item_id: Wraith Moss, chance: 20, type: cross_game_ingredient, name: Wraith Moss}
+        - {item_id: Ghostlight Oil, chance: 12, type: cross_game_ingredient, name: Ghostlight Oil}
+        - {item_id: handaxe_plus1, chance: 8, type: gear}
+        - {item_id: leather_armor_plus1, chance: 8, type: gear}
+
+  - floor: 2
+    theme: flooded_ossuary
+    rooms: [6, 7]
+    room_weights:
+      combat: 55
+      treasure: 15
+      trap: 20
+      rest: 10
+    monsters:
+      - id: drowned_revenant
+        name: Drowned Revenant
+        description: "Waterlogged and bloated, it lurches from the flooded passage with a gurgling moan."
+        hp: 16
+        defense: 1
+        attack_dice: "1d6"
+        attack_bonus: 1
+        xp: 14
+        gold: [5, 12]
+        ai: {attack: 70, heavy: 20, defend: 10}
+        loot:
+          - {item_id: worm, chance: 22, type: cross_game_bait}
+          - {item_id: insect, chance: 10, type: cross_game_bait}
+          - {item_id: Gloomcap, chance: 10, type: cross_game_ingredient, name: Gloomcap}
+          - {item_id: Duskfen Mud, chance: 5, type: cross_game_ingredient, name: Duskfen Mud}
+      - id: phantom
+        name: Phantom
+        description: "A translucent figure drifts through the wall, its face frozen in a silent scream."
+        hp: 12
+        defense: 2
+        attack_dice: "1d6"
+        attack_bonus: 2
+        xp: 18
+        gold: [4, 10]
+        ai: {attack: 55, heavy: 35, defend: 10}
+        loot:
+          - {item_id: insect, chance: 12, type: cross_game_bait}
+          - {item_id: Ghostlight Oil, chance: 8, type: cross_game_ingredient, name: Ghostlight Oil}
+          - {item_id: Voidbloom, chance: 4, type: cross_game_ingredient, name: Voidbloom}
+      - id: skeletal_archer
+        name: Skeletal Archer
+        description: "Perched atop a pile of bones, it nocks an arrow with mechanical precision."
+        hp: 10
+        defense: 0
+        attack_dice: "1d6"
+        attack_bonus: 2
+        xp: 12
+        gold: [4, 10]
+        ai: {attack: 65, heavy: 25, defend: 10}
+        loot:
+          - {item_id: worm, chance: 20, type: cross_game_bait}
+          - {item_id: insect, chance: 12, type: cross_game_bait}
+          - {item_id: Echo Bone, chance: 8, type: cross_game_ingredient, name: Echo Bone}
+          - {item_id: Nullite Powder, chance: 4, type: cross_game_ingredient, name: Nullite Powder}
+      - id: bone_horror
+        name: Bone Horror
+        description: "A towering mass of fused skeletons, dozens of arms clawing in every direction."
+        hp: 22
+        defense: 1
+        attack_dice: "1d6"
+        attack_bonus: 2
+        xp: 16
+        gold: [6, 14]
+        ai: {attack: 60, heavy: 30, defend: 10}
+        loot:
+          - {item_id: health_potion, chance: 20}
+          - {item_id: worm, chance: 20, type: cross_game_bait}
+          - {item_id: Iron Root, chance: 10, type: cross_game_ingredient, name: Iron Root}
+          - {item_id: Singing Quartz, chance: 5, type: cross_game_ingredient, name: Singing Quartz}
+    traps:
+      - id: bone_spike_pit
+        name: Bone Spike Pit
+        damage: [4, 10]
+        dex_dc: 13
+        flavor_success: "You spot the loose flagstone and sidestep a pit bristling with sharpened bones."
+        flavor_fail: "The floor gives way and you plunge onto a bed of jagged bone spikes!"
+      - id: soul_snare
+        name: Soul Snare
+        damage: [3, 9]
+        dex_dc: 14
+        flavor_success: "A spectral chain lashes out but you twist free before it tightens."
+        flavor_fail: "Ghostly chains erupt from the walls and sear into your flesh!"
+      - id: crumbling_archway
+        name: Crumbling Archway
+        damage: [3, 8]
+        dex_dc: 12
+        flavor_success: "Dust rains down and you sprint through as the archway collapses behind you."
+        flavor_fail: "The stone archway gives way and buries you in rubble!"
+    treasure_tier: uncommon
+    rest_shrines: 1
+    boss:
+      id: wraith_lord
+      name: Wraith Lord
+      description: "A towering specter draped in tattered robes, its hollow crown flickering with ghostfire."
+      hp: 52
+      defense: 3
+      attack_dice: "1d8"
+      attack_bonus: 3
+      xp: 50
+      gold: [25, 50]
+      ai: {attack: 40, heavy: 35, defend: 25}
+      loot:
+        - {item_id: greater_health_potion, chance: 50}
+        - {item_id: chain_shirt, chance: 100, type: gear}
+        - {item_id: insect, chance: 30, type: cross_game_bait}
+        - {item_id: shiny_lure, chance: 10, type: cross_game_bait}
+        - {item_id: Ghostlight Oil, chance: 20, type: cross_game_ingredient, name: Ghostlight Oil}
+        - {item_id: Voidbloom, chance: 12, type: cross_game_ingredient, name: Voidbloom}
+        - {item_id: "Hollow King's Sigh", chance: 8, type: cross_game_ingredient, name: "Hollow King's Sigh"}
+        - {item_id: longsword_plus1, chance: 10, type: gear}
+        - {item_id: chain_shirt_plus1, chance: 10, type: gear}
+
+  - floor: 3
+    theme: the_sanctum
+    rooms: [6, 8]
+    room_weights:
+      combat: 60
+      treasure: 15
+      trap: 20
+      rest: 5
+    monsters:
+      - id: death_knight
+        name: Death Knight
+        description: "A blackened suit of armor moves on its own, the hollow helm glowing with malice."
+        hp: 24
+        defense: 3
+        attack_dice: "1d8"
+        attack_bonus: 2
+        xp: 22
+        gold: [10, 18]
+        ai: {attack: 45, heavy: 30, defend: 25}
+        loot:
+          - {item_id: health_potion, chance: 20}
+          - {item_id: insect, chance: 15, type: cross_game_bait}
+          - {item_id: shiny_lure, chance: 5, type: cross_game_bait}
+          - {item_id: Brimstone Dust, chance: 10, type: cross_game_ingredient, name: Brimstone Dust}
+          - {item_id: Flickerstone, chance: 5, type: cross_game_ingredient, name: Flickerstone}
+      - id: banshee
+        name: Banshee
+        description: "A wailing spirit whose shriek can stop your heart."
+        hp: 16
+        defense: 2
+        attack_dice: "1d8"
+        attack_bonus: 3
+        xp: 24
+        gold: [8, 16]
+        ai: {attack: 50, heavy: 40, defend: 10}
+        loot:
+          - {item_id: smoke_bomb, chance: 10}
+          - {item_id: insect, chance: 15, type: cross_game_bait}
+          - {item_id: shiny_lure, chance: 8, type: cross_game_bait}
+          - {item_id: Ghostlight Oil, chance: 10, type: cross_game_ingredient, name: Ghostlight Oil}
+          - {item_id: Starite Shard, chance: 4, type: cross_game_ingredient, name: Starite Shard}
+      - id: grave_golem
+        name: Grave Golem
+        description: "A hulking construct of tombstone and mortar, cemetery earth cascading from its joints."
+        hp: 32
+        defense: 3
+        attack_dice: "1d6"
+        attack_bonus: 3
+        xp: 20
+        gold: [10, 20]
+        ai: {attack: 40, heavy: 20, defend: 40}
+        loot:
+          - {item_id: worm, chance: 25, type: cross_game_bait}
+          - {item_id: Iron Root, chance: 12, type: cross_game_ingredient, name: Iron Root}
+          - {item_id: Echo Bone, chance: 8, type: cross_game_ingredient, name: Echo Bone}
+          - {item_id: Tremor Grub, chance: 4, type: cross_game_ingredient, name: Tremor Grub}
+    traps:
+      - id: necrotic_glyph
+        name: Necrotic Glyph
+        damage: [6, 14]
+        dex_dc: 15
+        flavor_success: "You recognize the death rune etched into the floor and leap over it."
+        flavor_fail: "A glyph blazes to life beneath your feet, draining the warmth from your body!"
+      - id: coffin_ambush
+        name: Coffin Ambush
+        damage: [5, 12]
+        dex_dc: 14
+        flavor_success: "A coffin lid bursts open but you're already out of reach."
+        flavor_fail: "Skeletal arms explode from a coffin and drag you into the dark!"
+    treasure_tier: rare
+    rest_shrines: 1
+    boss:
+      id: the_lich
+      name: Varenthos the Undying
+      description: "A skeletal figure in moth-eaten robes, a cracked phylactery pulsing in its ribcage. Its voice is a whisper that echoes like thunder."
+      hp: 75
+      defense: 4
+      attack_dice: "1d10"
+      attack_bonus: 4
+      xp: 85
+      gold: [50, 100]
+      ai: {attack: 40, heavy: 35, defend: 25}
+      loot:
+        - {item_id: greataxe, chance: 100, type: gear}
+        - {item_id: greater_health_potion, chance: 100}
+        - {item_id: insect, chance: 40, type: cross_game_bait}
+        - {item_id: shiny_lure, chance: 20, type: cross_game_bait}
+        - {item_id: Ghostlight Oil, chance: 25, type: cross_game_ingredient, name: Ghostlight Oil}
+        - {item_id: "Hollow King's Sigh", chance: 20, type: cross_game_ingredient, name: "Hollow King's Sigh"}
+        - {item_id: Scorchcap Spore, chance: 15, type: cross_game_ingredient, name: Scorchcap Spore}
+        - {item_id: "Wyrm's Tear", chance: 10, type: cross_game_ingredient, name: "Wyrm's Tear"}
+        - {item_id: war_hammer_plus1, chance: 12, type: gear}
+        - {item_id: scale_mail_plus1, chance: 12, type: gear}
+        - {item_id: war_hammer_plus2, chance: 4, type: gear}
+        - {item_id: scale_mail_plus2, chance: 4, type: gear}

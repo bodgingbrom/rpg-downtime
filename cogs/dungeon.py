@@ -1626,9 +1626,19 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
 
             if dungeon_name and dungeon_name in dungeons:
                 dungeon_key = dungeon_name
-            else:
-                # Default to first dungeon
+            elif len(dungeons) == 1:
                 dungeon_key = next(iter(dungeons))
+            else:
+                # Multiple dungeons available — ask the player to pick
+                listing = "\n".join(
+                    f"• **{d.get('name', k)}** — `/dungeon delve {k}`\n  *{d.get('description', '')}*"
+                    for k, d in dungeons.items()
+                )
+                await context.send(
+                    f"**Choose a dungeon:**\n{listing}",
+                    ephemeral=True,
+                )
+                return
 
             dungeon_data = dungeons[dungeon_key]
 

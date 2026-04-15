@@ -289,9 +289,11 @@ BREWING_HELP_CATEGORIES = {
 DUNGEON_HELP_CATEGORIES = {
     "Getting Started": (
         "Delve into dungeons, fight monsters, and keep what you find.\n"
-        "`/dungeon delve [dungeon]` — Start a dungeon run (creates a private thread)\n"
+        "`/dungeon delve` — Pick a dungeon and start a run (private thread)\n"
+        "`/dungeon delve <name>` — Jump straight into a specific dungeon\n"
         "`/dungeon stats` — View your character sheet\n"
-        "`/dungeon abandon` — Abandon your current run (lose all loot)"
+        "`/dungeon abandon` — Abandon your current run (lose all loot)\n"
+        "**Dungeons:** The Goblin Warrens, The Undercrypt"
     ),
     "Combat & Exploration": (
         "Rooms are revealed one at a time — no peeking ahead!\n"
@@ -315,6 +317,7 @@ DUNGEON_HELP_CATEGORIES = {
         "`/dungeon inventory` — Equip, unequip, and view your stash\n"
         "Gear tiers unlock as you level: common (Lv1), uncommon (Lv3), "
         "rare (Lv5), epic (Lv8).\n"
+        "Enchanted gear (+1/+2) drops from bosses and requires STR/DEX to equip.\n"
         "Gear found in dungeons is kept on safe return, lost on death."
     ),
     "Death & Rewards": (
@@ -322,7 +325,9 @@ DUNGEON_HELP_CATEGORIES = {
         "**Death** — Lose 50% of run gold and all found gear. XP is kept.\n"
         "Gold is deposited into your shared wallet on return.\n"
         "Consumables from your inventory persist between runs — "
-        "found consumables are added to your stash on return."
+        "found consumables are added to your stash on return.\n"
+        "🎣 Fishing bait and 🧪 brewing ingredients found in dungeons are "
+        "awarded instantly and kept even on death."
     ),
 }
 
