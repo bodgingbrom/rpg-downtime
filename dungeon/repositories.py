@@ -195,18 +195,37 @@ async def has_gear(
 async def add_gear(
     session: AsyncSession, user_id: int, guild_id: int, gear_id: str
 ) -> PlayerGear:
-    """Add a gear piece to the player's inventory."""
+    """Add a gear piece to the player's inventory.
+
+    Safe to call even if the gear already exists (no-op in that case).
+    Does NOT commit — callers are responsible for committing the
+    transaction so that add/remove/equip can be done atomically.
+    """
+    # Check for existing entry to avoid UNIQUE constraint violation
+    result = await session.execute(
+        select(PlayerGear).where(
+            PlayerGear.user_id == user_id,
+            PlayerGear.guild_id == guild_id,
+            PlayerGear.gear_id == gear_id,
+        )
+    )
+    existing = result.scalars().first()
+    if existing:
+        return existing
     entry = PlayerGear(user_id=user_id, guild_id=guild_id, gear_id=gear_id)
     session.add(entry)
-    await session.commit()
-    await session.refresh(entry)
+    await session.flush()
     return entry
 
 
 async def remove_gear(
     session: AsyncSession, user_id: int, guild_id: int, gear_id: str
 ) -> bool:
-    """Remove a gear piece from the player's inventory. Returns True if found."""
+    """Remove a gear piece from the player's inventory. Returns True if found.
+
+    Does NOT commit — callers are responsible for committing the
+    transaction so that add/remove/equip can be done atomically.
+    """
     result = await session.execute(
         select(PlayerGear).where(
             PlayerGear.user_id == user_id,
@@ -218,7 +237,6 @@ async def remove_gear(
     if entry is None:
         return False
     await session.delete(entry)
-    await session.commit()
     return True
 
 
