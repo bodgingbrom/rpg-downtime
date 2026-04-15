@@ -631,6 +631,7 @@ class ShopView(discord.ui.View):
 
                 wallet.balance -= cost
                 await dungeon_repo.add_gear(session, self.user_id, guild_id, item_id)
+                await session.commit()
                 self.balance = wallet.balance
                 self.owned_gear_ids.add(item_id)
                 confirm_msg = (
