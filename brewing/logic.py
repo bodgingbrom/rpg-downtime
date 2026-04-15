@@ -85,8 +85,12 @@ def calculate_potency(
     cauldron_ingredients: Sequence[Ingredient],
     base_potency: int = 10,
     min_no_match: int = 2,
+    potency_multiplier: float = 1.0,
 ) -> int:
-    """Calculate potency gained from adding an ingredient to the cauldron."""
+    """Calculate potency gained from adding an ingredient to the cauldron.
+
+    *potency_multiplier*: Elf gets 1.15 (+15% potency).
+    """
     new_tags = (new_ingredient.tag_1, new_ingredient.tag_2)
     total_matches = 0
     for tag in new_tags:
@@ -94,8 +98,10 @@ def calculate_potency(
             if tag in (existing.tag_1, existing.tag_2):
                 total_matches += 1
     if total_matches == 0:
-        return min_no_match
-    return base_potency * total_matches
+        raw = min_no_match
+    else:
+        raw = base_potency * total_matches
+    return int(raw * potency_multiplier)
 
 
 def calculate_instability(
@@ -115,12 +121,15 @@ def check_explosion(instability: int, threshold: int) -> bool:
     return instability >= threshold
 
 
-def calculate_payout(potency: int) -> int:
-    """Calculate coin payout for a given potency using the tiered curve."""
+def calculate_payout(potency: int, payout_multiplier: float = 1.0) -> int:
+    """Calculate coin payout for a given potency using the tiered curve.
+
+    *payout_multiplier*: Human gets 1.10 (+10% payout).
+    """
     for max_potency, multiplier in PAYOUT_TIERS:
         if potency <= max_potency:
-            return round(potency * multiplier)
-    return round(potency * PAYOUT_LEGENDARY_MULTIPLIER)
+            return round(potency * multiplier * payout_multiplier)
+    return round(potency * PAYOUT_LEGENDARY_MULTIPLIER * payout_multiplier)
 
 
 # ---------------------------------------------------------------------------

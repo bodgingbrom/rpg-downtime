@@ -17,6 +17,7 @@ from db_base import Base
 import brewing.models  # noqa: F401 — register brewing tables on Base
 import dungeon.models  # noqa: F401 — register dungeon tables on Base
 import fishing.models  # noqa: F401 — register fishing tables on Base
+import rpg.models  # noqa: F401 — register rpg tables on Base
 
 from . import commentary, flavor_names, logic, models, npc_generation, npc_quips
 from . import repositories as repo
@@ -447,6 +448,13 @@ class DerbyScheduler:
                         text(
                             "ALTER TABLE dungeon_runs "
                             "ADD COLUMN thread_id INTEGER DEFAULT NULL"
+                        )
+                    )
+                if "stoneblood_used" not in dr_cols:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE dungeon_runs "
+                            "ADD COLUMN stoneblood_used BOOLEAN DEFAULT 0"
                         )
                     )
 
@@ -1247,10 +1255,32 @@ class DerbyScheduler:
                 session, result.placements, participants,
                 guild_id=guild_id, prize_list=prize_list,
             )
+            # Build per-racer modifier dicts from owner races
+            _owner_ids = {r.id: r.owner_id for r in participants if r.owner_id}
+            _mood_floors: dict[int, int] = {}
+            _injury_mults: dict[int, float] = {}
+            if _owner_ids:
+                from rpg import repositories as _rpg_repo
+                from rpg.logic import get_racial_modifier as _get_rm
+                _seen_owners: dict[int, str] = {}
+                for _rid, _oid in _owner_ids.items():
+                    if _oid not in _seen_owners:
+                        _prof = await _rpg_repo.get_or_create_profile(session, _oid, guild_id)
+                        _seen_owners[_oid] = _prof.race
+                    _race = _seen_owners[_oid]
+                    _mf = _get_rm(_race, "racing.mood_floor", 1)
+                    if _mf > 1:
+                        _mood_floors[_rid] = _mf
+                    _im = _get_rm(_race, "racing.injury_chance_multiplier", 1.0)
+                    if _im != 1.0:
+                        _injury_mults[_rid] = _im
             mood_changes = await logic.apply_mood_drift(
-                session, result.placements, participants
+                session, result.placements, participants,
+                mood_floors=_mood_floors or None,
             )
-            new_injuries = logic.check_injury_risk(result)
+            new_injuries = logic.check_injury_risk(
+                result, injury_multipliers=_injury_mults or None,
+            )
             await logic.apply_injuries(session, new_injuries, participants)
             healed = await self._tick_injury_recovery(session, guild_id)
             await self._increment_careers(session, participants)
@@ -2345,13 +2375,33 @@ class DerbyScheduler:
 
                     rod_data = fish_logic.get_rod(fs.rod_id)
 
+                    # Fetch player race for racial modifiers
+                    from rpg import repositories as rpg_repo
+                    from rpg.logic import get_racial_modifier
+                    profile = await rpg_repo.get_or_create_profile(
+                        session, fs.user_id, fs.guild_id
+                    )
+                    _race = profile.race
+
                     # Resolve the catch
+                    rare_bonus = get_racial_modifier(_race, "fishing.rare_weight_bonus", 0.0)
                     catch = fish_logic.select_catch(
-                        location_data, rod_data, fs.bait_type
+                        location_data, rod_data, fs.bait_type,
+                        rare_weight_bonus=rare_bonus,
                     )
 
+                    # Elf Twin Cast: 10% chance to catch two fish
+                    twin_catch = None
+                    twin_chance = get_racial_modifier(_race, "fishing.double_catch_chance", 0.0)
+                    if twin_chance > 0 and not catch["is_trash"] and random.random() < twin_chance:
+                        twin_catch = fish_logic.select_catch(
+                            location_data, rod_data, fs.bait_type,
+                            rare_weight_bonus=rare_bonus,
+                        )
+
                     # Credit coins to wallet
-                    if catch["value"] > 0:
+                    total_value = catch["value"] + (twin_catch["value"] if twin_catch else 0)
+                    if total_value > 0:
                         wallet = await wallet_repo.get_wallet(
                             session, fs.user_id, fs.guild_id
                         )
@@ -2361,10 +2411,15 @@ class DerbyScheduler:
                                 user_id=fs.user_id,
                                 guild_id=fs.guild_id,
                             )
-                        wallet.balance += catch["value"]
+                        wallet.balance += total_value
 
-                    # Award XP
+                    # Award XP (include twin catch if any)
                     xp_gained = fish_logic.calculate_catch_xp(catch, location_data)
+                    if twin_catch and not twin_catch["is_trash"]:
+                        xp_gained += fish_logic.calculate_catch_xp(twin_catch, location_data)
+                    # Human XP multiplier (+15%)
+                    xp_mult = get_racial_modifier(_race, "global.xp_multiplier", 1.0)
+                    xp_gained = int(xp_gained * xp_mult)
                     player, old_level, new_level = await fish_repo.add_xp(
                         session, fs.user_id, fs.guild_id, xp_gained
                     )
@@ -2397,17 +2452,41 @@ class DerbyScheduler:
                     else:
                         caught_species = set()
 
+                    # Log twin catch if Elf Twin Cast triggered
+                    twin_fish_count = 0
+                    if twin_catch and not twin_catch["is_trash"]:
+                        twin_fish_count = 1
+                        await fish_repo.upsert_fish_catch(
+                            session, fs.user_id, fs.guild_id,
+                            twin_catch["name"], fs.location_name,
+                            twin_catch.get("rarity", "common"),
+                            twin_catch.get("length") or 0,
+                            twin_catch["value"], now,
+                        )
+
                     # Update daily summary for digest
                     date_str = now.strftime("%Y-%m-%d")
                     await fish_repo.upsert_daily_summary(
                         session, fs.user_id, fs.guild_id, date_str, catch
                     )
+                    if twin_catch:
+                        await fish_repo.upsert_daily_summary(
+                            session, fs.user_id, fs.guild_id, date_str, twin_catch
+                        )
 
                     # Calculate next cast with skill + trophy bonuses
                     has_trophy = fish_logic.has_location_trophy(
                         caught_species, location_data
                     )
-                    new_remaining = fs.bait_remaining - 1
+
+                    # Halfling bait save: 15% chance to not consume bait
+                    bait_save_chance = get_racial_modifier(_race, "fishing.bait_save_chance", 0.0)
+                    bait_saved = bait_save_chance > 0 and random.random() < bait_save_chance
+                    new_remaining = fs.bait_remaining if bait_saved else fs.bait_remaining - 1
+
+                    # Orc cast time reduction
+                    cast_mult = get_racial_modifier(_race, "fishing.cast_time_multiplier", 1.0)
+
                     skill_reduction = fish_logic.get_skill_cast_reduction(
                         new_level, location_data.get("skill_level", 1)
                     )
@@ -2421,14 +2500,20 @@ class DerbyScheduler:
                             fs.bait_type,
                             skill_reduction=skill_reduction,
                             trophy_reduction=trophy_reduction,
+                            cast_multiplier=cast_mult,
                         )
                     )
 
+                    # Twin Cast display name
+                    display_name = catch["name"]
+                    if twin_catch:
+                        display_name = f"{catch['name']} + {twin_catch['name']} (Twin Cast!)"
+
                     update_kwargs: dict[str, Any] = {
-                        "total_fish": fs.total_fish + (1 if is_fish else 0),
-                        "total_coins": fs.total_coins + catch["value"],
-                        "last_catch_name": catch["name"],
-                        "last_catch_value": catch["value"],
+                        "total_fish": fs.total_fish + (1 if is_fish else 0) + twin_fish_count,
+                        "total_coins": fs.total_coins + total_value,
+                        "last_catch_name": display_name,
+                        "last_catch_value": total_value,
                         "last_catch_length": catch.get("length"),
                         "bait_remaining": new_remaining,
                         "next_catch_at": next_catch,

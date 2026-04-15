@@ -46,6 +46,7 @@ from derby.logic import (
 from db_base import Base
 from derby.models import Bet, Race, Racer
 from economy.models import Wallet
+import rpg.models  # noqa: F401 — register PlayerProfile table for create_all
 
 
 @pytest_asyncio.fixture()

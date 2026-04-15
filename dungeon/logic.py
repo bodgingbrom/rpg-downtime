@@ -148,9 +148,15 @@ def get_modifier(stat_value: int) -> int:
     return (stat_value - 10) // 2
 
 
-def get_max_hp(constitution: int, accessory_bonus: int = 0) -> int:
-    """Max HP derived from CON. Base = CON * 2, plus accessory bonuses."""
-    return constitution * 2 + accessory_bonus
+def get_max_hp(
+    constitution: int, accessory_bonus: int = 0, *, hp_multiplier: float = 2.0
+) -> int:
+    """Max HP derived from CON, plus accessory bonuses.
+
+    *hp_multiplier* scales the CON base (default 2.0).  Sources such as
+    racial passives, gear, or buffs should be composed by the caller.
+    """
+    return int(constitution * hp_multiplier) + accessory_bonus
 
 
 # ---------------------------------------------------------------------------
@@ -293,9 +299,13 @@ def roll_d20(rng: random.Random | None = None) -> int:
     return rng.randint(1, 20)
 
 
-def is_crit(d20_roll: int) -> bool:
-    """Check if a d20 roll is a natural 20 (5% crit)."""
-    return d20_roll == 20
+def is_crit(d20_roll: int, *, crit_threshold: int = 20) -> bool:
+    """Check if a d20 roll meets or exceeds the crit threshold.
+
+    Default is nat-20 only.  Callers should lower the threshold to
+    account for racial passives, gear, or buffs.
+    """
+    return d20_roll >= crit_threshold
 
 
 # ---------------------------------------------------------------------------
@@ -405,13 +415,36 @@ def calc_player_damage(
     monster_defense: int,
     is_crit_hit: bool,
     rng: random.Random | None = None,
+    *,
+    damage_advantage: bool = False,
+    current_hp: int = 0,
+    max_hp: int = 1,
+    bonus_penalty: int = 0,
+    damage_bonus: int = 0,
 ) -> tuple[int, int]:
-    """Calculate player damage. Returns (damage, raw_roll)."""
+    """Calculate player damage. Returns (damage, raw_roll).
+
+    *damage_advantage*: roll dice twice keep higher (e.g. Orc Bloodrage
+    when below 50 % HP).  The caller decides when to enable this.
+    *bonus_penalty*: subtracted from weapon_bonus (min 0).
+    *damage_bonus*: flat additive bonus after all other calculation.
+    """
     rng = rng or random.Random()
-    raw_roll = roll_dice(weapon_dice, rng)
+
+    # Damage advantage: roll dice twice keep higher
+    if damage_advantage:
+        roll_a = roll_dice(weapon_dice, rng)
+        roll_b = roll_dice(weapon_dice, rng)
+        raw_roll = max(roll_a, roll_b)
+    else:
+        raw_roll = roll_dice(weapon_dice, rng)
+
     if is_crit_hit:
         raw_roll += roll_dice(weapon_dice, rng)  # double dice on crit
-    damage = max(raw_roll + str_mod + weapon_bonus - monster_defense, 1)
+
+    effective_bonus = max(weapon_bonus - bonus_penalty, 0)
+
+    damage = max(raw_roll + str_mod + effective_bonus + damage_bonus - monster_defense, 1)
     return damage, raw_roll
 
 
@@ -439,18 +472,29 @@ def select_monster_action(ai_weights: dict[str, int], rng: random.Random | None 
     return rng.choices(actions, weights=weights, k=1)[0]
 
 
-def check_flee(dex: int, rng: random.Random | None = None) -> bool:
-    """DEX-based flee check. Roll d20 + DEX modifier vs FLEE_BASE_DC."""
+def check_flee(
+    dex: int, rng: random.Random | None = None, *, flee_dc: int = FLEE_BASE_DC
+) -> bool:
+    """DEX-based flee check. Roll d20 + DEX modifier vs *flee_dc*.
+
+    Callers should adjust the DC for racial passives, gear, or debuffs.
+    """
     rng = rng or random.Random()
     roll = rng.randint(1, 20)
-    return (roll + get_modifier(dex)) >= FLEE_BASE_DC
+    return (roll + get_modifier(dex)) >= flee_dc
 
 
-def check_trap(dex: int, trap_dc: int, rng: random.Random | None = None) -> bool:
-    """DEX-based trap avoidance. Roll d20 + DEX modifier vs trap DC."""
+def check_trap(
+    dex: int, trap_dc: int, rng: random.Random | None = None, *, save_bonus: int = 0
+) -> bool:
+    """DEX-based trap avoidance. Roll d20 + DEX modifier + *save_bonus* vs DC.
+
+    *save_bonus* is additive — combine racial, gear, and buff bonuses
+    before passing.
+    """
     rng = rng or random.Random()
     roll = rng.randint(1, 20)
-    return (roll + get_modifier(dex)) >= trap_dc
+    return (roll + get_modifier(dex) + save_bonus) >= trap_dc
 
 
 def roll_trap_damage(
@@ -470,22 +514,35 @@ def roll_monster_gold(
 
 
 def roll_treasure_gold(
-    tier: str, rng: random.Random | None = None
+    tier: str, rng: random.Random | None = None, *, double_roll: bool = False
 ) -> int:
-    """Roll gold for a treasure room based on tier."""
+    """Roll gold for a treasure room based on tier.
+
+    *double_roll*: roll twice, keep the better result (e.g. Halfling Lucky).
+    """
     rng = rng or random.Random()
     gold_range = TREASURE_GOLD.get(tier, TREASURE_GOLD["common"])
-    return rng.randint(gold_range[0], gold_range[1])
+    roll = rng.randint(gold_range[0], gold_range[1])
+    if double_roll:
+        roll = max(roll, rng.randint(gold_range[0], gold_range[1]))
+    return roll
 
 
 def roll_loot_drops(
-    loot_table: list[dict[str, Any]], rng: random.Random | None = None
+    loot_table: list[dict[str, Any]],
+    rng: random.Random | None = None,
+    *,
+    loot_chance_bonus: int = 0,
 ) -> list[dict[str, Any]]:
-    """Roll each loot entry against its chance. Returns list of dropped items."""
+    """Roll each loot entry against its chance. Returns list of dropped items.
+
+    *loot_chance_bonus*: additive percentage bonus to every drop chance.
+    Combine racial, gear, and buff bonuses before passing.
+    """
     rng = rng or random.Random()
     drops: list[dict[str, Any]] = []
     for entry in loot_table:
-        if rng.randint(1, 100) <= entry.get("chance", 0):
+        if rng.randint(1, 100) <= entry.get("chance", 0) + loot_chance_bonus:
             drops.append(entry)
     return drops
 
