@@ -1653,7 +1653,7 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
     async def dungeon_delve(
         self, context: Context, dungeon_name: str | None = None,
     ) -> None:
-        await context.defer()
+        await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         user_id = context.author.id
 
