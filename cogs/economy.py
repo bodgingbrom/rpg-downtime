@@ -185,7 +185,7 @@ class Economy(commands.Cog, name="economy"):
             if profile.chosen_at is None:
                 embed.set_footer(
                     text="You haven't chosen a race yet! "
-                         "Use /race choose — each race has unique passives across all games."
+                         "Use /player choose — each race has unique passives across all games."
                 )
 
             await context.send(embed=embed)
