@@ -15,6 +15,21 @@ from dungeon import logic as dungeon_logic
 from dungeon import repositories as dungeon_repo
 from economy import repositories as wallet_repo
 
+# Cross-game imports (optional — gracefully skip if not loaded)
+try:
+    from fishing import repositories as fishing_repo
+    from fishing.logic import BAIT_TYPES as _BAIT_TYPES
+    _HAS_FISHING = True
+except ImportError:
+    _HAS_FISHING = False
+    _BAIT_TYPES = {}
+
+try:
+    from brewing import repositories as brewing_repo
+    _HAS_BREWING = True
+except ImportError:
+    _HAS_BREWING = False
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -105,6 +120,7 @@ def build_combat_embed(
 def build_loot_embed(
     run, player, gold: int, item_drops: list[dict[str, Any]],
     dungeon_data: dict[str, Any],
+    cross_game_drops: list[dict[str, Any]] | None = None,
 ) -> discord.Embed:
     """Build embed for post-combat or treasure room loot."""
     embed = discord.Embed(
@@ -118,7 +134,27 @@ def build_loot_embed(
         item = dungeon_logic.get_gear_by_id(drop["item_id"]) or dungeon_logic.get_item_by_id(drop["item_id"])
         name = item["name"] if item else drop["item_id"]
         is_gear = drop.get("type") == "gear"
-        lines.append(f"{'[GEAR] ' if is_gear else ''}{name}")
+        if is_gear and item:
+            # Show stat requirement hint for enchanted gear
+            str_req = item.get("str_requirement", 0)
+            dex_req = item.get("dex_requirement", 0)
+            req_text = ""
+            if str_req > 0:
+                req_text = f" [STR {str_req}]"
+            elif dex_req > 0:
+                req_text = f" [DEX {dex_req}]"
+            lines.append(f"\u2694\ufe0f **{name}**{req_text}")
+        else:
+            lines.append(f"{name}")
+    # Cross-game drops
+    for drop in (cross_game_drops or []):
+        drop_type = drop.get("type", "")
+        if drop_type == "cross_game_bait":
+            bait_name = _BAIT_TYPES.get(drop["item_id"], {}).get("name", drop["item_id"])
+            lines.append(f"\U0001f3a3 {bait_name}")
+        elif drop_type == "cross_game_ingredient":
+            name = drop.get("name", drop["item_id"])
+            lines.append(f"\U0001f9ea {name}")
     if not lines:
         lines.append("Nothing of value.")
     embed.description = "\n".join(lines)
@@ -690,6 +726,17 @@ class InventoryView(discord.ui.View):
                 await interaction.response.send_message("Unknown gear slot.", ephemeral=True)
                 return
 
+            # Check stat requirements
+            meets_req, reason = dungeon_logic.check_stat_requirement(
+                gear_id, player.strength, player.dexterity,
+            )
+            if not meets_req:
+                await interaction.response.send_message(
+                    f"You can't equip **{gear_def['name']}**! {reason}",
+                    ephemeral=True,
+                )
+                return
+
             # Get the currently equipped item in that slot
             slot_attr = f"{slot}_id"
             old_equipped_id = getattr(player, slot_attr)
@@ -775,7 +822,11 @@ def _build_inventory_embed(player, gear_inventory, item_inventory, display_name:
         for pg in gear_inventory:
             gear_def = dungeon_logic.get_gear_by_id(pg.gear_id)
             if gear_def:
-                lines.append(f"- {gear_def['name']} ({gear_def.get('rarity', 'common')})")
+                meets, _ = dungeon_logic.check_stat_requirement(
+                    pg.gear_id, player.strength, player.dexterity,
+                )
+                icon = "\u2705" if meets else "\u274c"
+                lines.append(f"{icon} {gear_def['name']} ({gear_def.get('rarity', 'common')})")
             else:
                 lines.append(f"- {pg.gear_id}")
         embed.add_field(name="Gear Stash", value="\n".join(lines) or "Empty", inline=False)
@@ -794,6 +845,86 @@ def _build_inventory_embed(player, gear_inventory, item_inventory, display_name:
         embed.add_field(name="Consumables", value="None", inline=False)
 
     return embed
+
+
+# ---------------------------------------------------------------------------
+# Bestiary
+# ---------------------------------------------------------------------------
+
+BESTIARY_PAGE_SIZE = 8
+
+
+def _build_bestiary_embed(
+    all_monsters: list[dict[str, Any]],
+    discovered: dict[str, Any],
+    page: int,
+) -> discord.Embed:
+    total_pages = max(1, -(-len(all_monsters) // BESTIARY_PAGE_SIZE))
+    embed = discord.Embed(
+        title="\U0001f9df Monster Mash — Bestiary",
+        color=EMBED_COLOR,
+    )
+    start = page * BESTIARY_PAGE_SIZE
+    end = start + BESTIARY_PAGE_SIZE
+    page_monsters = all_monsters[start:end]
+
+    lines = []
+    for m in page_monsters:
+        entry = discovered.get(m["id"])
+        if entry:
+            kills = entry.kill_count
+            lines.append(
+                f"**{m['name']}** — {kills} kill{'s' if kills != 1 else ''}\n"
+                f"> *{m.get('description', '')}*"
+            )
+        else:
+            lines.append("**???** — Not yet discovered")
+
+    discovered_count = sum(1 for m in all_monsters if m["id"] in discovered)
+    total_count = len(all_monsters)
+
+    embed.description = "\n".join(lines) or "No monsters to display."
+    embed.set_footer(
+        text=f"Page {page + 1}/{total_pages} \u2022 {discovered_count}/{total_count} discovered"
+    )
+    return embed
+
+
+class BestiaryView(discord.ui.View):
+    """Paginated bestiary view."""
+
+    def __init__(self, user_id: int, all_monsters: list, discovered: dict, page: int = 0):
+        super().__init__(timeout=VIEW_TIMEOUT)
+        self.user_id = user_id
+        self.all_monsters = all_monsters
+        self.discovered = discovered
+        self.page = page
+        self.total_pages = max(1, -(-len(all_monsters) // BESTIARY_PAGE_SIZE))
+
+        self.prev_btn.disabled = page <= 0
+        self.next_btn.disabled = page >= self.total_pages - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your bestiary!", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, emoji="\u25c0\ufe0f")
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(self.page - 1, 0)
+        embed = _build_bestiary_embed(self.all_monsters, self.discovered, self.page)
+        new_view = BestiaryView(self.user_id, self.all_monsters, self.discovered, self.page)
+        await interaction.response.edit_message(embed=embed, view=new_view)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary, emoji="\u25b6\ufe0f")
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(self.page + 1, self.total_pages - 1)
+        embed = _build_bestiary_embed(self.all_monsters, self.discovered, self.page)
+        new_view = BestiaryView(self.user_id, self.all_monsters, self.discovered, self.page)
+        await interaction.response.edit_message(embed=embed, view=new_view)
 
 
 # ---------------------------------------------------------------------------
@@ -1035,10 +1166,35 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
             run.run_xp += xp_gained
             run.run_gold += gold_gained
 
-            # Track found items
+            # Split loot: regular items go to found_items, cross-game instant
             found_items = json.loads(run.found_items_json)
+            cross_game_drops: list[dict[str, Any]] = []
+            regular_drops: list[dict[str, Any]] = []
+
             for drop in loot_drops:
-                found_items.append(drop)
+                drop_type = drop.get("type", "")
+                if drop_type == "cross_game_bait":
+                    if _HAS_FISHING:
+                        await fishing_repo.add_bait(
+                            session, run.user_id, run.guild_id,
+                            drop["item_id"], 1,
+                        )
+                        cross_game_drops.append(drop)
+                elif drop_type == "cross_game_ingredient":
+                    if _HAS_BREWING:
+                        ingredient = await brewing_repo.get_ingredient_by_name(
+                            session, drop["item_id"],
+                        )
+                        if ingredient:
+                            await brewing_repo.add_player_ingredient(
+                                session, run.user_id, run.guild_id,
+                                ingredient.id, 1,
+                            )
+                            cross_game_drops.append(drop)
+                else:
+                    found_items.append(drop)
+                    regular_drops.append(drop)
+
             run.found_items_json = json.dumps(found_items)
 
             # Bestiary tracking
@@ -1074,7 +1230,7 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
                 await session.commit()
                 await session.refresh(run)
 
-                embed = build_loot_embed(run, player, gold_gained, loot_drops, dungeon_data)
+                embed = build_loot_embed(run, player, gold_gained, regular_drops, dungeon_data, cross_game_drops)
                 view = PostRoomView(run_id, user_id, sessionmaker)
                 await interaction.response.edit_message(embed=embed, view=view)
             return
@@ -1345,7 +1501,7 @@ async def _process_return(session, run, player, dungeon_data, interaction):
                 session, user_id=run.user_id, guild_id=run.guild_id, balance=run.run_gold
             )
 
-    # Save found gear to inventory (auto-equip if slot is empty)
+    # Save found gear to inventory (auto-equip if slot is empty + stat met)
     found_items = json.loads(run.found_items_json)
     for item in found_items:
         if item.get("type") == "gear":
@@ -1353,9 +1509,30 @@ async def _process_return(session, run, player, dungeon_data, interaction):
             if gear_def:
                 slot = dungeon_logic.get_gear_slot(item["item_id"])
                 slot_attr = f"{slot}_id" if slot else None
+
+                # Check for duplicates (already equipped or in stash)
+                equipped_ids = {
+                    gid for gid in [player.weapon_id, player.armor_id, player.accessory_id] if gid
+                }
+                already_has = await dungeon_repo.has_gear(
+                    session, run.user_id, run.guild_id, item["item_id"]
+                )
+                if item["item_id"] in equipped_ids or already_has:
+                    # Duplicate — convert to bonus gold
+                    run.run_gold += gear_def.get("cost", 0) // 4
+                    continue
+
                 if slot_attr and getattr(player, slot_attr) is None:
-                    # Auto-equip to empty slot
-                    setattr(player, slot_attr, item["item_id"])
+                    # Auto-equip only if stat requirement met
+                    meets_req, _ = dungeon_logic.check_stat_requirement(
+                        item["item_id"], player.strength, player.dexterity,
+                    )
+                    if meets_req:
+                        setattr(player, slot_attr, item["item_id"])
+                    else:
+                        await dungeon_repo.add_gear(
+                            session, run.user_id, run.guild_id, item["item_id"]
+                        )
                 else:
                     # Store in inventory
                     await dungeon_repo.add_gear(
@@ -1708,6 +1885,26 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
         await context.send(embed=embed, view=view, ephemeral=True)
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # /dungeon bestiary
+    # ------------------------------------------------------------------
+
+    @dungeon.command(name="bestiary", description="View your monster bestiary")
+    async def dungeon_bestiary(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            entries = await dungeon_repo.get_bestiary_entries(session, user_id, guild_id)
+
+        discovered = {e.monster_id: e for e in entries}
+        all_monsters = dungeon_logic.get_all_monsters()
+
+        embed = _build_bestiary_embed(all_monsters, discovered, 0)
+        view = BestiaryView(user_id, all_monsters, discovered, 0)
+        await context.send(embed=embed, view=view, ephemeral=True)
+
     # /dungeon abandon — cancel an active run
     # ------------------------------------------------------------------
 
@@ -1796,6 +1993,13 @@ def _gear_display(gear_id: str | None, default: str) -> str:
     elif "effect" in gear:
         eff = gear["effect"]
         extra = f" ({eff.get('type', '').replace('_', ' ')})"
+    # Show stat requirements
+    str_req = gear.get("str_requirement", 0)
+    dex_req = gear.get("dex_requirement", 0)
+    if str_req > 0:
+        extra += f" [STR {str_req}]"
+    if dex_req > 0:
+        extra += f" [DEX {dex_req}]"
     return f"{gear['name']}{extra}"
 
 
