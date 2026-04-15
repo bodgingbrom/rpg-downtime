@@ -248,19 +248,19 @@ class RPG(commands.Cog, name="rpg"):
     async def cog_check(self, ctx: Context) -> bool:
         return await checks.in_any_game_channel(ctx)
 
-    @commands.hybrid_group(name="race", description="Manage your character race")
-    async def race(self, context: Context) -> None:
+    @commands.hybrid_group(name="player", description="Manage your character")
+    async def player(self, context: Context) -> None:
         if context.invoked_subcommand is None:
             await context.send(
-                "Use `/race choose`, `/race info`, or `/race change`.",
+                "Use `/player choose`, `/player info`, or `/player change`.",
                 ephemeral=True,
             )
 
     # ------------------------------------------------------------------
-    # /race choose
+    # /player choose
     # ------------------------------------------------------------------
 
-    @race.command(name="choose", description="Choose your race (first time is free)")
+    @player.command(name="choose", description="Choose your race (first time is free)")
     async def race_choose(self, context: Context) -> None:
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
@@ -274,7 +274,7 @@ class RPG(commands.Cog, name="rpg"):
                 name = rd["name"] if rd else profile.race
                 await context.send(
                     f"You're already a **{name}**! "
-                    f"Use `/race change` to switch (costs gold).",
+                    f"Use `/player change` to switch (costs gold).",
                     ephemeral=True,
                 )
                 return
@@ -300,10 +300,10 @@ class RPG(commands.Cog, name="rpg"):
         )
 
     # ------------------------------------------------------------------
-    # /race info
+    # /player info
     # ------------------------------------------------------------------
 
-    @race.command(name="info", description="View race details")
+    @player.command(name="info", description="View race details")
     @app_commands.describe(race_name="Which race to view (defaults to your own)")
     async def race_info(
         self, context: Context, race_name: str | None = None
@@ -340,10 +340,10 @@ class RPG(commands.Cog, name="rpg"):
         await context.send(embed=embed, ephemeral=True)
 
     # ------------------------------------------------------------------
-    # /race change
+    # /player change
     # ------------------------------------------------------------------
 
-    @race.command(name="change", description="Change your race (costs gold)")
+    @player.command(name="change", description="Change your race (costs gold)")
     @app_commands.describe(race_name="The race to change to")
     async def race_change(self, context: Context, race_name: str) -> None:
         await context.defer(ephemeral=True)
@@ -364,7 +364,7 @@ class RPG(commands.Cog, name="rpg"):
             # If they haven't chosen yet, redirect to /race choose
             if profile.chosen_at is None:
                 await context.send(
-                    "You haven't chosen a race yet! Use `/race choose` (it's free).",
+                    "You haven't chosen a race yet! Use `/player choose` (it's free).",
                     ephemeral=True,
                 )
                 return
