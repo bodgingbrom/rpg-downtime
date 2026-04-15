@@ -16,6 +16,8 @@ from brewing.shop import get_daily_shop
 from config import resolve_guild_setting
 from derby import repositories as repo
 from economy import repositories as wallet_repo
+from rpg import repositories as rpg_repo
+from rpg.logic import get_racial_modifier
 
 
 async def shop_ingredient_autocomplete(
@@ -268,7 +270,11 @@ class Brewing(commands.Cog, name="brewing"):
                     )
                     return
 
-            total_cost = ing.base_cost * quantity
+            # Halfling ingredient price discount (-15%)
+            profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+            price_mult = get_racial_modifier(profile.race, "brewing.ingredient_price_multiplier", 1.0)
+            unit_cost = max(int(ing.base_cost * price_mult), 0) if ing.base_cost > 0 else 0
+            total_cost = unit_cost * quantity
 
             # Free ingredients skip wallet logic
             if total_cost > 0:
@@ -377,6 +383,12 @@ class Brewing(commands.Cog, name="brewing"):
                 gs, self.bot.settings, "explosion_threshold_max"
             )
             threshold = random.randint(threshold_min, threshold_max)
+
+            # Racial modifier: Dwarf +15, Orc -15
+            profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+            race = profile.race
+            threshold_bonus = get_racial_modifier(race, "brewing.explosion_threshold_bonus", 0)
+            threshold = max(threshold + threshold_bonus, 1)
 
             # Check for Fortification brew effect (raises minimum threshold)
             fort_effect = await brew_repo.get_player_brew_effect(
@@ -499,8 +511,13 @@ class Brewing(commands.Cog, name="brewing"):
             min_no_match = resolve_guild_setting(
                 gs, self.bot.settings, "min_potency_no_match"
             )
+            # Racial potency multiplier (Elf +15%)
+            profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+            race = profile.race
+            pot_mult = get_racial_modifier(race, "brewing.potency_multiplier", 1.0)
             potency_gain = brew_logic.calculate_potency(
-                ing, cauldron_ingredients, base_potency, min_no_match
+                ing, cauldron_ingredients, base_potency, min_no_match,
+                potency_multiplier=pot_mult,
             )
             brew_session.potency += potency_gain
 
@@ -599,8 +616,11 @@ class Brewing(commands.Cog, name="brewing"):
                 )
                 return
 
-            # Calculate payout
-            payout = brew_logic.calculate_payout(brew_session.potency)
+            # Calculate payout (Human +10%)
+            profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+            race = profile.race
+            pay_mult = get_racial_modifier(race, "brewing.payout_multiplier", 1.0)
+            payout = brew_logic.calculate_payout(brew_session.potency, payout_multiplier=pay_mult)
 
             # Add payout to wallet
             wallet = await wallet_repo.get_wallet(session, user_id, guild_id)

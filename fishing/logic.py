@@ -141,10 +141,13 @@ def calculate_cast_time(
     bait_type: str,
     skill_reduction: float = 0.0,
     trophy_reduction: float = 0.0,
+    race_multiplier: float = 1.0,
 ) -> int:
     """Return seconds until next catch.
 
-    Formula: ``base * (1 - rod) * (1 - bait) * (1 - skill) * (1 - trophy)``
+    Formula: ``base * (1 - rod) * (1 - bait) * (1 - skill) * (1 - trophy) * race``
+
+    *race_multiplier* defaults to 1.0; Orc gets 0.90 (10% faster).
     """
     rod_reduction = rod_data.get("cast_reduction", 0.0)
     bait_info = BAIT_TYPES.get(bait_type, {})
@@ -156,6 +159,7 @@ def calculate_cast_time(
         * (1 - bait_reduction)
         * (1 - skill_reduction)
         * (1 - trophy_reduction)
+        * race_multiplier
     )
     return max(int(result), 60)  # minimum 60 seconds
 
@@ -220,18 +224,21 @@ def select_catch(
     location_data: dict[str, Any],
     rod_data: dict[str, Any],
     bait_type: str,
+    rare_weight_bonus: float = 0.0,
 ) -> dict[str, Any]:
     """Pick a catch from the location's fish + trash pool.
 
     Returns a dict with keys:
     ``name``, ``is_trash``, ``rarity`` (or None for trash),
     ``value``, ``length`` (or None for trash).
+
+    *rare_weight_bonus*: additive boost to rare+ fish weight (Human +0.05).
     """
     fish_pool: list[dict] = location_data.get("fish", [])
     trash_pool: list[dict] = location_data.get("trash", [])
 
     trash_multiplier = rod_data.get("trash_multiplier", 1.0)
-    rare_boost = rod_data.get("rare_boost", 0.0)
+    rare_boost = rod_data.get("rare_boost", 0.0) + rare_weight_bonus
     bait_info = BAIT_TYPES.get(bait_type, {})
     preference_boost = bait_info.get("preference_boost", 1.0)
 

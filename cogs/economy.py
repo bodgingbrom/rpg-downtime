@@ -12,6 +12,8 @@ from config import resolve_guild_setting
 from derby import descriptions, logic
 from derby import repositories as repo
 from economy import repositories as wallet_repo
+from rpg import repositories as rpg_repo
+from rpg.logic import get_racial_modifier
 
 
 class Economy(commands.Cog, name="economy"):
@@ -80,11 +82,24 @@ class Economy(commands.Cog, name="economy"):
                 daily_max = resolve_guild_setting(gs, self.bot.settings, "daily_max")
                 racer_flavor = resolve_guild_setting(gs, self.bot.settings, "racer_flavor")
 
+                # Fetch player race for modifiers
+                profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+                race = profile.race
+
                 racers = await repo.get_owned_racers(session, user_id, guild_id)
                 if racers:
                     best = max(racers, key=lambda r: logic._racer_power(r))
                     rank = best.rank or "D"
-                    multiplier = logic.daily_rank_multiplier(rank)
+
+                    # Human: daily tier +1
+                    tier_bonus = get_racial_modifier(race, "racing.daily_tier_bonus", 0)
+                    rank_order = ["D", "C", "B", "A", "S"]
+                    effective_rank = rank
+                    if tier_bonus > 0:
+                        idx = rank_order.index(rank) if rank in rank_order else 0
+                        effective_rank = rank_order[min(idx + tier_bonus, len(rank_order) - 1)]
+
+                    multiplier = logic.daily_rank_multiplier(effective_rank)
                     base = random.randint(daily_min, daily_max)
                     amount = base * multiplier
 
@@ -132,6 +147,14 @@ class Economy(commands.Cog, name="economy"):
 
             # Claim the reward
             reward.claimed = True
+
+            # Orc flat gold bonus
+            profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+            race = profile.race
+            gold_bonus = get_racial_modifier(race, "economy.daily_gold_bonus", 0)
+            if gold_bonus > 0:
+                reward.amount += gold_bonus
+
             await session.commit()
 
             # Update wallet
@@ -157,6 +180,14 @@ class Economy(commands.Cog, name="economy"):
                 ) if reward.racer_id else ""
                 embed.add_field(name="Racer", value=f"{reward.racer_name} ({rank_str})", inline=True)
             embed.add_field(name="Coins Earned", value=f"+{reward.amount}", inline=True)
+
+            # Race reminder for players who haven't chosen yet
+            if profile.chosen_at is None:
+                embed.set_footer(
+                    text="You haven't chosen a race yet! "
+                         "Use /race choose — each race has unique passives across all games."
+                )
+
             await context.send(embed=embed)
 
 

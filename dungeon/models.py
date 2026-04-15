@@ -57,6 +57,7 @@ class DungeonRun(Base):
     rooms_json: Mapped[str] = mapped_column(String, default="[]")
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    stoneblood_used: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class BestiaryEntry(Base):

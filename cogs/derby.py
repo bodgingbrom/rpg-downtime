@@ -16,6 +16,8 @@ from config import resolve_guild_setting
 from derby import commentary, descriptions, flavor_names, logic, models
 from derby import repositories as repo
 from economy import repositories as wallet_repo
+from rpg import repositories as rpg_repo
+from rpg.logic import get_racial_modifier
 
 
 _stat_band = logic.stat_band
@@ -1580,10 +1582,23 @@ class Derby(commands.Cog, name="derby"):
                 session, result.placements, participants,
                 guild_id=guild_id, prize_list=prize_list,
             )
+            # Build owner race lookup for racial modifiers
+            _owner_ids = {r.id: r.owner_id for r in participants if r.owner_id}
+            _owner_races: dict[int, str] = {}
+            if _owner_ids:
+                _seen_owners: dict[int, str] = {}
+                for _rid, _oid in _owner_ids.items():
+                    if _oid not in _seen_owners:
+                        _prof = await rpg_repo.get_or_create_profile(session, _oid, guild_id)
+                        _seen_owners[_oid] = _prof.race
+                    _owner_races[_rid] = _seen_owners[_oid]
             await logic.apply_mood_drift(
-                session, result.placements, participants
+                session, result.placements, participants,
+                owner_races=_owner_races,
             )
-            new_injuries = logic.check_injury_risk(result)
+            new_injuries = logic.check_injury_risk(
+                result, owner_races=_owner_races,
+            )
             await logic.apply_injuries(session, new_injuries, participants)
             stat_gains = await logic.apply_placement_stat_gains(
                 session, result.placements, participants, race_map, prize_list,
@@ -2747,6 +2762,13 @@ class Stable(commands.Cog, name="stable"):
                 current_value, training_base, training_mult
             )
 
+            # Dwarf training cost discount (-20%)
+            profile = await rpg_repo.get_or_create_profile(
+                session, context.author.id, guild_id
+            )
+            train_mult = get_racial_modifier(profile.race, "racing.training_cost_multiplier", 1.0)
+            cost = max(int(cost * train_mult), 1)
+
             # Check/create wallet
             wallet = await wallet_repo.get_wallet(
                 session, context.author.id, guild_id
@@ -2771,7 +2793,9 @@ class Stable(commands.Cog, name="stable"):
             wallet.balance -= cost
             racer_obj.trains_since_race = (racer_obj.trains_since_race or 0) + 1
             old_mood = racer_obj.mood
-            new_mood = max(1, old_mood - 1)
+            # Elf mood floor: racers owned by an Elf can't drop below mood 2
+            mood_floor = get_racial_modifier(profile.race, "racing.mood_floor", 1)
+            new_mood = max(mood_floor, old_mood - 1)
             racer_obj.mood = new_mood
 
             # Roll for failure

@@ -1337,16 +1337,22 @@ INJURY_DESCRIPTIONS = [
 def check_injury_risk(
     result: RaceResult,
     rng: random.Random | None = None,
+    owner_races: dict[int, str] | None = None,
 ) -> list[tuple[int, str, int]]:
     """Check for post-race injuries based on stumbles and last place.
 
     Each stumble during the race gives a 5% injury chance (nat 1 on d20).
     Last place gets one additional 5% check.
 
+    *owner_races*: ``{racer_id: owner_race_str}`` — Orc owners halve
+    their racers' injury chance (roll must be nat 1 AND pass a coin flip).
+
     Returns list of ``(racer_id, injury_description, recovery_races)``.
     """
     if rng is None:
         rng = random.Random()
+
+    from rpg.logic import get_racial_modifier
 
     injuries: list[tuple[int, str, int]] = []
     if not result.placements:
@@ -1363,8 +1369,20 @@ def check_injury_risk(
         if rid == last_place_id:
             num_stumble_rolls += 1
 
+        # Orc injury chance multiplier (0.50 = halved)
+        injury_mult = 1.0
+        if owner_races:
+            owner_race = owner_races.get(rid)
+            if owner_race:
+                injury_mult = get_racial_modifier(
+                    owner_race, "racing.injury_chance_multiplier", 1.0
+                )
+
         for _ in range(num_stumble_rolls):
             if rng.randint(1, 20) == 1:  # nat 1 = 5%
+                # Orc halves injury chance: must also pass a coin flip
+                if injury_mult < 1.0 and rng.random() >= injury_mult:
+                    continue  # Orc toughness saves the racer
                 description = rng.choice(INJURY_DESCRIPTIONS)
                 recovery = rng.randint(1, 4) + rng.randint(1, 4)  # 2d4
                 injuries.append((rid, description, recovery))
@@ -1399,6 +1417,7 @@ async def apply_mood_drift(
     session: AsyncSession,
     placements: list[int],
     participants: list[models.Racer] | None = None,
+    owner_races: dict[int, str] | None = None,
 ) -> dict[int, tuple[int, int]]:
     """Adjust racer moods after a race and return changes.
 
@@ -1406,10 +1425,15 @@ async def apply_mood_drift(
     All other racers drift one step toward neutral (3) — this keeps
     unowned racers from spiralling into permanent bad mood.
 
+    *owner_races*: ``{racer_id: owner_race_str}`` — used to apply
+    Elf mood floor (racers owned by an Elf cannot drop below mood 2).
+
     Returns ``{racer_id: (old_mood, new_mood)}`` for racers that changed.
     """
     if not placements:
         return {}
+
+    from rpg.logic import get_racial_modifier
 
     changes: dict[int, tuple[int, int]] = {}
     winner_id = placements[0]
@@ -1438,6 +1462,13 @@ async def apply_mood_drift(
                 new_mood = old_mood + 1
             else:
                 new_mood = old_mood
+
+        # Elf mood floor: racers owned by an Elf can't drop below mood 2
+        if owner_races:
+            owner_race = owner_races.get(rid)
+            if owner_race:
+                mood_floor = get_racial_modifier(owner_race, "racing.mood_floor", 1)
+                new_mood = max(mood_floor, new_mood)
 
         if new_mood != old_mood:
             racer.mood = new_mood
@@ -1630,6 +1661,15 @@ async def resolve_payouts(
         racer_ids_json = getattr(bet, "racer_ids", "[]") or "[]"
         won = _bet_wins(bet_type, bet.racer_id, racer_ids_json, placements)
         payout = int(bet.amount * bet.payout_multiplier) if won else 0
+        # Halfling bet payout bonus (+15%)
+        if won and payout > 0:
+            from rpg.logic import get_racial_modifier as _get_rm
+            from rpg import repositories as _rpg_repo
+            _profile = await _rpg_repo.get_or_create_profile(
+                session, bet.user_id, guild_id
+            )
+            _bet_mult = _get_rm(_profile.race, "racing.bet_payout_multiplier", 1.0)
+            payout = int(payout * _bet_mult)
         if won:
             wallet.balance += payout
 

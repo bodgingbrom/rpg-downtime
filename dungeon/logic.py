@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from rpg.logic import get_racial_modifier
+
 # ---------------------------------------------------------------------------
 # Directory / cache setup
 # ---------------------------------------------------------------------------
@@ -148,9 +150,15 @@ def get_modifier(stat_value: int) -> int:
     return (stat_value - 10) // 2
 
 
-def get_max_hp(constitution: int, accessory_bonus: int = 0) -> int:
-    """Max HP derived from CON. Base = CON * 2, plus accessory bonuses."""
-    return constitution * 2 + accessory_bonus
+def get_max_hp(
+    constitution: int, accessory_bonus: int = 0, race: str = "human"
+) -> int:
+    """Max HP derived from CON, plus accessory bonuses.
+
+    Base multiplier is 2.0 but races may override (Elf 1.75, Orc 2.25).
+    """
+    multiplier = get_racial_modifier(race, "dungeon.hp_multiplier", 2.0)
+    return int(constitution * multiplier) + accessory_bonus
 
 
 # ---------------------------------------------------------------------------
@@ -293,9 +301,10 @@ def roll_d20(rng: random.Random | None = None) -> int:
     return rng.randint(1, 20)
 
 
-def is_crit(d20_roll: int) -> bool:
-    """Check if a d20 roll is a natural 20 (5% crit)."""
-    return d20_roll == 20
+def is_crit(d20_roll: int, race: str = "human") -> bool:
+    """Check if a d20 roll is a crit (default: nat 20; Elf: 19-20)."""
+    threshold = get_racial_modifier(race, "dungeon.crit_threshold", 20)
+    return d20_roll >= threshold
 
 
 # ---------------------------------------------------------------------------
@@ -405,13 +414,36 @@ def calc_player_damage(
     monster_defense: int,
     is_crit_hit: bool,
     rng: random.Random | None = None,
+    *,
+    race: str = "human",
+    current_hp: int = 0,
+    max_hp: int = 1,
 ) -> tuple[int, int]:
-    """Calculate player damage. Returns (damage, raw_roll)."""
+    """Calculate player damage. Returns (damage, raw_roll).
+
+    Racial modifiers:
+    - Orc Bloodrage: when below 50% HP, roll dice twice keep higher.
+    - Halfling: weapon bonus reduced by 1 (min 0).
+    """
     rng = rng or random.Random()
-    raw_roll = roll_dice(weapon_dice, rng)
+
+    # Orc Bloodrage: advantage on damage dice when below 50% HP
+    bloodrage = get_racial_modifier(race, "dungeon.bloodrage", False)
+    if bloodrage and max_hp > 0 and current_hp <= max_hp // 2:
+        roll_a = roll_dice(weapon_dice, rng)
+        roll_b = roll_dice(weapon_dice, rng)
+        raw_roll = max(roll_a, roll_b)
+    else:
+        raw_roll = roll_dice(weapon_dice, rng)
+
     if is_crit_hit:
         raw_roll += roll_dice(weapon_dice, rng)  # double dice on crit
-    damage = max(raw_roll + str_mod + weapon_bonus - monster_defense, 1)
+
+    # Halfling weapon penalty
+    bonus_penalty = get_racial_modifier(race, "dungeon.weapon_bonus_penalty", 0)
+    effective_bonus = max(weapon_bonus - bonus_penalty, 0)
+
+    damage = max(raw_roll + str_mod + effective_bonus - monster_defense, 1)
     return damage, raw_roll
 
 
@@ -439,18 +471,30 @@ def select_monster_action(ai_weights: dict[str, int], rng: random.Random | None 
     return rng.choices(actions, weights=weights, k=1)[0]
 
 
-def check_flee(dex: int, rng: random.Random | None = None) -> bool:
-    """DEX-based flee check. Roll d20 + DEX modifier vs FLEE_BASE_DC."""
+def check_flee(
+    dex: int, rng: random.Random | None = None, race: str = "human"
+) -> bool:
+    """DEX-based flee check. Roll d20 + DEX modifier vs flee DC.
+
+    Racial DCs: Halfling 10, Dwarf 14, default 12.
+    """
     rng = rng or random.Random()
     roll = rng.randint(1, 20)
-    return (roll + get_modifier(dex)) >= FLEE_BASE_DC
+    dc = get_racial_modifier(race, "dungeon.flee_dc", FLEE_BASE_DC)
+    return (roll + get_modifier(dex)) >= dc
 
 
-def check_trap(dex: int, trap_dc: int, rng: random.Random | None = None) -> bool:
-    """DEX-based trap avoidance. Roll d20 + DEX modifier vs trap DC."""
+def check_trap(
+    dex: int, trap_dc: int, rng: random.Random | None = None, race: str = "human"
+) -> bool:
+    """DEX-based trap avoidance. Roll d20 + DEX modifier + racial bonus vs DC.
+
+    Racial bonus: Elf +2, Dwarf -1, default 0.
+    """
     rng = rng or random.Random()
     roll = rng.randint(1, 20)
-    return (roll + get_modifier(dex)) >= trap_dc
+    bonus = get_racial_modifier(race, "dungeon.trap_save_bonus", 0)
+    return (roll + get_modifier(dex) + bonus) >= trap_dc
 
 
 def roll_trap_damage(
@@ -470,22 +514,34 @@ def roll_monster_gold(
 
 
 def roll_treasure_gold(
-    tier: str, rng: random.Random | None = None
+    tier: str, rng: random.Random | None = None, race: str = "human"
 ) -> int:
-    """Roll gold for a treasure room based on tier."""
+    """Roll gold for a treasure room based on tier.
+
+    Halfling *Lucky*: roll twice, keep the better result.
+    """
     rng = rng or random.Random()
     gold_range = TREASURE_GOLD.get(tier, TREASURE_GOLD["common"])
-    return rng.randint(gold_range[0], gold_range[1])
+    roll = rng.randint(gold_range[0], gold_range[1])
+    if get_racial_modifier(race, "dungeon.treasure_double_roll", False):
+        roll = max(roll, rng.randint(gold_range[0], gold_range[1]))
+    return roll
 
 
 def roll_loot_drops(
-    loot_table: list[dict[str, Any]], rng: random.Random | None = None
+    loot_table: list[dict[str, Any]],
+    rng: random.Random | None = None,
+    race: str = "human",
 ) -> list[dict[str, Any]]:
-    """Roll each loot entry against its chance. Returns list of dropped items."""
+    """Roll each loot entry against its chance. Returns list of dropped items.
+
+    Halfling *Lucky*: +5% additive bonus to every drop chance.
+    """
     rng = rng or random.Random()
+    bonus = get_racial_modifier(race, "dungeon.loot_chance_bonus", 0)
     drops: list[dict[str, Any]] = []
     for entry in loot_table:
-        if rng.randint(1, 100) <= entry.get("chance", 0):
+        if rng.randint(1, 100) <= entry.get("chance", 0) + bonus:
             drops.append(entry)
     return drops
 

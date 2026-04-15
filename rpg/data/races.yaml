@@ -1,0 +1,123 @@
+- id: human
+  name: Human
+  emoji: "\U0001F9D1"
+  tagline: The Generalist
+  quote: "Humans lack the raw talent of other races, but their adaptability more than makes up for it."
+  passives:
+    - game: All Games
+      name: Versatile
+      description: "Earn 15% bonus XP from all sources"
+      signature: true
+    - game: Fishing
+      name: Sharp Eye
+      description: "+5% weight toward rare+ fish in the catch pool"
+    - game: Brewing
+      name: Efficient Seller
+      description: "+10% gold payout from potions"
+    - game: Racing
+      name: Industrious
+      description: "Daily reward treated as one rank tier higher"
+  flaw:
+    name: Unremarkable
+    description: "No unique dungeon combat mechanic — other races get Bloodrage, Stoneblood, or Lucky."
+
+- id: dwarf
+  name: Dwarf
+  emoji: "\u26CF\uFE0F"
+  tagline: The Enduring Crafter
+  quote: "Dwarves don't run, don't flinch, and don't brew weak potions."
+  passives:
+    - game: Dungeon
+      name: Stoneblood
+      description: "Once per run, survive a killing blow at 1 HP instead of dying"
+      signature: true
+    - game: Dungeon
+      name: Hardy
+      description: "Rest shrines heal 40% max HP instead of 30%"
+    - game: Brewing
+      name: Steady Hands
+      description: "Explosion threshold increased by 15"
+    - game: Racing
+      name: Efficient Trainer
+      description: "Training costs reduced by 20%"
+  flaw:
+    name: Heavy-Footed
+    description: "Flee DC is 14 instead of 12. Trap saves get -1 penalty."
+
+- id: elf
+  name: Elf
+  emoji: "\U0001F9DD"
+  tagline: The Precise
+  quote: "Patient, perceptive, and unnervingly precise. An elf misses nothing."
+  passives:
+    - game: Fishing
+      name: Twin Cast
+      description: "10% chance per catch to hook two fish instead of one"
+      signature: true
+    - game: Dungeon
+      name: Agile
+      description: "+2 bonus to all trap save rolls"
+    - game: Dungeon
+      name: Keen Strike
+      description: "Critical hits land on 19-20 instead of just 20"
+    - game: Brewing
+      name: Refined Technique
+      description: "+15% potency gain per ingredient"
+    - game: Racing
+      name: Calming Presence
+      description: "Racer mood cannot drop below 2"
+  flaw:
+    name: Frail
+    description: "Max HP is CON x 1.75 instead of CON x 2 (~12% less health)."
+
+- id: halfling
+  name: Halfling
+  emoji: "\U0001F340"
+  tagline: The Lucky
+  quote: "Fortune favors the small. And the quick. And the ones who know where the good loot is."
+  passives:
+    - game: Dungeon
+      name: Lucky
+      description: "Treasure rooms roll gold twice (keep best). Loot drop chances +5%."
+      signature: true
+    - game: Dungeon
+      name: Nimble
+      description: "Flee DC is 10 instead of 12"
+    - game: Fishing
+      name: Thrifty Angler
+      description: "15% chance bait is not consumed after a catch"
+    - game: Brewing
+      name: Haggler
+      description: "Ingredient shop prices reduced by 15%"
+    - game: Racing
+      name: Fortune's Favor
+      description: "Betting payouts increased by 15%"
+  flaw:
+    name: Small Stature
+    description: "Weapon bonus reduced by 1 (minimum 0). Halflings hit a bit lighter."
+
+- id: orc
+  name: Orc
+  emoji: "\U0001F4AA"
+  tagline: The Berserker
+  quote: "Pain is fuel. Weakness is a memory. An orc at death's door is the most dangerous thing in the dungeon."
+  passives:
+    - game: Dungeon
+      name: Bloodrage
+      description: "Below 50% HP, weapon damage dice roll twice and keep the higher result"
+      signature: true
+    - game: Dungeon
+      name: Thick-Skinned
+      description: "Max HP is CON x 2.25 instead of CON x 2 (~12% more health)"
+    - game: Fishing
+      name: Brutish Efficiency
+      description: "Cast time reduced by 10%"
+    - game: Racing
+      name: Tough Stock
+      description: "Racer injury chance halved"
+    - game: Daily
+      name: Plunderer
+      description: "+5 bonus gold on daily reward"
+  flaw:
+    name: All Thumbs
+    description: "Brewing explosion threshold reduced by 15. Every brew is riskier."

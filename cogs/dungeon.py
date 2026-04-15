@@ -14,6 +14,8 @@ from discord.ext.commands import Context
 from dungeon import logic as dungeon_logic
 from dungeon import repositories as dungeon_repo
 from economy import repositories as wallet_repo
+from rpg import repositories as rpg_repo
+from rpg.logic import get_racial_modifier
 
 # Cross-game imports (optional — gracefully skip if not loaded)
 try:
@@ -950,6 +952,10 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
             await interaction.response.send_message("Run not found.", ephemeral=True)
             return
         run, player, dungeon_data = ctx
+        profile = await rpg_repo.get_or_create_profile(
+            session, run.user_id, run.guild_id
+        )
+        race = profile.race
 
         rooms = json.loads(run.rooms_json)
         if run.room_index >= len(rooms):
@@ -978,7 +984,7 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
         elif room_type == "treasure":
             # Resolve treasure immediately
             tier = room_data.get("tier", "common")
-            gold = dungeon_logic.roll_treasure_gold(tier)
+            gold = dungeon_logic.roll_treasure_gold(tier, race=race)
             run.run_gold += gold
             run.room_index += 1
             run.state = "exploring"
@@ -993,11 +999,16 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
             # Resolve trap immediately
             trap = room_data.get("trap", {})
             trap_dc = trap.get("dex_dc", 12)
-            avoided = dungeon_logic.check_trap(player.dexterity, trap_dc)
+            avoided = dungeon_logic.check_trap(player.dexterity, trap_dc, race=race)
             damage = 0
             if not avoided:
                 damage = dungeon_logic.roll_trap_damage(trap.get("damage", [1, 4]))
                 run.current_hp = max(run.current_hp - damage, 0)
+
+            # Stoneblood: Dwarf survives killing blow once per run
+            if run.current_hp <= 0 and not run.stoneblood_used and get_racial_modifier(race, "dungeon.stoneblood", False):
+                run.current_hp = 1
+                run.stoneblood_used = True
 
             run.room_index += 1
             run.state = "exploring"
@@ -1015,7 +1026,8 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
 
         elif room_type == "rest":
             # Heal at shrine
-            heal_amount = int(run.max_hp * dungeon_logic.REST_HEAL_FRACTION)
+            heal_frac = get_racial_modifier(race, "dungeon.rest_heal_fraction", dungeon_logic.REST_HEAL_FRACTION)
+            heal_amount = int(run.max_hp * heal_frac)
             run.current_hp = min(run.current_hp + heal_amount, run.max_hp)
             run.room_index += 1
             run.state = "exploring"
@@ -1035,6 +1047,10 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
             await interaction.response.send_message("Run not found.", ephemeral=True)
             return
         run, player, dungeon_data = ctx
+        profile = await rpg_repo.get_or_create_profile(
+            session, run.user_id, run.guild_id
+        )
+        race = profile.race
 
         rooms = json.loads(run.rooms_json)
         room_data = rooms[run.room_index]
@@ -1042,7 +1058,7 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
         narrative: list[str] = []
 
         if action == "flee":
-            fled = dungeon_logic.check_flee(player.dexterity)
+            fled = dungeon_logic.check_flee(player.dexterity, race=race)
             if fled:
                 narrative.append("You turn and run! You escape the fight.")
                 run.room_index += 1
@@ -1090,7 +1106,7 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
         was_crit = False
         if action == "attack":
             d20 = dungeon_logic.roll_d20()
-            was_crit = dungeon_logic.is_crit(d20)
+            was_crit = dungeon_logic.is_crit(d20, race=race)
             crit_bonus = dungeon_logic.get_crit_bonus(player.accessory_id)
             if not was_crit and crit_bonus > 0:
                 was_crit = d20 >= (20 - crit_bonus)
@@ -1099,6 +1115,7 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
             str_mod = dungeon_logic.get_modifier(player.strength)
             player_dmg, _ = dungeon_logic.calc_player_damage(
                 weapon_dice, str_mod, weapon_bonus, monster.get("defense", 0), was_crit,
+                race=race, current_hp=run.current_hp, max_hp=run.max_hp,
             )
             crit_text = " **CRITICAL HIT!**" if was_crit else ""
             narrative.append(f"You strike the {monster['name']} for **{player_dmg}** damage!{crit_text}")
@@ -1136,6 +1153,12 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
         run.current_hp = max(run.current_hp - mon_dmg, 0)
         run.is_defending = is_defending
 
+        # Stoneblood: Dwarf survives killing blow once per run
+        if run.current_hp <= 0 and not run.stoneblood_used and get_racial_modifier(race, "dungeon.stoneblood", False):
+            run.current_hp = 1
+            run.stoneblood_used = True
+            narrative.append("**Stoneblood!** You refuse to fall — sheer dwarven stubbornness keeps you on your feet at 1 HP!")
+
         # Check outcomes
         monster_dead = run.monster_hp <= 0
         player_dead = run.current_hp <= 0
@@ -1161,7 +1184,7 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
             xp_gained = monster.get("xp", 0)
             gold_range = monster.get("gold", [0, 0])
             gold_gained = dungeon_logic.roll_monster_gold(gold_range)
-            loot_drops = dungeon_logic.roll_loot_drops(monster.get("loot", []))
+            loot_drops = dungeon_logic.roll_loot_drops(monster.get("loot", []), race=race)
 
             run.run_xp += xp_gained
             run.run_gold += gold_gained
@@ -1445,9 +1468,12 @@ async def _process_death(session, run, player, dungeon_data, interaction, narrat
     gold_lost = int(run.run_gold * dungeon_logic.DEATH_GOLD_PENALTY)
     gold_kept = run.run_gold - gold_lost
 
-    # Apply XP
+    # Apply XP (Human +15% bonus)
+    profile = await rpg_repo.get_or_create_profile(session, run.user_id, run.guild_id)
+    xp_mult = get_racial_modifier(profile.race, "global.xp_multiplier", 1.0)
+    effective_xp = int(run.run_xp * xp_mult)
     old_level = dungeon_logic.get_level(player.xp)
-    player.xp += run.run_xp
+    player.xp += effective_xp
     new_level = dungeon_logic.get_level(player.xp)
     levels_gained = new_level - old_level
     if levels_gained > 0:
@@ -1482,9 +1508,12 @@ async def _process_death(session, run, player, dungeon_data, interaction, narrat
 
 async def _process_return(session, run, player, dungeon_data, interaction):
     """Handle safe return to town: bank rewards, end run."""
-    # Apply XP
+    # Apply XP (Human +15% bonus)
+    profile = await rpg_repo.get_or_create_profile(session, run.user_id, run.guild_id)
+    xp_mult = get_racial_modifier(profile.race, "global.xp_multiplier", 1.0)
+    effective_xp = int(run.run_xp * xp_mult)
     old_level = dungeon_logic.get_level(player.xp)
-    player.xp += run.run_xp
+    player.xp += effective_xp
     new_level = dungeon_logic.get_level(player.xp)
     levels_gained = new_level - old_level
     if levels_gained > 0:
@@ -1644,10 +1673,12 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
 
             # Get/create player
             player = await dungeon_repo.get_or_create_player(session, user_id, guild_id)
+            profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+            race = profile.race
 
             # Calculate starting HP
             hp_bonus = dungeon_logic.get_accessory_hp_bonus(player.accessory_id)
-            max_hp = dungeon_logic.get_max_hp(player.constitution, hp_bonus)
+            max_hp = dungeon_logic.get_max_hp(player.constitution, hp_bonus, race=race)
 
             # Generate floor 1 rooms
             floor_data = dungeon_logic.get_floor_data(dungeon_data, 1)
@@ -1734,6 +1765,8 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
             player = await dungeon_repo.get_or_create_player(
                 session, user_id, guild_id
             )
+            profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+            race = profile.race
 
             # Stat modifiers
             str_mod = dungeon_logic.get_modifier(player.strength)
@@ -1742,7 +1775,7 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
 
             # HP
             hp_bonus = dungeon_logic.get_accessory_hp_bonus(player.accessory_id)
-            max_hp = dungeon_logic.get_max_hp(player.constitution, hp_bonus)
+            max_hp = dungeon_logic.get_max_hp(player.constitution, hp_bonus, race=race)
 
             # XP progress
             progress = dungeon_logic.xp_progress(player.xp)
@@ -1971,9 +2004,12 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
 
 async def _process_abandon(session, run, player):
     """Handle abandoning a run (same as death but no gold salvage)."""
-    # Apply XP only
+    # Apply XP only (Human +15% bonus)
+    profile = await rpg_repo.get_or_create_profile(session, run.user_id, run.guild_id)
+    xp_mult = get_racial_modifier(profile.race, "global.xp_multiplier", 1.0)
+    effective_xp = int(run.run_xp * xp_mult)
     old_level = dungeon_logic.get_level(player.xp)
-    player.xp += run.run_xp
+    player.xp += effective_xp
     new_level = dungeon_logic.get_level(player.xp)
     levels_gained = new_level - old_level
     if levels_gained > 0:
