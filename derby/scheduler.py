@@ -211,6 +211,7 @@ class DerbyScheduler:
                 "breed_cooldown": ("INTEGER", "0"),
                 "training_count": ("INTEGER", "5"),
                 "trains_since_race": ("INTEGER", "0"),
+                "rested_since_race": ("BOOLEAN", "0"),
                 "rank": ("VARCHAR", "NULL"),
                 "tournament_wins": ("INTEGER", "0"),
                 "tournament_placements": ("INTEGER", "0"),

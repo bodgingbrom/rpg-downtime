@@ -1904,8 +1904,8 @@ class Derby(commands.Cog, name="derby"):
             from sqlalchemy import text
             await session.execute(
                 text(
-                    "UPDATE racers SET trains_since_race = 0 "
-                    "WHERE guild_id = :gid AND trains_since_race > 0"
+                    "UPDATE racers SET trains_since_race = 0, rested_since_race = 0 "
+                    "WHERE guild_id = :gid AND (trains_since_race > 0 OR rested_since_race = 1)"
                 ),
                 {"gid": guild_id},
             )
@@ -2191,6 +2191,669 @@ class Derby(commands.Cog, name="derby"):
         ][:25]
 
 
+# ---------------------------------------------------------------------------
+# Interactive Stable Management Views
+# ---------------------------------------------------------------------------
+
+STABLE_VIEW_TIMEOUT = 180  # seconds
+
+
+async def _fetch_manage_data(sessionmaker, racer_id, user_id, guild_id, bot_settings):
+    """Fetch all data needed for the stable manage embed in a single session."""
+    async with sessionmaker() as session:
+        racer = await repo.get_racer(session, racer_id)
+        if racer is None:
+            return None
+        gs = await repo.get_guild_settings(session, guild_id)
+        wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
+        if wallet is None:
+            default_bal = resolve_guild_setting(gs, bot_settings, "default_wallet")
+            wallet = await wallet_repo.create_wallet(
+                session, user_id=user_id, guild_id=guild_id, balance=default_bal,
+            )
+        profile = await rpg_repo.get_or_create_profile(session, user_id, guild_id)
+        eff = logic.effective_stats(racer)
+        max_trains = resolve_guild_setting(gs, bot_settings, "max_trains_per_race")
+        rest_cost = resolve_guild_setting(gs, bot_settings, "rest_cost")
+        feed_cost = resolve_guild_setting(gs, bot_settings, "feed_cost")
+        return {
+            "racer": racer,
+            "gs": gs,
+            "wallet": wallet,
+            "profile": profile,
+            "eff": eff,
+            "max_trains": max_trains,
+            "rest_cost": rest_cost,
+            "feed_cost": feed_cost,
+        }
+
+
+def _build_manage_embed(data, *, status_text=None):
+    """Build the main stable manage embed from fetched data."""
+    racer = data["racer"]
+    eff = data["eff"]
+    wallet = data["wallet"]
+    max_trains = data["max_trains"]
+
+    trains_used = racer.trains_since_race or 0
+    trains_left = max(0, max_trains - trains_used)
+    rested = getattr(racer, "rested_since_race", False)
+
+    embed = discord.Embed(
+        title=f"\U0001f40e {racer.name}",
+        color=discord.Color.blue(),
+    )
+    rank = logic.rank_label(racer.rank)
+    embed.add_field(name="Rank", value=rank, inline=True)
+    embed.add_field(
+        name="Mood",
+        value=f"{MOOD_EMOJIS.get(racer.mood, '')} {_mood_label(racer.mood)}",
+        inline=True,
+    )
+    embed.add_field(name="\u200b", value="\u200b", inline=True)  # spacer
+    embed.add_field(name="Speed", value=f"{_stat_band(eff['speed'])} ({eff['speed']})", inline=True)
+    embed.add_field(name="Cornering", value=f"{_stat_band(eff['cornering'])} ({eff['cornering']})", inline=True)
+    embed.add_field(name="Stamina", value=f"{_stat_band(eff['stamina'])} ({eff['stamina']})", inline=True)
+    embed.add_field(
+        name="Training",
+        value=f"{trains_left}/{max_trains} sessions left" + (" \u2022 Rested \u2705" if rested else ""),
+        inline=True,
+    )
+    embed.set_footer(text=f"Balance: {wallet.balance} coins")
+
+    if status_text:
+        embed.description = status_text
+
+    return embed
+
+
+def _build_train_embed(data):
+    """Build the training state embed showing stat costs and failure chance."""
+    racer = data["racer"]
+    gs = data["gs"]
+    profile = data["profile"]
+    bot_settings = data.get("bot_settings")
+
+    base = resolve_guild_setting(gs, bot_settings, "training_base") if bot_settings else 10
+    mult = resolve_guild_setting(gs, bot_settings, "training_multiplier") if bot_settings else 5
+
+    train_cost_mult = get_racial_modifier(profile.race, "racing.training_cost_multiplier", 1.0)
+    fail_chance = logic.training_failure_chance(racer.mood, racer.injury_races_remaining > 0)
+    fail_pct = int(fail_chance * 100)
+
+    lines = []
+    for stat in ("speed", "cornering", "stamina"):
+        val = getattr(racer, stat)
+        cost = max(int(logic.calculate_training_cost(val, base, mult) * train_cost_mult), 1)
+        at_max = val >= logic.MAX_STAT
+        lines.append(
+            f"**{stat.capitalize()}** — {_stat_band(val)} ({val})"
+            + (f" — **{cost} coins**" if not at_max else " — *MAX*")
+        )
+
+    embed = discord.Embed(
+        title=f"\u26a1 Train {racer.name}",
+        description="\n".join(lines),
+        color=discord.Color.green(),
+    )
+    if fail_pct > 0:
+        embed.add_field(name="Failure Chance", value=f"{fail_pct}%", inline=True)
+    embed.set_footer(text=f"Balance: {data['wallet'].balance} coins")
+    return embed
+
+
+class StableRenameModal(discord.ui.Modal, title="Rename Racer"):
+    """Modal for entering a new racer name."""
+
+    new_name = discord.ui.TextInput(
+        label="New name",
+        placeholder="Enter a new name (max 32 characters)",
+        required=True,
+        max_length=32,
+    )
+
+    def __init__(self, bot, racer_id: int, user_id: int, guild_id: int, message):
+        super().__init__()
+        self.bot = bot
+        self.racer_id = racer_id
+        self.user_id = user_id
+        self.guild_id = guild_id
+        self._message = message
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        name = self.new_name.value.strip()
+        if not name or len(name) > 32:
+            await interaction.response.send_message(
+                "Name must be 1-32 characters.", ephemeral=True
+            )
+            return
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer = await repo.get_racer(session, self.racer_id)
+            if racer is None:
+                await interaction.response.send_message("Racer not found.", ephemeral=True)
+                return
+
+            # Check uniqueness
+            existing = await session.execute(
+                select(models.Racer.id).where(
+                    models.Racer.guild_id == self.guild_id,
+                    models.Racer.retired.is_(False),
+                    models.Racer.name == name,
+                )
+            )
+            if existing.scalars().first() is not None:
+                await interaction.response.send_message(
+                    f"A racer named **{name}** already exists in this guild.",
+                    ephemeral=True,
+                )
+                return
+
+            old_name = racer.name
+            await repo.update_racer(session, self.racer_id, name=name)
+
+        # Refresh to main view with status
+        data = await _fetch_manage_data(
+            self.bot.scheduler.sessionmaker, self.racer_id,
+            self.user_id, self.guild_id, self.bot.settings,
+        )
+        if data is None:
+            await interaction.response.send_message("Racer not found.", ephemeral=True)
+            return
+        data["bot_settings"] = self.bot.settings
+        embed = _build_manage_embed(data, status_text=f"Renamed **{old_name}** to **{name}**.")
+        view = StableManageView(self.bot, self.racer_id, self.user_id, self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class StableSellConfirmView(discord.ui.View):
+    """Sell confirmation — confirm or cancel."""
+
+    def __init__(self, bot, racer_id: int, user_id: int, guild_id: int, sell_price: int, racer_name: str):
+        super().__init__(timeout=STABLE_VIEW_TIMEOUT)
+        self.bot = bot
+        self.racer_id = racer_id
+        self.user_id = user_id
+        self.guild_id = guild_id
+        self.sell_price = sell_price
+        self.racer_name = racer_name
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your stable!", ephemeral=True
+            )
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except (discord.NotFound, discord.HTTPException):
+                pass
+
+    @discord.ui.button(label="Confirm Sell \u2713", style=discord.ButtonStyle.danger, row=0)
+    async def confirm_sell(self, interaction: discord.Interaction, button: discord.ui.Button):
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer = await repo.get_racer(session, self.racer_id)
+            if racer is None or racer.owner_id != self.user_id:
+                await interaction.response.send_message("Racer not found or not yours.", ephemeral=True)
+                return
+
+            # Block if in unfinished race
+            in_race = (
+                await session.execute(
+                    select(models.RaceEntry.id)
+                    .join(models.Race, models.RaceEntry.race_id == models.Race.id)
+                    .where(
+                        models.RaceEntry.racer_id == self.racer_id,
+                        models.Race.finished.is_(False),
+                    )
+                )
+            ).scalars().first()
+            if in_race is not None:
+                await interaction.response.send_message(
+                    f"**{racer.name}** is entered in an upcoming race and can't be sold right now.",
+                    ephemeral=True,
+                )
+                return
+
+            wallet = await wallet_repo.get_wallet(session, self.user_id, self.guild_id)
+            if wallet is None:
+                gs = await repo.get_guild_settings(session, self.guild_id)
+                default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
+                wallet = await wallet_repo.create_wallet(
+                    session, user_id=self.user_id, guild_id=self.guild_id, balance=default_bal,
+                )
+            wallet.balance += self.sell_price
+            pool_expiry = datetime.utcnow() + timedelta(hours=random.uniform(24, 48))
+            await repo.update_racer(session, self.racer_id, owner_id=0, pool_expires_at=pool_expiry)
+            await session.commit()
+
+        embed = discord.Embed(
+            title=f"Sold {self.racer_name}",
+            description=f"**{self.racer_name}** was sold for **{self.sell_price} coins**.\nBalance: **{wallet.balance} coins**.",
+            color=discord.Color.red(),
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+    @discord.ui.button(label="Cancel \u2717", style=discord.ButtonStyle.secondary, row=0)
+    async def cancel_sell(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = await _fetch_manage_data(
+            self.bot.scheduler.sessionmaker, self.racer_id,
+            self.user_id, self.guild_id, self.bot.settings,
+        )
+        if data is None:
+            await interaction.response.send_message("Racer not found.", ephemeral=True)
+            return
+        data["bot_settings"] = self.bot.settings
+        embed = _build_manage_embed(data)
+        view = StableManageView(self.bot, self.racer_id, self.user_id, self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class StableTrainView(discord.ui.View):
+    """Training state — pick a stat to train."""
+
+    def __init__(self, bot, racer_id: int, user_id: int, guild_id: int):
+        super().__init__(timeout=STABLE_VIEW_TIMEOUT)
+        self.bot = bot
+        self.racer_id = racer_id
+        self.user_id = user_id
+        self.guild_id = guild_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your stable!", ephemeral=True
+            )
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except (discord.NotFound, discord.HTTPException):
+                pass
+
+    async def _do_train(self, interaction: discord.Interaction, stat_name: str):
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer = await repo.get_racer(session, self.racer_id)
+            if racer is None or racer.owner_id != self.user_id:
+                await interaction.response.send_message("Racer not found or not yours.", ephemeral=True)
+                return
+            if racer.retired:
+                await interaction.response.send_message("This racer is retired.", ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, self.guild_id)
+            max_trains = resolve_guild_setting(gs, self.bot.settings, "max_trains_per_race")
+            if (racer.trains_since_race or 0) >= max_trains:
+                await interaction.response.send_message(
+                    f"**{racer.name}** has reached the training limit ({max_trains} sessions). "
+                    f"Wait for the next race!",
+                    ephemeral=True,
+                )
+                return
+
+            current_value = getattr(racer, stat_name)
+            if current_value >= logic.MAX_STAT:
+                await interaction.response.send_message(
+                    f"**{racer.name}**'s {stat_name} is already at maximum.",
+                    ephemeral=True,
+                )
+                return
+
+            training_base = resolve_guild_setting(gs, self.bot.settings, "training_base")
+            training_mult = resolve_guild_setting(gs, self.bot.settings, "training_multiplier")
+            cost = logic.calculate_training_cost(current_value, training_base, training_mult)
+
+            profile = await rpg_repo.get_or_create_profile(session, self.user_id, self.guild_id)
+            train_cost_mult = get_racial_modifier(profile.race, "racing.training_cost_multiplier", 1.0)
+            cost = max(int(cost * train_cost_mult), 1)
+
+            wallet = await wallet_repo.get_wallet(session, self.user_id, self.guild_id)
+            if wallet is None:
+                default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
+                wallet = await wallet_repo.create_wallet(
+                    session, user_id=self.user_id, guild_id=self.guild_id, balance=default_bal,
+                )
+            if wallet.balance < cost:
+                await interaction.response.send_message(
+                    f"Training costs **{cost} coins** but you only have **{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            # Execute training
+            wallet.balance -= cost
+            racer.trains_since_race = (racer.trains_since_race or 0) + 1
+            old_mood = racer.mood
+            mood_floor = get_racial_modifier(profile.race, "racing.mood_floor", 1)
+            new_mood = max(mood_floor, old_mood - 1)
+            racer.mood = new_mood
+
+            fail_chance = logic.training_failure_chance(old_mood, racer.injury_races_remaining > 0)
+            failed = random.random() < fail_chance
+
+            if not failed:
+                new_value = current_value + 1
+                await repo.update_racer(session, self.racer_id, **{stat_name: new_value})
+                racer.training_count = (racer.training_count or 0) + 1
+                setattr(racer, stat_name, new_value)
+                rank_change = logic.recalculate_rank(racer)
+            else:
+                new_value = current_value
+                rank_change = None
+
+            await session.commit()
+
+        # Build status text
+        if failed:
+            status = (
+                f"\u274c Training failed! **{cost} coins** spent but {stat_name} unchanged."
+            )
+        else:
+            status = (
+                f"\u2705 {stat_name.capitalize()}: "
+                f"{_stat_band(current_value)} \u2192 {_stat_band(new_value)} "
+                f"({current_value} \u2192 {new_value}) — **{cost} coins**"
+            )
+            if rank_change:
+                status += f"\n\u2b06\ufe0f **Rank Up!** Promoted to **{logic.rank_label(rank_change)}**"
+
+        if fail_chance > 0:
+            status += f"\n*Failure chance was {int(fail_chance * 100)}%*"
+
+        # Return to main view with status
+        data = await _fetch_manage_data(
+            self.bot.scheduler.sessionmaker, self.racer_id,
+            self.user_id, self.guild_id, self.bot.settings,
+        )
+        if data is None:
+            await interaction.response.send_message("Racer not found.", ephemeral=True)
+            return
+        data["bot_settings"] = self.bot.settings
+        embed = _build_manage_embed(data, status_text=status)
+        view = StableManageView(self.bot, self.racer_id, self.user_id, self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Speed", style=discord.ButtonStyle.primary, emoji="\U0001f3c3", row=0)
+    async def train_speed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._do_train(interaction, "speed")
+
+    @discord.ui.button(label="Cornering", style=discord.ButtonStyle.primary, emoji="\U0001f4a8", row=0)
+    async def train_cornering(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._do_train(interaction, "cornering")
+
+    @discord.ui.button(label="Stamina", style=discord.ButtonStyle.primary, emoji="\U0001f4aa", row=0)
+    async def train_stamina(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._do_train(interaction, "stamina")
+
+    @discord.ui.button(label="Back \u21a9", style=discord.ButtonStyle.secondary, row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = await _fetch_manage_data(
+            self.bot.scheduler.sessionmaker, self.racer_id,
+            self.user_id, self.guild_id, self.bot.settings,
+        )
+        if data is None:
+            await interaction.response.send_message("Racer not found.", ephemeral=True)
+            return
+        data["bot_settings"] = self.bot.settings
+        embed = _build_manage_embed(data)
+        view = StableManageView(self.bot, self.racer_id, self.user_id, self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class StableManageView(discord.ui.View):
+    """Main stable management view — train, rest, feed, sell, rename, close."""
+
+    def __init__(self, bot, racer_id: int, user_id: int, guild_id: int):
+        super().__init__(timeout=STABLE_VIEW_TIMEOUT)
+        self.bot = bot
+        self.racer_id = racer_id
+        self.user_id = user_id
+        self.guild_id = guild_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your stable!", ephemeral=True
+            )
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        if self.message:
+            try:
+                embed = self.message.embeds[0] if self.message.embeds else None
+                if embed:
+                    embed.description = "*Session expired.*"
+                    await self.message.edit(embed=embed, view=self)
+                else:
+                    await self.message.edit(view=self)
+            except (discord.NotFound, discord.HTTPException):
+                pass
+
+    @discord.ui.button(label="Train", style=discord.ButtonStyle.primary, emoji="\u26a1", row=0)
+    async def train(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = await _fetch_manage_data(
+            self.bot.scheduler.sessionmaker, self.racer_id,
+            self.user_id, self.guild_id, self.bot.settings,
+        )
+        if data is None:
+            await interaction.response.send_message("Racer not found.", ephemeral=True)
+            return
+        data["bot_settings"] = self.bot.settings
+        embed = _build_train_embed(data)
+        view = StableTrainView(self.bot, self.racer_id, self.user_id, self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Rest", style=discord.ButtonStyle.primary, emoji="\U0001f4a4", row=0)
+    async def rest(self, interaction: discord.Interaction, button: discord.ui.Button):
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer = await repo.get_racer(session, self.racer_id)
+            if racer is None or racer.owner_id != self.user_id:
+                await interaction.response.send_message("Racer not found or not yours.", ephemeral=True)
+                return
+            if racer.retired:
+                await interaction.response.send_message("This racer is retired.", ephemeral=True)
+                return
+
+            if getattr(racer, "rested_since_race", False):
+                await interaction.response.send_message(
+                    f"**{racer.name}** has already rested this cycle. Wait for the next race!",
+                    ephemeral=True,
+                )
+                return
+
+            new_mood, error = logic.apply_rest(racer.mood)
+            if error:
+                await interaction.response.send_message(error, ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, self.guild_id)
+            cost = resolve_guild_setting(gs, self.bot.settings, "rest_cost")
+
+            wallet = await wallet_repo.get_wallet(session, self.user_id, self.guild_id)
+            if wallet is None:
+                default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
+                wallet = await wallet_repo.create_wallet(
+                    session, user_id=self.user_id, guild_id=self.guild_id, balance=default_bal,
+                )
+            if wallet.balance < cost:
+                await interaction.response.send_message(
+                    f"Resting costs **{cost} coins** but you only have **{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            old_mood = racer.mood
+            wallet.balance -= cost
+            racer.mood = new_mood
+            racer.rested_since_race = True
+            await session.commit()
+
+        status = (
+            f"\U0001f4a4 {racer.name} takes a rest. "
+            f"Mood: {_mood_label(old_mood)} \u2192 {_mood_label(new_mood)}"
+            + (f" — **{cost} coins**" if cost > 0 else "")
+        )
+
+        data = await _fetch_manage_data(
+            self.bot.scheduler.sessionmaker, self.racer_id,
+            self.user_id, self.guild_id, self.bot.settings,
+        )
+        if data is None:
+            await interaction.response.send_message("Racer not found.", ephemeral=True)
+            return
+        data["bot_settings"] = self.bot.settings
+        embed = _build_manage_embed(data, status_text=status)
+        view = StableManageView(self.bot, self.racer_id, self.user_id, self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Feed", style=discord.ButtonStyle.primary, emoji="\U0001f34e", row=0)
+    async def feed(self, interaction: discord.Interaction, button: discord.ui.Button):
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer = await repo.get_racer(session, self.racer_id)
+            if racer is None or racer.owner_id != self.user_id:
+                await interaction.response.send_message("Racer not found or not yours.", ephemeral=True)
+                return
+            if racer.retired:
+                await interaction.response.send_message("This racer is retired.", ephemeral=True)
+                return
+
+            new_mood, error = logic.apply_feed(racer.mood)
+            if error:
+                await interaction.response.send_message(error, ephemeral=True)
+                return
+
+            gs = await repo.get_guild_settings(session, self.guild_id)
+            cost = resolve_guild_setting(gs, self.bot.settings, "feed_cost")
+
+            wallet = await wallet_repo.get_wallet(session, self.user_id, self.guild_id)
+            if wallet is None:
+                default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
+                wallet = await wallet_repo.create_wallet(
+                    session, user_id=self.user_id, guild_id=self.guild_id, balance=default_bal,
+                )
+            if wallet.balance < cost:
+                await interaction.response.send_message(
+                    f"Feeding costs **{cost} coins** but you only have **{wallet.balance} coins**.",
+                    ephemeral=True,
+                )
+                return
+
+            old_mood = racer.mood
+            wallet.balance -= cost
+            racer.mood = new_mood
+            await session.commit()
+
+        status = (
+            f"\U0001f34e {racer.name} enjoys a feast! "
+            f"Mood: {_mood_label(old_mood)} \u2192 {_mood_label(new_mood)} — **{cost} coins**"
+        )
+
+        data = await _fetch_manage_data(
+            self.bot.scheduler.sessionmaker, self.racer_id,
+            self.user_id, self.guild_id, self.bot.settings,
+        )
+        if data is None:
+            await interaction.response.send_message("Racer not found.", ephemeral=True)
+            return
+        data["bot_settings"] = self.bot.settings
+        embed = _build_manage_embed(data, status_text=status)
+        view = StableManageView(self.bot, self.racer_id, self.user_id, self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Sell", style=discord.ButtonStyle.danger, emoji="\U0001f4b0", row=1)
+    async def sell(self, interaction: discord.Interaction, button: discord.ui.Button):
+        async with self.bot.scheduler.sessionmaker() as session:
+            racer = await repo.get_racer(session, self.racer_id)
+            if racer is None or racer.owner_id != self.user_id:
+                await interaction.response.send_message("Racer not found or not yours.", ephemeral=True)
+                return
+
+            # Block if in unfinished race
+            in_race = (
+                await session.execute(
+                    select(models.RaceEntry.id)
+                    .join(models.Race, models.RaceEntry.race_id == models.Race.id)
+                    .where(
+                        models.RaceEntry.racer_id == self.racer_id,
+                        models.Race.finished.is_(False),
+                    )
+                )
+            ).scalars().first()
+            if in_race is not None:
+                await interaction.response.send_message(
+                    f"**{racer.name}** is entered in an upcoming race and can't be sold right now.",
+                    ephemeral=True,
+                )
+                return
+
+            gs = await repo.get_guild_settings(session, self.guild_id)
+            base = resolve_guild_setting(gs, self.bot.settings, "racer_buy_base")
+            mult = resolve_guild_setting(gs, self.bot.settings, "racer_buy_multiplier")
+            frac = resolve_guild_setting(gs, self.bot.settings, "racer_sell_fraction")
+            fem_mult = resolve_guild_setting(gs, self.bot.settings, "female_buy_multiplier")
+            ret_pen = resolve_guild_setting(gs, self.bot.settings, "retired_sell_penalty")
+            foal_pen = resolve_guild_setting(gs, self.bot.settings, "foal_sell_penalty")
+            t_bonus = logic.calculate_tournament_sell_bonus(racer)
+            sell_price = logic.calculate_sell_price(
+                racer, base, mult, frac,
+                female_multiplier=fem_mult,
+                retired_penalty=ret_pen,
+                foal_penalty=foal_pen,
+                tournament_bonus=t_bonus,
+            )
+
+        embed = discord.Embed(
+            title=f"\U0001f4b0 Sell {racer.name}?",
+            description=(
+                f"Are you sure you want to sell **{racer.name}**?\n"
+                f"You'll receive **{sell_price} coins**.\n\n"
+                f"*This cannot be undone.*"
+            ),
+            color=discord.Color.red(),
+        )
+        view = StableSellConfirmView(
+            self.bot, self.racer_id, self.user_id, self.guild_id, sell_price, racer.name,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Rename", style=discord.ButtonStyle.secondary, emoji="\u270f\ufe0f", row=1)
+    async def rename(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = StableRenameModal(
+            self.bot, self.racer_id, self.user_id, self.guild_id, interaction.message,
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, emoji="\u274c", row=2)
+    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        embed = interaction.message.embeds[0] if interaction.message.embeds else None
+        if embed:
+            embed.description = "*Session closed.*"
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(view=self)
+        self.stop()
+
+
 class Stable(commands.Cog, name="stable"):
     """Player-facing racer ownership commands."""
 
@@ -2254,6 +2917,32 @@ class Stable(commands.Cog, name="stable"):
                 inline=False,
             )
         await context.send(embed=embed)
+
+    @stable.command(name="manage", description="Open an interactive panel to manage a racer")
+    @app_commands.describe(racer="Racer to manage")
+    @app_commands.autocomplete(racer=owned_racer_autocomplete)
+    async def stable_manage(self, context: Context, racer: int) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+
+        data = await _fetch_manage_data(
+            self.bot.scheduler.sessionmaker, racer,
+            context.author.id, guild_id, self.bot.settings,
+        )
+        if data is None:
+            await context.send("Racer not found.", ephemeral=True)
+            return
+        if data["racer"].owner_id != context.author.id:
+            await context.send("You don't own that racer!", ephemeral=True)
+            return
+        if data["racer"].retired:
+            await context.send("This racer is retired.", ephemeral=True)
+            return
+
+        data["bot_settings"] = self.bot.settings
+        embed = _build_manage_embed(data)
+        view = StableManageView(self.bot, racer, context.author.id, guild_id)
+        await context.send(embed=embed, view=view)
 
     _RANK_ORDER = {"D": 0, "C": 1, "B": 2, "A": 3, "S": 4}
 
@@ -3156,6 +3845,14 @@ class Stable(commands.Cog, name="stable"):
                 await context.send("This racer is retired.", ephemeral=True)
                 return
 
+            if getattr(racer_obj, "rested_since_race", False):
+                await context.send(
+                    f"**{racer_obj.name}** has already rested this cycle. "
+                    "Wait for the next race!",
+                    ephemeral=True,
+                )
+                return
+
             new_mood, error = logic.apply_rest(racer_obj.mood)
             if error:
                 await context.send(error, ephemeral=True)
@@ -3186,6 +3883,7 @@ class Stable(commands.Cog, name="stable"):
             old_mood = racer_obj.mood
             wallet.balance -= cost
             racer_obj.mood = new_mood
+            racer_obj.rested_since_race = True
             await session.commit()
 
         embed = discord.Embed(
