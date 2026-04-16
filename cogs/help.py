@@ -32,13 +32,10 @@ DERBY_HELP_CATEGORIES = {
     "Your Stable": (
         "Manage your racers and make them competitive.\n"
         "`/stable` — View your owned racers\n"
+        "`/stable manage <racer>` — **Interactive panel** to train, rest, feed, sell, or rename\n"
         "`/stable view <racer>` — Full profile with training costs\n"
-        "`/stable train <racer> <stat>` — Boost a stat (+1)\n"
-        "`/stable rest <racer>` — Improve mood (+1, free)\n"
-        "`/stable feed <racer>` — Improve mood (+2, 30 coins)\n"
-        "`/stable sell <racer>` — Sell back to the pool\n"
-        "`/stable rename <racer> <name>` — Rename a racer\n"
-        "`/stable upgrade` — Buy an extra stable slot"
+        "`/stable upgrade` — Buy an extra stable slot\n"
+        "*Rest can be used once per race cycle. Training is limited per cycle too.*"
     ),
     "Breeding": (
         "Breed racers to produce foals with inherited traits.\n"
@@ -231,7 +228,7 @@ class Help(commands.Cog, name="help"):
         )
         for category, text in DERBY_HELP_CATEGORIES.items():
             embed.add_field(name=category, value=text, inline=False)
-        embed.set_footer(text="Use /stable view <racer> for detailed racer info and training costs.")
+        embed.set_footer(text="Use /stable manage <racer> to train, rest, feed, sell, and rename in one place.")
         await context.send(embed=embed, ephemeral=True)
 
     @help_command.command(name="brewing", description="Show Potion Panic brewing commands and tips")
