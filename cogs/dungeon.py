@@ -292,6 +292,68 @@ def build_return_embed(
 
 
 # ---------------------------------------------------------------------------
+# Resume helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_view_for_state(run, user_id, sessionmaker, dungeon_data):
+    """Return the appropriate View for the current run state."""
+    state = run.state
+    if state in ("combat", "boss"):
+        return CombatView(run.id, user_id, sessionmaker)
+    elif state == "floor_complete":
+        max_floor = dungeon_logic.get_max_floor(dungeon_data)
+        can_descend = run.floor < max_floor
+        return FloorCompleteView(run.id, user_id, sessionmaker, can_descend)
+    else:
+        # exploring, or any other state → continue/retreat
+        return ContinueView(run.id, user_id, sessionmaker)
+
+
+def _build_resume_embed(run, player, dungeon_data):
+    """Build a 'welcome back' embed showing current run status."""
+    state = run.state
+    rooms = json.loads(run.rooms_json)
+    room_num = run.room_index + 1
+    total_rooms = len(rooms)
+
+    embed = discord.Embed(
+        title=f"{dungeon_data['name']} — Floor {run.floor}",
+        color=EMBED_COLOR,
+    )
+
+    if state in ("combat", "boss"):
+        monster_name = run.monster_id or "???"
+        # Try to get actual monster name from room data
+        if run.room_index < len(rooms):
+            room_data = rooms[run.room_index]
+            monster_data = room_data.get("monster", {})
+            monster_name = monster_data.get("name", monster_name)
+        prefix = "**BOSS:** " if state == "boss" else ""
+        embed.color = EMBED_COLOR_BOSS if state == "boss" else EMBED_COLOR_COMBAT
+        embed.description = (
+            f"Room {room_num}/{total_rooms}\n\n"
+            f"*You steel yourself and re-enter the fray...*\n\n"
+            f"{prefix}A **{monster_name}** stands before you!\n"
+            f"Monster HP: {run.monster_hp}/{run.monster_max_hp} "
+            f"{_hp_bar(run.monster_hp, run.monster_max_hp)}"
+        )
+    elif state == "floor_complete":
+        embed.description = (
+            f"*You return to the stairwell...*\n\n"
+            f"Floor {run.floor} is clear. You can descend deeper or retreat."
+        )
+    else:
+        embed.description = (
+            f"Room {room_num}/{total_rooms}\n\n"
+            f"*You dust yourself off and press on...*"
+        )
+
+    embed.set_footer(text=_status_line(run, player))
+    return embed
+
+
+# ---------------------------------------------------------------------------
 # View classes (Button UX)
 # ---------------------------------------------------------------------------
 
@@ -398,6 +460,101 @@ class ItemSelectView(DungeonView):
     async def _select_callback(self, interaction: discord.Interaction):
         await _handle_use_item_selected(
             interaction, self.run_id, self.user_id, self.sessionmaker, self.select.values[0]
+        )
+
+
+class RunRecoveryView(discord.ui.View):
+    """Shown when a player has a stale active run — resume or abandon."""
+
+    def __init__(self, run_id: int, user_id: int, sessionmaker, thread_id: int | None):
+        super().__init__(timeout=120)
+        self.run_id = run_id
+        self.user_id = user_id
+        self.sessionmaker = sessionmaker
+        self.thread_id = thread_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your dungeon run!", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Resume Run", style=discord.ButtonStyle.primary, emoji="\u2694\ufe0f")
+    async def resume(self, interaction: discord.Interaction, button: discord.ui.Button):
+        async with self.sessionmaker() as session:
+            run = await dungeon_repo.get_run(session, self.run_id)
+            if run is None or not run.active:
+                await interaction.response.edit_message(
+                    content="That run no longer exists.", embed=None, view=None,
+                )
+                return
+
+            player = await dungeon_repo.get_player(session, run.user_id, run.guild_id)
+            dungeon_data = dungeon_logic.get_dungeon(run.dungeon_id) or {"name": "Unknown"}
+
+            embed = _build_resume_embed(run, player, dungeon_data)
+            view = _get_view_for_state(run, self.user_id, self.sessionmaker, dungeon_data)
+
+            # Post a fresh interactive message in the existing thread
+            thread = interaction.client.get_channel(self.thread_id) if self.thread_id else None
+            if thread is None and self.thread_id:
+                try:
+                    thread = await interaction.client.fetch_channel(self.thread_id)
+                except Exception:
+                    thread = None
+
+            if thread is not None:
+                msg = await thread.send(embed=embed, view=view)
+                # Update stored message_id so future interactions reference this one
+                run.message_id = msg.id
+                await session.commit()
+                await interaction.response.edit_message(
+                    content=f"Resumed! Head to {thread.mention}.",
+                    embed=None, view=None,
+                )
+            else:
+                # Thread is gone — create a new one
+                channel = interaction.channel
+                display_name = interaction.user.display_name
+                thread_name = f"Monster Mash — {display_name} — {dungeon_data['name']}"
+                new_thread = await channel.create_thread(
+                    name=thread_name[:100],
+                    type=discord.ChannelType.public_thread,
+                    auto_archive_duration=60,
+                )
+                msg = await new_thread.send(embed=embed, view=view)
+                run.thread_id = new_thread.id
+                run.message_id = msg.id
+                await session.commit()
+                await interaction.response.edit_message(
+                    content=f"Resumed! Head to {new_thread.mention}.",
+                    embed=None, view=None,
+                )
+
+    @discord.ui.button(label="Abandon Run", style=discord.ButtonStyle.danger, emoji="\U0001f480")
+    async def abandon(self, interaction: discord.Interaction, button: discord.ui.Button):
+        async with self.sessionmaker() as session:
+            run = await dungeon_repo.get_run(session, self.run_id)
+            if run is None or not run.active:
+                await interaction.response.edit_message(
+                    content="That run no longer exists.", embed=None, view=None,
+                )
+                return
+
+            player = await dungeon_repo.get_or_create_player(
+                session, run.user_id, run.guild_id
+            )
+            dungeon_data = dungeon_logic.get_dungeon(run.dungeon_id) or {"name": "Unknown"}
+            await _process_abandon(session, run, player)
+
+        await interaction.response.edit_message(
+            content=(
+                f"Abandoned your run in **{dungeon_data['name']}**. "
+                f"Loot lost, XP saved. You're free to start a new delve."
+            ),
+            embed=None, view=None,
         )
 
 
@@ -1659,12 +1816,23 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
         user_id = context.author.id
 
         async with self.bot.scheduler.sessionmaker() as session:
-            # Check for active run
+            # Check for active run — offer resume or abandon
             active_run = await dungeon_repo.get_active_run(session, user_id, guild_id)
             if active_run:
+                dungeon_data = dungeon_logic.get_dungeon(active_run.dungeon_id) or {"name": "Unknown"}
+                dname = dungeon_data.get("name", "Unknown")
+                thread_mention = ""
+                if active_run.thread_id:
+                    thread_mention = f"\nThread: <#{active_run.thread_id}>"
+                view = RunRecoveryView(
+                    active_run.id, user_id,
+                    self.bot.scheduler.sessionmaker,
+                    active_run.thread_id,
+                )
                 await context.send(
-                    "You already have an active dungeon run! "
-                    "Finish or abandon it first.",
+                    f"You have an active run in **{dname}** "
+                    f"(Floor {active_run.floor}).{thread_mention}",
+                    view=view,
                     ephemeral=True,
                 )
                 return
