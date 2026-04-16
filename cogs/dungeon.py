@@ -136,7 +136,10 @@ def build_loot_embed(
         item = dungeon_logic.get_gear_by_id(drop["item_id"]) or dungeon_logic.get_item_by_id(drop["item_id"])
         name = item["name"] if item else drop["item_id"]
         is_gear = drop.get("type") == "gear"
-        if is_gear and item:
+        if is_gear and drop.get("duplicate"):
+            sell_gold = drop.get("sell_gold", 0)
+            lines.append(f"\u2694\ufe0f ~~{name}~~ \u2192 **{sell_gold}g** (duplicate)")
+        elif is_gear and item:
             # Show stat requirement hint for enchanted gear
             str_req = item.get("str_requirement", 0)
             dex_req = item.get("dex_requirement", 0)
@@ -1394,6 +1397,28 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
                             )
                             cross_game_drops.append(drop)
                 else:
+                    # Check for duplicate gear — convert to gold immediately
+                    if drop.get("type") == "gear":
+                        gear_def = dungeon_logic.get_gear_by_id(drop["item_id"])
+                        equipped_ids = {
+                            gid for gid in [player.weapon_id, player.armor_id, player.accessory_id] if gid
+                        }
+                        already_equipped = drop["item_id"] in equipped_ids
+                        already_in_stash = await dungeon_repo.has_gear(
+                            session, run.user_id, run.guild_id, drop["item_id"]
+                        )
+                        already_found = any(
+                            fi.get("item_id") == drop["item_id"] for fi in found_items
+                        )
+                        if already_equipped or already_in_stash or already_found:
+                            sell_gold = (gear_def.get("cost", 0) // 4) if gear_def else 0
+                            run.run_gold += sell_gold
+                            gold_gained += sell_gold
+                            drop["duplicate"] = True
+                            drop["sell_gold"] = sell_gold
+                            regular_drops.append(drop)
+                            continue
+
                     found_items.append(drop)
                     regular_drops.append(drop)
 

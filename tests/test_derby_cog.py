@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from bot import DiscordBot
 from cogs import derby as derby_cog
 from cogs import economy as economy_cog
+from cogs import help as help_cog
 from config import Settings
 from db_base import Base
 from derby import models
@@ -79,7 +80,7 @@ async def _make_help_bot():
 @pytest.mark.asyncio
 async def test_help_command():
     bot = await _make_help_bot()
-    cog = derby_cog.Derby(bot)
+    cog = help_cog.Help(bot)
     ctx = DummyContext(bot)
     ctx.invoked_subcommand = None
 
@@ -95,7 +96,7 @@ async def test_help_command():
 @pytest.mark.asyncio
 async def test_help_derby():
     bot = await _make_help_bot()
-    cog = derby_cog.Derby(bot)
+    cog = help_cog.Help(bot)
     ctx = DummyContext(bot)
 
     await cog.help_derby.callback(cog, ctx)
@@ -115,7 +116,7 @@ async def test_help_derby():
 @pytest.mark.asyncio
 async def test_help_brewing():
     bot = await _make_help_bot()
-    cog = derby_cog.Derby(bot)
+    cog = help_cog.Help(bot)
     ctx = DummyContext(bot)
 
     await cog.help_brewing.callback(cog, ctx)
