@@ -1974,8 +1974,9 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
     # ------------------------------------------------------------------
 
     @dungeon.command(name="stats", description="View your dungeon character sheet")
-    async def dungeon_stats(self, context: Context) -> None:
-        await context.defer(ephemeral=True)
+    @app_commands.describe(show="Show your character sheet publicly to the channel")
+    async def dungeon_stats(self, context: Context, show: bool = False) -> None:
+        await context.defer(ephemeral=not show)
         guild_id = context.guild.id if context.guild else 0
         user_id = context.author.id
 
@@ -2013,8 +2014,10 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
             accessory_name = _gear_display(player.accessory_id, "None")
 
             # Build embed
+            race_label = race.title() if race else "Human"
             embed = discord.Embed(
                 title=f"Monster Mash — {context.author.display_name}",
+                description=f"Race: **{race_label}**",
                 color=EMBED_COLOR,
             )
             embed.set_thumbnail(url=context.author.display_avatar.url)
@@ -2056,7 +2059,7 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
             )
             embed.set_footer(text=career_text)
 
-        await context.send(embed=embed, ephemeral=True)
+        await context.send(embed=embed, ephemeral=not show)
 
     # ------------------------------------------------------------------
     # /dungeon allocate — spend unspent stat points

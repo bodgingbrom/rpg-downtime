@@ -122,7 +122,7 @@ DUNGEON_HELP_CATEGORIES = {
         "Delve into dungeons, fight monsters, and keep what you find.\n"
         "`/dungeon delve` — Pick a dungeon and start a run (private thread)\n"
         "`/dungeon delve <name>` — Jump straight into a specific dungeon\n"
-        "`/dungeon stats` — View your character sheet\n"
+        "`/dungeon stats` — View your character sheet (add `show:True` to share)\n"
         "`/dungeon abandon` — Abandon your current run (lose all loot)\n"
         "**Dungeons:** The Goblin Warrens, The Undercrypt"
     ),
