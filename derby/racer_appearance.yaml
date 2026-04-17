@@ -1,0 +1,162 @@
+# Racer appearance attribute pool
+#
+# Each new racer rolls one entry from each category. These attributes are
+# handed to the LLM so it can phrase them into prose without inventing its
+# own (increasingly samey) details.
+#
+# Server owners can freely edit this file — add, remove, or rewrite entries
+# to match their campaign's tone. The game will pick up changes on bot restart.
+
+colors:
+  - name: Burgundy
+    variations: [solid, dappled with white, gradient into black, faintly striped]
+  - name: Metallic Gold
+    variations: [shimmering scales, patchy tarnish, solid gleam, speckled with copper]
+  - name: Bone White
+    variations: [solid, streaked with red, marbled with gray, cracked-porcelain pattern]
+  - name: Obsidian Black
+    variations: [solid, glossy with blue highlights, matte, flecked with silver]
+  - name: Deep Emerald
+    variations: [solid, scaled, moss-speckled, veined with lighter green]
+  - name: Storm Gray
+    variations: [solid, cloud-dappled, dark-maned, streaked with white]
+  - name: Rust Orange
+    variations: [solid, tiger-striped, patchy rust-and-cream, ember-flecked]
+  - name: Midnight Blue
+    variations: [solid, starfield-speckled, gradient into black, wave-patterned]
+  - name: Pale Lavender
+    variations: [solid, lilac-marbled, faintly iridescent, cream-bellied]
+  - name: Chestnut Brown
+    variations: [solid, white-socked, blaze-faced, dappled with cream]
+  - name: Copper
+    variations: [solid, shimmering, patchy verdigris, hammered-metal texture]
+  - name: Bruise Purple
+    variations: [solid, blue-and-purple marbled, sickly-green veins, faintly glowing]
+  - name: Snow-Cream
+    variations: [solid, dove-gray maned, rose-flecked, faintly pink at the extremities]
+  - name: Forest Moss
+    variations: [solid, lichen-patched, dew-speckled, bark-textured]
+  - name: Crimson
+    variations: [solid, blood-splattered pattern, gradient into pink, black-striped]
+  - name: Iridescent Oil-Slick
+    variations: [shimmering, rainbow-sheened, darker beneath, prism-flecked]
+  - name: Dust Beige
+    variations: [solid, sand-dappled, cracked-earth pattern, paler underneath]
+  - name: Seafoam Green
+    variations: [solid, wave-rippled, foam-flecked, coral-pink underbelly]
+  - name: Volcanic Red-Black
+    variations: [cracked like cooling lava, ember-glowing veins, solid char, ash-dusted]
+  - name: Porcelain White-Gold
+    variations: [solid, gilt-traced patterns, hairline gold cracks, gradient at the edges]
+
+builds:
+  - Lean and wiry
+  - Stocky and powerful
+  - Bulky, muscle-bound
+  - Gaunt and angular
+  - Compact and springy
+  - Tall and willowy
+  - Barrel-chested and short-legged
+  - Graceful and deer-like
+  - Thickset with a low center of gravity
+  - Whip-thin with long legs
+  - Heavy-boned and plodding-looking
+  - Sleek and almost feline
+
+features_primary:  # Head / torso / back — the "silhouette" slot
+  - Spines along its back that crackle with static electricity
+  - Breathes faint curls of smoke from its nostrils
+  - A single spiraled horn jutting from its forehead
+  - A pair of curled, ram-like horns
+  - Translucent skin showing faint vein patterns
+  - A crown of bone plates across its skull
+  - A mane of living flame that gives off no heat
+  - A mane of drifting mist that never dissipates
+  - Patches of chitinous armor along its flanks
+  - Feathered shoulders and withers, the rest smooth
+  - A cluster of small eyes above its main pair
+  - Antlers grown in branching, unnatural shapes
+  - A bioluminescent stripe running down its spine
+  - Crystal shards embedded in its shoulders
+  - A mantle of interlocking scales from neck to haunches
+  - Delicate gill-slits along its ribs
+  - A second, smaller head that never opens its eyes
+  - Moth-like antennae sprouting between its ears
+  - Cracks across its hide glow faintly from within
+  - A permanent aura of frost crystals clinging to its coat
+  - Runic scars that seem to shift position when unobserved
+  - A flared, hood-like ruff of skin behind its head
+  - Deer-like velvet covering its shoulders
+  - Patchy fur that falls away to reveal smooth obsidian skin
+  - A sunburst pattern of raised ridges on its chest
+
+features_secondary:  # Limbs / tail / underside — the "locomotion" slot
+  - Six legs instead of four
+  - Webbed, paddle-like feet
+  - A forked, prehensile tail
+  - A razor-sharp dorsal fin running its full length
+  - Legs that bend backward at the knee like a bird's
+  - Clawed toes instead of hooves
+  - A trailing, peacock-like tail of iridescent plumes
+  - A bone-bladed tail that drags behind it
+  - Hooves that leave faint scorch marks on the ground
+  - Three tails, each a different length
+  - Hooves split into four sharp points
+  - A snake-like tail that coils and uncoils on its own
+  - Insectoid bristles along its lower legs
+  - Stubby, barely-there legs that belie surprising speed
+  - A long, fleshy proboscis instead of a muzzle
+  - Translucent wings folded flat against its flanks, never used
+  - Fetlocks grown into trailing strands of silk
+  - Feet that never quite touch the ground
+  - A bifurcated tail that ends in two small, grasping hands
+  - Hooves of polished black crystal
+  - A rat-like tail covered in short bristles
+  - Legs wrapped in barkskin that flakes in the wind
+  - Fingers where hooves should be, each with a blunt claw
+  - A tail dripping constantly with water that never pools
+  - Feet silent on any surface, no matter the stride
+
+eyes:
+  - Glowing ember eyes
+  - Heterochromatic — one pale blue, one deep gold
+  - Cat-slit pupils that widen in low light
+  - Mirrored, silver orbs with no visible pupil
+  - No visible eyes, just smooth patches of skin
+  - A single wide eye in the center of its forehead
+  - Insectoid compound eyes in deep violet
+  - Milky-white eyes that track movement regardless
+  - Eyes that glow faintly when the moon is out
+  - A second pair of smaller eyes beneath the main ones
+  - Pupils shaped like crescents
+  - Eyes the color of fresh blood
+  - Eyelids that blink sideways, not up and down
+  - Eyes that mirror whatever they're looking at
+  - Eyes constantly leaking a thin, silvery tear
+
+origins:
+  - Born in the caldera of an active volcano
+  - Raised by monks in a mountain temple
+  - Found as a foal aboard a derelict shipwreck
+  - Hatched during a lunar eclipse
+  - Pulled alive from a collapsed mine shaft
+  - Abandoned at a crossroads shrine and taken in
+  - Emerged fully grown from a fairy ring
+  - Bred in secret by a disgraced royal stablemaster
+  - Washed ashore on an unknown coast with no memory
+  - Rescued from a traveling freak show
+  - Born in a library archive under flickering lamplight
+  - Raised entirely by a pack of wild hounds
+  - Hatched from an egg stolen from a storm giant
+  - Rumored to be the last of a bloodline thought extinct
+  - Discovered wandering a battlefield the morning after
+  - Purchased at auction from a silent buyer in a black cloak
+  - Born on the stroke of midnight on the winter solstice
+  - Said to have walked out of a dream into the waking world
+  - Found inside a standing stone circle, already weaned
+  - Smuggled out of a cursed kingdom as a foal
+  - Born to a mare who died the same hour
+  - Hatched in a wizard's laboratory and fled the fire
+  - Rescued from a caravan attacked by highwaymen
+  - Emerged from the sea during a red-sky morning
+  - Born in a traveling circus, raised by an old clown

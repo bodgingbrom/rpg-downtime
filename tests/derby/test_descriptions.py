@@ -120,6 +120,52 @@ async def test_generate_description_failure_returns_none():
 
 
 @pytest.mark.asyncio
+async def test_generate_description_with_appearance_block():
+    """When appearance dict is provided, traits land in the user prompt."""
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = _mock_response(
+        "A burgundy, dappled creature with a lean build and glowing ember eyes."
+    )
+    descriptions._client = mock_client
+
+    appearance_dict = {
+        "color": "Burgundy",
+        "variation": "dappled",
+        "build": "Lean and wiry",
+        "feature_primary": "Spines along its back that crackle with static electricity",
+        "feature_secondary": "Webbed, paddle-like feet",
+        "eyes": "Glowing ember eyes",
+        "origin": "Born in a volcano",
+    }
+
+    result = await descriptions.generate_description(
+        name="Burn",
+        speed=20,
+        cornering=20,
+        stamina=20,
+        temperament="Bold",
+        gender="M",
+        flavor="dragons",
+        appearance=appearance_dict,
+    )
+
+    assert result is not None
+    # Traits appear in the user prompt block
+    call_kwargs = mock_client.messages.create.call_args
+    messages = call_kwargs.kwargs.get("messages") or call_kwargs[1].get("messages")
+    user_text = messages[0]["content"]
+    assert "Burgundy" in user_text
+    assert "Lean and wiry" in user_text
+    assert "Glowing ember eyes" in user_text
+    assert "Webbed" in user_text
+    assert "volcano" in user_text
+
+    # New-path system prompt no longer asks the LLM to invent features
+    system_prompt = call_kwargs.kwargs.get("system") or call_kwargs[1].get("system")
+    assert "Weave" in system_prompt or "weave" in system_prompt
+
+
+@pytest.mark.asyncio
 async def test_generate_description_no_api_key():
     """Without an API key or client, generation returns None."""
     descriptions._client = None

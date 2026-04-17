@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 import checks
 from config import resolve_guild_setting
-from derby import commentary, descriptions, flavor_names, logic, models
+from derby import appearance, commentary, descriptions, flavor_names, logic, models
 from derby import repositories as repo
 from economy import repositories as wallet_repo
 from rpg import repositories as rpg_repo
@@ -1343,7 +1343,10 @@ class Derby(commands.Cog, name="derby"):
                 rank=rank,
                 **stats,
             )
-            # Generate description if flavor is set
+            # Roll appearance attributes; generate description if flavor is set
+            rolled = appearance.roll_appearance()
+            if rolled:
+                racer.appearance = appearance.serialize(rolled)
             gs = await repo.get_guild_settings(session, guild_id)
             flavor = getattr(gs, "racer_flavor", None) if gs else None
             if flavor:
@@ -1355,11 +1358,12 @@ class Derby(commands.Cog, name="derby"):
                     temperament=racer.temperament,
                     gender=racer.gender,
                     flavor=flavor,
+                    appearance=rolled or None,
                 )
                 if desc:
                     racer.description = desc
-                    await session.commit()
-                    await session.refresh(racer)
+            await session.commit()
+            await session.refresh(racer)
         embed = discord.Embed(title=f"New Racer: {racer.name} (#{racer.id})")
         embed.add_field(
             name="Owner",
@@ -1608,6 +1612,10 @@ class Derby(commands.Cog, name="derby"):
                     ephemeral=True,
                 )
                 return
+            # Reuse structured appearance if present; otherwise roll fresh
+            rolled = appearance.deserialize(racer_obj.appearance)
+            if not rolled:
+                rolled = appearance.roll_appearance()
             desc = await descriptions.generate_description(
                 name=racer_obj.name,
                 speed=racer_obj.speed,
@@ -1617,13 +1625,17 @@ class Derby(commands.Cog, name="derby"):
                 gender=racer_obj.gender,
                 flavor=flavor,
                 hint=hint,
+                appearance=rolled or None,
             )
             if desc is None:
                 await context.send(
                     "Description generation failed — check API key.", ephemeral=True
                 )
                 return
-            await repo.update_racer(session, racer, description=desc)
+            updates = {"description": desc}
+            if rolled:
+                updates["appearance"] = appearance.serialize(rolled)
+            await repo.update_racer(session, racer, **updates)
         embed = discord.Embed(
             title=f"Description Updated — {racer_obj.name}",
             description=desc,
@@ -3126,6 +3138,11 @@ class Stable(commands.Cog, name="stable"):
             # Lazy-generate description if missing and flavor is set
             flavor = getattr(gs, "racer_flavor", None) if gs else None
             if racer_obj.description is None and flavor:
+                rolled = appearance.deserialize(racer_obj.appearance)
+                if not rolled:
+                    rolled = appearance.roll_appearance()
+                    if rolled:
+                        racer_obj.appearance = appearance.serialize(rolled)
                 desc = await descriptions.generate_description(
                     name=racer_obj.name,
                     speed=racer_obj.speed,
@@ -3134,11 +3151,12 @@ class Stable(commands.Cog, name="stable"):
                     temperament=racer_obj.temperament,
                     gender=racer_obj.gender,
                     flavor=flavor,
+                    appearance=rolled or None,
                 )
                 if desc:
                     racer_obj.description = desc
-                    await session.commit()
-                    await session.refresh(racer_obj)
+                await session.commit()
+                await session.refresh(racer_obj)
 
         # Build embed
         gender_emoji = logic.GENDER_LABELS.get(racer_obj.gender, "")
@@ -3244,6 +3262,13 @@ class Stable(commands.Cog, name="stable"):
                 inline=True,
             )
 
+        # Appearance (structured attributes rolled at creation)
+        appearance_data = appearance.deserialize(racer_obj.appearance)
+        if appearance_data:
+            appearance_text = appearance.format_appearance_for_display(appearance_data)
+            if appearance_text:
+                embed.add_field(name="Appearance", value=appearance_text, inline=False)
+
         # Description
         if racer_obj.description:
             desc = racer_obj.description
@@ -3288,6 +3313,11 @@ class Stable(commands.Cog, name="stable"):
             # Lazy-generate description if missing and flavor is set
             flavor = getattr(gs, "racer_flavor", None) if gs else None
             if racer_obj.description is None and flavor:
+                rolled = appearance.deserialize(racer_obj.appearance)
+                if not rolled:
+                    rolled = appearance.roll_appearance()
+                    if rolled:
+                        racer_obj.appearance = appearance.serialize(rolled)
                 desc = await descriptions.generate_description(
                     name=racer_obj.name,
                     speed=racer_obj.speed,
@@ -3296,11 +3326,12 @@ class Stable(commands.Cog, name="stable"):
                     temperament=racer_obj.temperament,
                     gender=racer_obj.gender,
                     flavor=flavor,
+                    appearance=rolled or None,
                 )
                 if desc:
                     racer_obj.description = desc
-                    await session.commit()
-                    await session.refresh(racer_obj)
+                await session.commit()
+                await session.refresh(racer_obj)
 
         # Build embed
         gender_emoji = logic.GENDER_LABELS.get(racer_obj.gender, "")
@@ -3362,6 +3393,13 @@ class Stable(commands.Cog, name="stable"):
                 value=f"{t_wins}W / {t_place} top-3",
                 inline=True,
             )
+
+        # Appearance (structured attributes rolled at creation)
+        appearance_data = appearance.deserialize(racer_obj.appearance)
+        if appearance_data:
+            appearance_text = appearance.format_appearance_for_display(appearance_data)
+            if appearance_text:
+                embed.add_field(name="Appearance", value=appearance_text, inline=False)
 
         # Description
         if racer_obj.description:
@@ -4134,8 +4172,21 @@ class Stable(commands.Cog, name="stable"):
             kwargs = logic.breed_racer(sire, dam, guild_id)
             foal = await repo.create_racer(session, **kwargs)
 
-            # Generate foal description if both parents have descriptions and flavor is set
+            # Inherit appearance from parents (structured). If neither
+            # parent has structured appearance, fall back to legacy prose
+            # blending via sire_desc/dam_desc.
             flavor = getattr(gs, "racer_flavor", None) if gs else None
+            sire_app = appearance.deserialize(sire.appearance)
+            dam_app = appearance.deserialize(dam.appearance)
+            has_structured_parent = bool(sire_app) or bool(dam_app)
+
+            if has_structured_parent:
+                foal_app = appearance.inherit_appearance(sire_app, dam_app)
+                if foal_app:
+                    foal.appearance = appearance.serialize(foal_app)
+            else:
+                foal_app = {}
+
             if flavor and sire.description and dam.description:
                 foal_desc = await descriptions.generate_description(
                     name=foal.name,
@@ -4145,8 +4196,9 @@ class Stable(commands.Cog, name="stable"):
                     temperament=foal.temperament,
                     gender=foal.gender,
                     flavor=flavor,
-                    sire_desc=sire.description,
-                    dam_desc=dam.description,
+                    sire_desc=sire.description if not foal_app else None,
+                    dam_desc=dam.description if not foal_app else None,
+                    appearance=foal_app or None,
                 )
                 if foal_desc:
                     foal.description = foal_desc

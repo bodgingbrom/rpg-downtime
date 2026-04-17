@@ -216,6 +216,7 @@ class DerbyScheduler:
                 "tournament_wins": ("INTEGER", "0"),
                 "tournament_placements": ("INTEGER", "0"),
                 "description": ("TEXT", "NULL"),
+                "appearance": ("TEXT", "NULL"),
                 "pool_expires_at": ("DATETIME", "NULL"),
                 "npc_id": ("INTEGER", "NULL"),
             }
@@ -722,15 +723,28 @@ class DerbyScheduler:
                         npc_id=npc.id,
                     )
 
-                    # Generate description if flavor is set
+                    # Roll appearance and generate description if flavor is set
                     try:
-                        desc = await descriptions.generate_description(
-                            racer, racer_flavor
-                        )
-                        if desc:
-                            await repo.update_racer(
-                                session, racer.id, description=desc
+                        from . import appearance as _appearance
+                        rolled = _appearance.roll_appearance()
+                        updates: dict = {}
+                        if rolled:
+                            updates["appearance"] = _appearance.serialize(rolled)
+                        if racer_flavor:
+                            desc = await descriptions.generate_description(
+                                name=racer.name,
+                                speed=racer.speed,
+                                cornering=racer.cornering,
+                                stamina=racer.stamina,
+                                temperament=racer.temperament,
+                                gender=racer.gender,
+                                flavor=racer_flavor,
+                                appearance=rolled or None,
                             )
+                            if desc:
+                                updates["description"] = desc
+                        if updates:
+                            await repo.update_racer(session, racer.id, **updates)
                     except Exception:
                         pass  # Description is optional
 
@@ -1923,19 +1937,31 @@ class DerbyScheduler:
                 npc_id=npc.id,
             )
 
-            # Generate description
-            if racer_flavor:
-                from . import descriptions
-                try:
+            # Roll appearance + generate description
+            from . import appearance as _appearance
+            from . import descriptions
+            try:
+                rolled = _appearance.roll_appearance()
+                updates: dict = {}
+                if rolled:
+                    updates["appearance"] = _appearance.serialize(rolled)
+                if racer_flavor:
                     desc = await descriptions.generate_description(
-                        new_racer, racer_flavor
+                        name=new_racer.name,
+                        speed=new_racer.speed,
+                        cornering=new_racer.cornering,
+                        stamina=new_racer.stamina,
+                        temperament=new_racer.temperament,
+                        gender=new_racer.gender,
+                        flavor=racer_flavor,
+                        appearance=rolled or None,
                     )
                     if desc:
-                        await repo.update_racer(
-                            session, new_racer.id, description=desc
-                        )
-                except Exception:
-                    pass
+                        updates["description"] = desc
+                if updates:
+                    await repo.update_racer(session, new_racer.id, **updates)
+            except Exception:
+                pass
 
         # Announce
         emoji = f"{npc.emoji} " if npc.emoji else ""
