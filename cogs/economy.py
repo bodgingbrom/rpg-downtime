@@ -194,7 +194,9 @@ class Economy(commands.Cog, name="economy"):
             await context.send(embed=embed)
 
 
-    @commands.hybrid_command(name="gift", description="Gift coins to another player")
+    GIFT_DAILY_LIMIT = 100
+
+    @commands.hybrid_command(name="gift", description="Gift coins to another player (max 100/recipient/day)")
     @discord.app_commands.describe(
         player="The player to gift coins to",
         amount="Number of coins to gift",
@@ -210,12 +212,45 @@ class Economy(commands.Cog, name="economy"):
         if amount <= 0:
             await context.send("Amount must be a positive number.", ephemeral=True)
             return
+        if amount > self.GIFT_DAILY_LIMIT:
+            await context.send(
+                f"You can only gift up to **{self.GIFT_DAILY_LIMIT} coins** "
+                f"to the same player per day.",
+                ephemeral=True,
+            )
+            return
 
         guild_id = context.guild.id if context.guild else 0
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         async with self.bot.scheduler.sessionmaker() as session:
             gs = await repo.get_guild_settings(session, guild_id)
             default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
+
+            # Check daily gift limit to this recipient
+            already_gifted = await wallet_repo.get_gift_total_today(
+                session,
+                sender_id=context.author.id,
+                recipient_id=player.id,
+                guild_id=guild_id,
+                date=today,
+            )
+            remaining = self.GIFT_DAILY_LIMIT - already_gifted
+            if amount > remaining:
+                if remaining <= 0:
+                    msg = (
+                        f"You've already gifted **{already_gifted} coins** to "
+                        f"{player.mention} today. Limit resets at 00:00 UTC."
+                    )
+                else:
+                    msg = (
+                        f"You've already gifted **{already_gifted} coins** to "
+                        f"{player.mention} today — you can only gift "
+                        f"**{remaining}** more before the daily limit resets "
+                        f"at 00:00 UTC."
+                    )
+                await context.send(msg, ephemeral=True)
+                return
 
             # Get sender wallet
             sender_wallet = await wallet_repo.get_wallet(
@@ -250,8 +285,17 @@ class Economy(commands.Cog, name="economy"):
 
             sender_wallet.balance -= amount
             recipient_wallet.balance += amount
+            await wallet_repo.add_gift(
+                session,
+                sender_id=context.author.id,
+                recipient_id=player.id,
+                guild_id=guild_id,
+                date=today,
+                amount=amount,
+            )
             await session.commit()
 
+        new_total = already_gifted + amount
         embed = discord.Embed(
             title="\U0001f381 Gift Sent!",
             description=(
@@ -260,7 +304,12 @@ class Economy(commands.Cog, name="economy"):
             ),
             color=discord.Color.green(),
         )
-        embed.set_footer(text=f"Your balance: {sender_wallet.balance} coins")
+        embed.set_footer(
+            text=(
+                f"Your balance: {sender_wallet.balance} coins \u2022 "
+                f"Gifted to this player today: {new_total}/{self.GIFT_DAILY_LIMIT}"
+            )
+        )
         await context.send(embed=embed)
 
 
