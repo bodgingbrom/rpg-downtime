@@ -194,5 +194,75 @@ class Economy(commands.Cog, name="economy"):
             await context.send(embed=embed)
 
 
+    @commands.hybrid_command(name="gift", description="Gift coins to another player")
+    @discord.app_commands.describe(
+        player="The player to gift coins to",
+        amount="Number of coins to gift",
+    )
+    async def gift(self, context: Context, player: discord.Member, amount: int) -> None:
+        await context.defer()
+        if player.bot:
+            await context.send("You can't gift coins to a bot!", ephemeral=True)
+            return
+        if player.id == context.author.id:
+            await context.send("You can't gift coins to yourself!", ephemeral=True)
+            return
+        if amount <= 0:
+            await context.send("Amount must be a positive number.", ephemeral=True)
+            return
+
+        guild_id = context.guild.id if context.guild else 0
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+            default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
+
+            # Get sender wallet
+            sender_wallet = await wallet_repo.get_wallet(
+                session, context.author.id, guild_id
+            )
+            if sender_wallet is None:
+                sender_wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=context.author.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+            if sender_wallet.balance < amount:
+                await context.send(
+                    f"You only have **{sender_wallet.balance} coins** — "
+                    f"can't gift **{amount}**.",
+                    ephemeral=True,
+                )
+                return
+
+            # Get or create recipient wallet
+            recipient_wallet = await wallet_repo.get_wallet(
+                session, player.id, guild_id
+            )
+            if recipient_wallet is None:
+                recipient_wallet = await wallet_repo.create_wallet(
+                    session,
+                    user_id=player.id,
+                    guild_id=guild_id,
+                    balance=default_bal,
+                )
+
+            sender_wallet.balance -= amount
+            recipient_wallet.balance += amount
+            await session.commit()
+
+        embed = discord.Embed(
+            title="\U0001f381 Gift Sent!",
+            description=(
+                f"{context.author.mention} gifted **{amount} coins** "
+                f"to {player.mention}!"
+            ),
+            color=discord.Color.green(),
+        )
+        embed.set_footer(text=f"Your balance: {sender_wallet.balance} coins")
+        await context.send(embed=embed)
+
+
 async def setup(bot) -> None:
     await bot.add_cog(Economy(bot))
