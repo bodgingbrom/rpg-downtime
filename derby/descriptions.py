@@ -48,23 +48,46 @@ def _build_system_prompt(
     sire_desc: str | None = None,
     dam_desc: str | None = None,
     hint: str | None = None,
+    has_appearance: bool = False,
 ) -> str:
     """Build the system prompt for description generation."""
-    prompt = (
-        f"You are describing a racing creature for a Discord game. "
-        f"The guild's creature theme: {flavor}.\n\n"
-        "Write exactly 2 short sentences describing ONLY what this racer looks like. "
-        "Cover exactly 3 physical features: build/size, coloring/markings, and one unique detail.\n\n"
-        "RULES:\n"
-        "- Describe ONLY visible appearance — what someone would see looking at the creature\n"
-        "- Do NOT infer abilities, personality, speed, agility, or competitiveness from appearance\n"
-        "- No phrases like 'hints at', 'suggests', 'built for', 'speaks to', 'capable of'\n"
-        "- No embellishments or purple prose — plain, vivid, concrete descriptions\n"
-        "- Do NOT include the racer's name, stat numbers, or game mechanics\n"
-        "- Keep it under 50 words total"
-    )
+    if has_appearance:
+        # New path: the rolled attributes define the creature; LLM just weaves them
+        prompt = (
+            f"You are describing a racing creature for a Discord game. "
+            f"The guild's creature theme: {flavor}.\n\n"
+            "The creature's distinguishing traits are listed below. "
+            "Weave them into 2-3 flowing sentences (under 60 words). "
+            "Don't list the traits robotically — let the prose breathe and "
+            "connect them naturally. Every listed trait must appear in the "
+            "output, but you may rephrase them for flow.\n\n"
+            "RULES:\n"
+            "- Describe ONLY visible appearance — what someone would see looking at the creature\n"
+            "- Do NOT infer abilities, personality, speed, agility, or competitiveness from appearance\n"
+            "- No phrases like 'hints at', 'suggests', 'built for', 'speaks to', 'capable of'\n"
+            "- No purple prose — plain, vivid, concrete descriptions\n"
+            "- Do NOT include the racer's name, stat numbers, or game mechanics\n"
+            "- The origin line should become a brief phrase, not a whole sentence"
+        )
+    else:
+        # Legacy path: LLM has to invent everything
+        prompt = (
+            f"You are describing a racing creature for a Discord game. "
+            f"The guild's creature theme: {flavor}.\n\n"
+            "Write exactly 2 short sentences describing ONLY what this racer looks like. "
+            "Cover exactly 3 physical features: build/size, coloring/markings, and one unique detail.\n\n"
+            "RULES:\n"
+            "- Describe ONLY visible appearance — what someone would see looking at the creature\n"
+            "- Do NOT infer abilities, personality, speed, agility, or competitiveness from appearance\n"
+            "- No phrases like 'hints at', 'suggests', 'built for', 'speaks to', 'capable of'\n"
+            "- No embellishments or purple prose — plain, vivid, concrete descriptions\n"
+            "- Do NOT include the racer's name, stat numbers, or game mechanics\n"
+            "- Keep it under 50 words total"
+        )
 
-    if sire_desc and dam_desc:
+    if sire_desc and dam_desc and not has_appearance:
+        # Parent-blending only used in the legacy path; new path uses
+        # structured inheritance upstream (see derby/appearance.py).
         prompt += (
             "\n\nThis is a foal born from two parents. Blend visible traits from "
             "both parents and add one unique feature. It should resemble both "
@@ -86,23 +109,17 @@ def _build_user_prompt(
     stamina: int,
     temperament: str,
     gender: str,
+    appearance_block: str = "",
 ) -> str:
     """Build the user prompt with racer details as flavor hints."""
-    # Translate stats into descriptive hints
-    def _stat_hint(value: int) -> str:
-        if value <= 10:
-            return "low"
-        if value <= 20:
-            return "moderate"
-        if value <= 27:
-            return "high"
-        return "exceptional"
-
-    return (
+    base = (
         f"Racer: {name}\n"
         f"Gender: {'Male' if gender == 'M' else 'Female'}\n"
         f"Temperament: {temperament}"
     )
+    if appearance_block:
+        base += f"\n\nTraits to include:\n{appearance_block}"
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -121,19 +138,39 @@ async def generate_description(
     sire_desc: str | None = None,
     dam_desc: str | None = None,
     hint: str | None = None,
+    appearance: dict[str, str] | None = None,
 ) -> str | None:
     """Generate an LLM description for a racer.
 
     Returns the description string, or ``None`` if the LLM is unavailable
     or generation fails.  An optional *hint* steers the output
     (e.g. "make him look like a literal ghost").
+
+    When *appearance* is provided (the new structured-attribute system),
+    the LLM's job shrinks to phrasing the given traits. When it's None,
+    falls back to the legacy prompt that asks the LLM to invent features
+    from scratch.
     """
+    from . import appearance as appearance_module
+
     client = _get_client()
     if client is None:
         return None
 
-    system_prompt = _build_system_prompt(flavor, sire_desc, dam_desc, hint=hint)
-    user_prompt = _build_user_prompt(name, speed, cornering, stamina, temperament, gender)
+    has_appearance = bool(appearance)
+    appearance_block = (
+        appearance_module.format_appearance_for_prompt(appearance)
+        if has_appearance
+        else ""
+    )
+
+    system_prompt = _build_system_prompt(
+        flavor, sire_desc, dam_desc, hint=hint, has_appearance=has_appearance,
+    )
+    user_prompt = _build_user_prompt(
+        name, speed, cornering, stamina, temperament, gender,
+        appearance_block=appearance_block,
+    )
 
     try:
         response = await asyncio.to_thread(
