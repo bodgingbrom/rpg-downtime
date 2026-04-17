@@ -305,10 +305,7 @@ class Economy(commands.Cog, name="economy"):
             color=discord.Color.green(),
         )
         embed.set_footer(
-            text=(
-                f"Your balance: {sender_wallet.balance} coins \u2022 "
-                f"Gifted to this player today: {new_total}/{self.GIFT_DAILY_LIMIT}"
-            )
+            text=f"Gifted to this player today: {new_total}/{self.GIFT_DAILY_LIMIT}"
         )
         await context.send(embed=embed)
 
