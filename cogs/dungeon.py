@@ -1551,6 +1551,7 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
         effect = item_def.get("effect", {})
         effect_type = effect.get("type", "")
         narrative = []
+        in_combat = run.state in ("combat", "boss") and run.monster_id is not None
 
         if effect_type == "heal":
             heal = effect.get("value", 0)
@@ -1566,6 +1567,53 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
             run.monster_id = None
             run.monster_hp = 0
             run.monster_max_hp = 0
+            in_combat = False  # escaped — monster gets no turn
+
+        # Using an item in combat costs your action — monster takes its turn
+        if in_combat:
+            profile = await rpg_repo.get_or_create_profile(
+                session, run.user_id, run.guild_id
+            )
+            race = profile.race
+            rooms = json.loads(run.rooms_json)
+            room_data = rooms[run.room_index]
+            monster = room_data["monster"]
+
+            ai_weights = monster.get("ai", {"attack": 70, "heavy": 30})
+            mon_action = dungeon_logic.select_monster_action(ai_weights)
+            mon_dmg = 0
+            if mon_action == "attack":
+                mon_dmg, _ = dungeon_logic.calc_monster_damage(
+                    monster["attack_dice"], monster.get("attack_bonus", 0),
+                    dungeon_logic.get_armor_defense(player.armor_id), False,
+                )
+                narrative.append(f"The {monster['name']} attacks you for **{mon_dmg}** damage!")
+            elif mon_action == "heavy":
+                heavy_dmg, _ = dungeon_logic.calc_monster_damage(
+                    monster["attack_dice"], monster.get("attack_bonus", 0),
+                    dungeon_logic.get_armor_defense(player.armor_id), False,
+                )
+                mon_dmg = int(heavy_dmg * 1.5)
+                narrative.append(f"The {monster['name']} unleashes a heavy attack for **{mon_dmg}** damage!")
+            elif mon_action == "defend":
+                narrative.append(f"The {monster['name']} braces defensively.")
+
+            run.current_hp = max(run.current_hp - mon_dmg, 0)
+            run.is_defending = False
+
+            # Stoneblood: Dwarf survives killing blow once per run
+            if run.current_hp <= 0 and not run.stoneblood_used and get_racial_modifier(race, "dungeon.stoneblood", False):
+                run.current_hp = 1
+                run.stoneblood_used = True
+                narrative.append("**Stoneblood!** You refuse to fall — sheer dwarven stubbornness keeps you on your feet at 1 HP!")
+
+            if run.current_hp <= 0:
+                narrative.append(f"\nThe {monster['name']} strikes you down!")
+                run.found_items_json = json.dumps(found_items)
+                await session.commit()
+                await session.refresh(run)
+                await _process_death(session, run, player, dungeon_data, interaction, narrative)
+                return
 
         run.found_items_json = json.dumps(found_items)
         await session.commit()
