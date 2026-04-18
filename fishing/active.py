@@ -29,7 +29,7 @@ logger = logging.getLogger("discord_bot")
 
 # Timeouts per event type (seconds)
 COMMON_REEL_TIMEOUT = 300     # commons: long window, no fail state — just miss the flavor
-UNCOMMON_VIBE_TIMEOUT = 20    # phase 2
+UNCOMMON_VIBE_TIMEOUT = 25    # from bite to modal submission
 RARE_HAIKU_TIMEOUT = 40       # phase 3
 LEGENDARY_TURN_TIMEOUT = 60   # phase 4
 
@@ -66,6 +66,55 @@ class ReelInView(discord.ui.View):
         button.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
+
+
+class VibeCheckModal(discord.ui.Modal, title="What's the vibe?"):
+    """Modal for submitting a one-word vibe response to an uncommon bite."""
+
+    word_input = discord.ui.TextInput(
+        label="One word captures this bite",
+        placeholder="patient, hungry, sharp, lonely, hollow...",
+        max_length=30,
+        required=True,
+        style=discord.TextStyle.short,
+    )
+
+    def __init__(self, parent_view: "VibeCheckView"):
+        super().__init__()
+        self._view = parent_view
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = str(self.word_input.value or "").strip()
+        # Take the first whitespace-separated token, lowercase it
+        first = raw.split()[0].lower() if raw else ""
+        self._view.word = first
+        self._view.submitted = True
+        await interaction.response.defer()  # acknowledge silently
+        self._view.stop()
+
+
+class VibeCheckView(discord.ui.View):
+    """A Respond button that opens the vibe-check modal for an uncommon bite."""
+
+    def __init__(self, user_id: int, timeout: float = UNCOMMON_VIBE_TIMEOUT):
+        super().__init__(timeout=timeout)
+        self.user_id = user_id
+        self.word: str | None = None
+        self.submitted = False
+
+    @discord.ui.button(label="Respond", style=discord.ButtonStyle.primary)
+    async def respond(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your line!", ephemeral=True
+            )
+            return
+        # Sending the modal IS the response to the interaction
+        await interaction.response.send_modal(VibeCheckModal(self))
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +239,7 @@ class ActiveFishingRunner:
             if rarity == "common":
                 success = await self._handle_common(fs, catch, location_data)
             elif rarity == "uncommon":
-                # Phase 2 placeholder — auto-success for now
-                success = await self._handle_placeholder(fs, catch, location_data)
+                success = await self._handle_uncommon(fs, catch, location_data)
             elif rarity == "rare":
                 # Phase 3 placeholder — auto-success for now
                 success = await self._handle_placeholder(fs, catch, location_data)
@@ -279,6 +327,113 @@ class ActiveFishingRunner:
             pass
 
         return True
+
+    async def _handle_uncommon(
+        self,
+        fs,
+        catch: dict[str, Any],
+        location_data: dict[str, Any],
+    ) -> bool:
+        """Uncommon vibe check: atmospheric passage + one-word LLM judge.
+
+        PASS → catch the fish. FAIL or timeout → fish escapes, bait burned.
+        """
+        channel = self.bot.get_channel(fs.channel_id)
+        if channel is None:
+            # No channel to prompt in — conservative: escape
+            return False
+
+        loc_name = location_data.get("name", fs.location_name)
+
+        # Generate the atmospheric passage up front
+        passage = await llm.generate_vibe_passage(
+            catch["name"], catch.get("rarity", "uncommon"), loc_name
+        )
+        if passage is None:
+            # LLM unavailable mid-session — escape, safer than auto-pass
+            logger.warning("Vibe passage generation returned None; escaping bite")
+            try:
+                await channel.send(
+                    f"<@{fs.user_id}> — a bigger bite slips away before you "
+                    f"can read it. (LLM unavailable.)"
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            return False
+
+        # Post the passage with a Respond button
+        prompt = discord.Embed(
+            title=f"🎣 Something bigger at {loc_name}...",
+            description=(
+                f"<@{fs.user_id}>\n\n*{passage}*\n\n"
+                f"Respond in **{UNCOMMON_VIBE_TIMEOUT}s** with a single word "
+                f"that captures the vibe."
+            ),
+            color=0x3498DB,
+        )
+        view = VibeCheckView(user_id=fs.user_id)
+        try:
+            message = await channel.send(embed=prompt, view=view)
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+
+        timed_out = await view.wait()
+
+        if timed_out or not view.submitted or not view.word:
+            # Timeout or empty — escape
+            escape_embed = discord.Embed(
+                title=f"🌊 The fish slips away...",
+                description=f"*{passage}*\n\nYou hesitated too long.",
+                color=0x95A5A6,
+            )
+            try:
+                await message.edit(embed=escape_embed, view=None)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            return False
+
+        # Judge the word
+        verdict = await llm.judge_vibe(passage, view.word)
+        if verdict is None:
+            # LLM glitched — be fair and treat as pass? User said fail-closed.
+            # Going with fail-closed for consistency.
+            verdict = False
+
+        if verdict:
+            result_lines = [f"**{catch['name']}**"]
+            details: list[str] = []
+            if catch.get("length"):
+                details.append(f"{catch['length']}in")
+            details.append(f"{catch['value']} coins")
+            result_lines.append(" • ".join(details))
+            result_lines.append(
+                f"\n*{passage}*\n\nYour word: **{view.word}** — the water agrees."
+            )
+            result_embed = discord.Embed(
+                title=f"🐟 You caught a {catch['name']}!",
+                description="\n".join(result_lines),
+                color=0x2ECC71,
+            )
+            try:
+                await message.edit(embed=result_embed, view=None)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            return True
+
+        # FAIL
+        fail_embed = discord.Embed(
+            title=f"🌊 The fish slips away...",
+            description=(
+                f"*{passage}*\n\n"
+                f"Your word: **{view.word}** — not quite the right feel."
+            ),
+            color=0x95A5A6,
+        )
+        try:
+            await message.edit(embed=fail_embed, view=None)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+        return False
 
     async def _handle_placeholder(
         self,
