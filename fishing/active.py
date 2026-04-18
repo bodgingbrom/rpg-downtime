@@ -374,6 +374,24 @@ class ActiveFishingRunner:
                 db, fs, catch, location_data, rod_data, race, success,
             )
 
+    # --- helpers ---------------------------------------------------------
+
+    def _resolve_display_name(self, guild_id: int, user_id: int) -> str:
+        """Return a Discord member's display name, or a fallback string.
+
+        Used for embed titles/descriptions where a raw ``<@id>`` mention
+        would render as ugly text (notably in embed titles). Safe to call
+        even when the member isn't cached — falls back to ``"Angler"``.
+        """
+        try:
+            guild = self.bot.get_guild(guild_id)
+            member = guild.get_member(user_id) if guild else None
+            if member is not None:
+                return member.display_name
+        except Exception:
+            pass
+        return "Angler"
+
     # --- event handlers ---------------------------------------------------
 
     async def _handle_common(
@@ -429,8 +447,9 @@ class ActiveFishingRunner:
         elif timed_out or not view.clicked:
             result_lines.append("\n*(The fish slipped away from your attention...but you still pulled it in.)*")
 
+        angler = self._resolve_display_name(fs.guild_id, fs.user_id)
         result_embed = discord.Embed(
-            title=f"🐟 You caught a {catch['name']}!",
+            title=f"🐟 {angler} caught a {catch['name']}!",
             description="\n".join(result_lines),
             color=0x2ECC71,
         )
@@ -557,10 +576,11 @@ class ActiveFishingRunner:
             details.append(f"{catch['value']} coins")
             result_lines.append(" • ".join(details))
             result_lines.append(
-                f"\n*{passage}*\n\nYour word: **{view.word}** — the water agrees."
+                f"\n*{passage}*\n\nTheir word: **{view.word}** — the water agrees."
             )
+            angler = self._resolve_display_name(fs.guild_id, fs.user_id)
             result_embed = discord.Embed(
-                title=f"🐟 You caught a {catch['name']}!",
+                title=f"🐟 {angler} caught a {catch['name']}!",
                 description="\n".join(result_lines),
                 color=0x2ECC71,
             )
@@ -724,8 +744,9 @@ class ActiveFishingRunner:
             if catch.get("length"):
                 details.append(f"{catch['length']}in")
             details.append(f"{catch['value']} coins")
+            angler = self._resolve_display_name(fs.guild_id, fs.user_id)
             result_embed = discord.Embed(
-                title=f"🐟 You caught a {catch['name']}!",
+                title=f"🐟 {angler} caught a {catch['name']}!",
                 description=(
                     f"*{final_l1}*\n"
                     f"*{final_l2}*\n"
