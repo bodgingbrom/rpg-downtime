@@ -1647,13 +1647,17 @@ class Derby(commands.Cog, name="derby"):
 
     @racer_group.command(
         name="rebuild-appearances",
-        description="Wipe and regenerate appearance + description for every racer in this guild (admin)",
+        description="Wipe and regenerate appearance + description for racers in this guild (admin)",
     )
     @app_commands.describe(
         skip_descriptions="If True, only reroll appearance attributes and skip LLM description calls (fast).",
+        unowned_only="If True, only rebuild racers that no player owns (leaves player-owned racers alone).",
     )
     async def racer_rebuild_appearances(
-        self, context: Context, skip_descriptions: bool = False,
+        self,
+        context: Context,
+        skip_descriptions: bool = False,
+        unowned_only: bool = False,
     ) -> None:
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
@@ -1661,17 +1665,24 @@ class Derby(commands.Cog, name="derby"):
         async with self.bot.scheduler.sessionmaker() as session:
             gs = await repo.get_guild_settings(session, guild_id)
             flavor = getattr(gs, "racer_flavor", None) if gs else None
-            all_racers = await repo.get_guild_racers(
-                session, guild_id, eligible_only=False,
-            )
+            if unowned_only:
+                all_racers = await repo.get_unowned_guild_racers(
+                    session, guild_id, eligible_only=False,
+                )
+            else:
+                all_racers = await repo.get_guild_racers(
+                    session, guild_id, eligible_only=False,
+                )
 
         if not all_racers:
-            await context.send("No racers found in this guild.", ephemeral=True)
+            scope = "unowned " if unowned_only else ""
+            await context.send(f"No {scope}racers found in this guild.", ephemeral=True)
             return
 
         total = len(all_racers)
+        scope_label = "unowned racers" if unowned_only else "racers"
         warn = (
-            f"Rebuilding **{total}** racers"
+            f"Rebuilding **{total}** {scope_label}"
             + ("" if skip_descriptions else f" — this will call the LLM {total} times and may take a while.")
             + " Starting now..."
         )
@@ -1719,8 +1730,9 @@ class Derby(commands.Cog, name="derby"):
                 )
                 failed_count += 1
 
+        scope_summary = "unowned racer" if unowned_only else "racer"
         summary_lines = [
-            f"Rebuilt **{rolled_count}/{total}** racer appearances.",
+            f"Rebuilt **{rolled_count}/{total}** {scope_summary} appearances.",
         ]
         if not skip_descriptions:
             summary_lines.append(
