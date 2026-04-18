@@ -420,6 +420,38 @@ class ActiveFishingRunner:
 
         return True
 
+    async def _log_event(
+        self,
+        fs,
+        rarity: str,
+        fish_species: str,
+        prompt_text: str,
+        player_response: str,
+        outcome: str,
+    ) -> None:
+        """Persist an active-mode event to ActiveFishingEventLog.
+
+        Best-effort — logging failures are swallowed so they never break a
+        catch. Used by uncommon + rare handlers. Legendaries go through
+        ``save_encounter`` instead.
+        """
+        try:
+            async with self.bot.scheduler.sessionmaker() as db:
+                await fish_repo.log_active_event(
+                    db,
+                    user_id=fs.user_id,
+                    guild_id=fs.guild_id,
+                    rarity=rarity,
+                    location_name=fs.location_name,
+                    fish_species=fish_species,
+                    prompt_text=prompt_text,
+                    player_response=player_response,
+                    outcome=outcome,
+                    created_at=datetime.now(timezone.utc),
+                )
+        except Exception:
+            logger.exception("Failed to log active fishing event")
+
     async def _handle_uncommon(
         self,
         fs,
@@ -482,6 +514,11 @@ class ActiveFishingRunner:
                 await message.edit(embed=escape_embed, view=None)
             except (discord.Forbidden, discord.HTTPException):
                 pass
+            await self._log_event(
+                fs, "uncommon", catch["name"],
+                prompt_text=passage, player_response="",
+                outcome="timeout",
+            )
             return False
 
         # Judge the word
@@ -510,6 +547,11 @@ class ActiveFishingRunner:
                 await message.edit(embed=result_embed, view=None)
             except (discord.Forbidden, discord.HTTPException):
                 pass
+            await self._log_event(
+                fs, "uncommon", catch["name"],
+                prompt_text=passage, player_response=view.word,
+                outcome="caught",
+            )
             return True
 
         # FAIL
@@ -525,6 +567,11 @@ class ActiveFishingRunner:
             await message.edit(embed=fail_embed, view=None)
         except (discord.Forbidden, discord.HTTPException):
             pass
+        await self._log_event(
+            fs, "uncommon", catch["name"],
+            prompt_text=passage, player_response=view.word,
+            outcome="escaped",
+        )
         return False
 
     async def _handle_rare(
@@ -582,6 +629,8 @@ class ActiveFishingRunner:
 
         timed_out = await view.wait()
 
+        haiku_opening = f"{line_1}\n{line_2}"
+
         if timed_out or not view.submitted or not view.line_3:
             escape_embed = discord.Embed(
                 title="🌊 The rare one slips away...",
@@ -596,6 +645,11 @@ class ActiveFishingRunner:
                 await message.edit(embed=escape_embed, view=None)
             except (discord.Forbidden, discord.HTTPException):
                 pass
+            await self._log_event(
+                fs, "rare", catch["name"],
+                prompt_text=haiku_opening, player_response="",
+                outcome="timeout",
+            )
             return False
 
         # Judge the closing line
@@ -642,6 +696,11 @@ class ActiveFishingRunner:
                 await message.edit(embed=result_embed, view=None)
             except (discord.Forbidden, discord.HTTPException):
                 pass
+            await self._log_event(
+                fs, "rare", catch["name"],
+                prompt_text=haiku_opening, player_response=view.line_3,
+                outcome="caught",
+            )
             return True
 
         # FAIL
@@ -659,6 +718,11 @@ class ActiveFishingRunner:
             await message.edit(embed=fail_embed, view=None)
         except (discord.Forbidden, discord.HTTPException):
             pass
+        await self._log_event(
+            fs, "rare", catch["name"],
+            prompt_text=haiku_opening, player_response=view.line_3,
+            outcome="escaped",
+        )
         return False
 
     async def _handle_legendary(
