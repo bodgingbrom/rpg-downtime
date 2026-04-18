@@ -54,37 +54,52 @@ DERBY_HELP_CATEGORIES = {
 }
 
 FISHING_HELP_CATEGORIES = {
-    "The Basics": (
-        "Cast a line, sit back, and let the fish come to you.\n"
-        "`/fish start <location> [bait]` — Start an AFK fishing session\n"
-        "`/fish stop` — End your session and see your haul\n"
-        "`/fish status` — Check your active session\n"
-        "Fish are caught automatically on a timer. "
-        "Better rods and bait speed things up."
+    "AFK Fishing": (
+        "Cast a line, walk away, come back to coins. The original way.\n"
+        "`/fish start <location> [bait]` — Begin an AFK session\n"
+        "`/fish stop` — End early and refund unused bait\n"
+        "`/fish status` — Check your current session\n"
+        "Catches happen automatically every 10-35 minutes "
+        "(faster with better rods, bait, and skill). "
+        "No legendaries in AFK \u2014 those only appear when you're watching."
+    ),
+    "Active Fishing": (
+        "Sit at the water, actually. Bites come every 30-90 seconds, "
+        "and each one is a different little moment.\n"
+        "`/fish active <location> [bait]` — Begin an active session "
+        "(mutually exclusive with AFK)\n"
+        "\u2022 **Common** catches whisper a weird secret\n"
+        "\u2022 **Uncommon** catches ask for a one-word vibe match\n"
+        "\u2022 **Rare** catches hand you a haiku with one line blanked\n"
+        "\u2022 **Legendary** catches are unique characters with memory "
+        "\u2014 up to 3 rounds of conversation to convince them\n"
+        "Miss a vibe check or haiku and the fish slips away (bait burned). "
+        "Requires an LLM configured on the bot."
     ),
     "Gear & Bait": (
         "Upgrade your rod and stock up on bait before heading out.\n"
-        "`/fish gear` — View your rod, bait inventory, and skill level\n"
-        "`/fish shop` — See available bait and rod upgrades\n"
-        "`/fish buy-bait <type> <amount>` — Purchase bait\n"
-        "`/fish upgrade-rod` — Upgrade to the next rod tier\n"
-        "Better rods reduce trash catches and boost rare fish odds. "
-        "Better bait reduces cast time and improves catches."
+        "`/fish gear` — Your rod, bait inventory, and skill level\n"
+        "`/fish shop` — Available bait and rod upgrades\n"
+        "`/fish buy-bait <type> <amount>` — Stock up\n"
+        "`/fish upgrade-rod` — Buy the next rod tier\n"
+        "Better rods reduce trash and boost rare odds. "
+        "Better bait reduces cast time."
     ),
     "Locations & Progression": (
         "Earn XP with every catch to unlock harder locations.\n"
-        "`/fish locations` — See all spots and which are unlocked\n"
-        "Locations are gated by skill level (Lv1 \u2192 Lv2 \u2192 Lv3). "
-        "Higher-level spots have rarer fish and bigger payouts.\n"
-        "Over-leveling a location gives a small cast speed bonus."
+        "`/fish locations` — All spots and their unlock status\n"
+        "Skill-gated: Calm Pond (Lv1) \u2192 River Rapids (Lv2) \u2192 "
+        "Deep Lake (Lv3). "
+        "Over-leveling a spot gives a small cast-speed bonus."
     ),
-    "Fish Log & Trophies": (
-        "Track every species you've caught and aim for completion.\n"
-        "`/fish log` — Overview of your collection across all locations\n"
-        "`/fish log <location>` — Detailed species list with your records\n"
-        "`/fish trophies` — Trophy progress and missing species\n"
-        "Catch every species at a location to earn a **trophy** — "
-        "trophies grant a permanent **10% cast speed bonus** there."
+    "Collection": (
+        "Track every species, earn trophies, keep your haikus.\n"
+        "`/fish log [location]` — Species caught, records, missing\n"
+        "`/fish trophies` — Per-location completion progress\n"
+        "`/fish haiku mine` — Your saved rare-catch haikus\n"
+        "`/fish haiku random` — Post a random guild haiku (public!)\n"
+        "Catch every non-trash species at a location to earn a "
+        "**trophy**: +10% cast speed there, permanently."
     ),
 }
 
@@ -247,12 +262,17 @@ class Help(commands.Cog, name="help"):
     async def help_fishing(self, context: Context) -> None:
         embed = discord.Embed(
             title="\U0001f3a3 Lazy Lures — Help",
-            description="Set it and forget it — fish while you're away, collect when you're back.",
+            description=(
+                "Two ways to fish. AFK is set-and-forget. "
+                "Active is strange little moments with the water."
+            ),
             color=0x3498DB,
         )
         for category, text in FISHING_HELP_CATEGORIES.items():
             embed.add_field(name=category, value=text, inline=False)
-        embed.set_footer(text="Use /fish notify to toggle DM alerts for each catch.")
+        embed.set_footer(
+            text="Use /fish notify to toggle DM alerts for catches."
+        )
         await context.send(embed=embed, ephemeral=True)
 
     @help_command.command(name="dungeon", description="Show Monster Mash dungeon crawling commands and tips")
