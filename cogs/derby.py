@@ -402,12 +402,11 @@ class QuickBetView(discord.ui.View):
             self.add_item(QuickBetButton(bot, race, racers, racer, mult))
 
     async def on_timeout(self) -> None:
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                item.disabled = True
+        # Bet window closed (race is starting) — remove the button row
+        # entirely rather than leaving a strip of grayed-out buttons.
         if self.message:
             try:
-                await self.message.edit(view=self)
+                await self.message.edit(view=None)
             except (discord.NotFound, discord.HTTPException):
                 pass
 
