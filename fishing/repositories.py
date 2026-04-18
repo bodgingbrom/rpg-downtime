@@ -129,6 +129,7 @@ async def consume_bait(
 async def get_active_session(
     session: AsyncSession, user_id: int, guild_id: int
 ) -> FishingSession | None:
+    """Return the player's active session in any mode (AFK or active)."""
     result = await session.execute(
         select(FishingSession).where(
             FishingSession.user_id == user_id,
@@ -139,13 +140,40 @@ async def get_active_session(
     return result.scalars().first()
 
 
-async def get_all_due_sessions(
-    session: AsyncSession, now: datetime
+async def get_session_by_id(
+    session: AsyncSession, session_id: int
+) -> FishingSession | None:
+    result = await session.execute(
+        select(FishingSession).where(FishingSession.id == session_id)
+    )
+    return result.scalars().first()
+
+
+async def get_orphaned_active_sessions(
+    session: AsyncSession,
 ) -> list[FishingSession]:
-    """Return all active sessions whose next catch time has elapsed."""
+    """All still-active active-mode sessions (used for startup cleanup)."""
     result = await session.execute(
         select(FishingSession).where(
             FishingSession.active == True,  # noqa: E712
+            FishingSession.mode == "active",
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_all_due_sessions(
+    session: AsyncSession, now: datetime
+) -> list[FishingSession]:
+    """Return all AFK-mode active sessions whose next catch time has elapsed.
+
+    Active-mode sessions are managed by their own asyncio task runner,
+    not the scheduler tick.
+    """
+    result = await session.execute(
+        select(FishingSession).where(
+            FishingSession.active == True,  # noqa: E712
+            FishingSession.mode == "afk",
             FishingSession.next_catch_at <= now,
         )
     )

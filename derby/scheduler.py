@@ -121,6 +121,17 @@ class DerbyScheduler:
         self.fishing_task = tasks.loop(seconds=60)(self._fishing_tick)
         self.fishing_task.start()
 
+        # Cleanup any orphaned active-mode fishing sessions from prior runs.
+        # Active sessions are driven by asyncio tasks which die on bot restart,
+        # so we refund their bait and mark them inactive.
+        try:
+            from fishing.active import cleanup_orphaned_sessions
+            await cleanup_orphaned_sessions(self.bot)
+        except Exception:
+            self.bot.logger.exception(
+                "Failed to clean up orphaned active fishing sessions"
+            )
+
         # Ensure pending races exist once the guild cache is ready.
         # This runs in the background so it doesn't block setup_hook.
         if hasattr(self.bot, "wait_until_ready"):
@@ -437,6 +448,19 @@ class DerbyScheduler:
                         text(
                             "ALTER TABLE fishing_players "
                             "ADD COLUMN fishing_xp INTEGER DEFAULT 0"
+                        )
+                    )
+
+            # Add mode column to fishing_sessions if missing
+            if "fishing_sessions" in tables:
+                fs_cols = await conn.run_sync(
+                    lambda c: get_table_columns(c, "fishing_sessions")
+                )
+                if "mode" not in fs_cols:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE fishing_sessions "
+                            "ADD COLUMN mode TEXT NOT NULL DEFAULT 'afk'"
                         )
                     )
 

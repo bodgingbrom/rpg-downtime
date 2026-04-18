@@ -57,6 +57,8 @@ class FishingSession(Base):
     last_catch_value: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     last_catch_length: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # "afk" (scheduler-driven, passive) or "active" (asyncio-driven, interactive)
+    mode: Mapped[str] = mapped_column(String, default="afk", nullable=False)
 
 
 class FishCatch(Base):

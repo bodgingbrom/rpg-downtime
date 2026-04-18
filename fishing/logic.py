@@ -166,6 +166,43 @@ def calculate_cast_time(
 
 
 # ---------------------------------------------------------------------------
+# Active-mode timing
+# ---------------------------------------------------------------------------
+
+ACTIVE_BITE_MIN_BASE = 30   # seconds
+ACTIVE_BITE_MAX_BASE = 90   # seconds
+ACTIVE_BITE_FLOOR = 15      # seconds (minimum after all reductions)
+
+
+def calculate_active_cast_time(
+    rod_data: dict[str, Any],
+    bait_type: str,
+    skill_reduction: float = 0.0,
+    trophy_reduction: float = 0.0,
+    cast_multiplier: float = 1.0,
+) -> int:
+    """Return seconds until the next active-mode bite.
+
+    Uses a random 30-90s base (not the location's AFK base). All the same
+    reductions apply (rod, bait, skill, trophy, racial multiplier), with a
+    hard floor of 15s to keep things engaging.
+    """
+    base = random.randint(ACTIVE_BITE_MIN_BASE, ACTIVE_BITE_MAX_BASE)
+    rod_reduction = rod_data.get("cast_reduction", 0.0)
+    bait_info = BAIT_TYPES.get(bait_type, {})
+    bait_reduction = bait_info.get("cast_reduction", 0.0)
+    result = (
+        base
+        * (1 - rod_reduction)
+        * (1 - bait_reduction)
+        * (1 - skill_reduction)
+        * (1 - trophy_reduction)
+        * cast_multiplier
+    )
+    return max(int(result), ACTIVE_BITE_FLOOR)
+
+
+# ---------------------------------------------------------------------------
 # XP & Level functions
 # ---------------------------------------------------------------------------
 
@@ -226,6 +263,7 @@ def select_catch(
     rod_data: dict[str, Any],
     bait_type: str,
     rare_weight_bonus: float = 0.0,
+    include_trash: bool = True,
 ) -> dict[str, Any]:
     """Pick a catch from the location's fish + trash pool.
 
@@ -234,9 +272,10 @@ def select_catch(
     ``value``, ``length`` (or None for trash).
 
     *rare_weight_bonus*: additive boost to rare+ fish weight (Human +0.05).
+    *include_trash*: when False (active mode), exclude trash from the pool.
     """
     fish_pool: list[dict] = location_data.get("fish", [])
-    trash_pool: list[dict] = location_data.get("trash", [])
+    trash_pool: list[dict] = location_data.get("trash", []) if include_trash else []
 
     trash_multiplier = rod_data.get("trash_multiplier", 1.0)
     rare_boost = rod_data.get("rare_boost", 0.0) + rare_weight_bonus
