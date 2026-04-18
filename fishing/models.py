@@ -121,6 +121,50 @@ class PlayerHaiku(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class LegendaryFish(Base):
+    """A unique, persistent legendary fish for a (guild, location).
+
+    At most one is ``active=True`` per (guild, location). When caught, it is
+    marked inactive (``caught_by`` and ``caught_at`` set) and a new one is
+    generated to take its place. Old legendaries are preserved as history
+    for the legendary hall.
+    """
+
+    __tablename__ = "legendary_fish"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    location_name: Mapped[str] = mapped_column(String, nullable=False)
+    species_name: Mapped[str] = mapped_column(String, nullable=False)  # YAML species
+    name: Mapped[str] = mapped_column(String, nullable=False)  # unique character name
+    personality: Mapped[str] = mapped_column(String, nullable=False)  # full char sheet
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    caught_by: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    caught_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, default=None
+    )
+
+
+class LegendaryEncounter(Base):
+    """A single encounter between a player and a legendary fish.
+
+    Accumulates per-legendary so the fish can remember past interactions —
+    both with this player and with others. Used to seed the LLM's system
+    prompt on subsequent encounters.
+    """
+
+    __tablename__ = "legendary_encounters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    legendary_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # "caught" | "escaped" | "unconvinced"
+    outcome: Mapped[str] = mapped_column(String, nullable=False)
+    dialogue_summary: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 __all__ = [
     "FishingPlayer",
     "PlayerBait",
@@ -128,4 +172,6 @@ __all__ = [
     "FishCatch",
     "DailyCatchSummary",
     "PlayerHaiku",
+    "LegendaryFish",
+    "LegendaryEncounter",
 ]
