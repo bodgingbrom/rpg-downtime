@@ -117,6 +117,54 @@ class VibeCheckView(discord.ui.View):
         await interaction.response.send_modal(VibeCheckModal(self))
 
 
+class HaikuModal(discord.ui.Modal, title="Complete the haiku"):
+    """Modal where the player writes the closing 5-syllable line."""
+
+    line_input = discord.ui.TextInput(
+        label="Your closing line (roughly 5 syllables)",
+        placeholder="silence swallows all",
+        max_length=100,
+        required=True,
+        style=discord.TextStyle.short,
+    )
+
+    def __init__(self, parent_view: "HaikuView"):
+        super().__init__()
+        self._view = parent_view
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        raw = str(self.line_input.value or "").strip()
+        # If the player includes multiple lines, keep only the first one
+        first_line = raw.splitlines()[0].strip() if raw else ""
+        self._view.line_3 = first_line
+        self._view.submitted = True
+        await interaction.response.defer()
+        self._view.stop()
+
+
+class HaikuView(discord.ui.View):
+    """A button that opens the haiku closing-line modal for a rare bite."""
+
+    def __init__(self, user_id: int, timeout: float = RARE_HAIKU_TIMEOUT):
+        super().__init__(timeout=timeout)
+        self.user_id = user_id
+        self.line_3: str | None = None
+        self.submitted = False
+
+    @discord.ui.button(label="✍️ Complete the haiku", style=discord.ButtonStyle.primary)
+    async def respond(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "This isn't your line!", ephemeral=True
+            )
+            return
+        await interaction.response.send_modal(HaikuModal(self))
+
+
 # ---------------------------------------------------------------------------
 # Active session runner
 # ---------------------------------------------------------------------------
@@ -241,8 +289,7 @@ class ActiveFishingRunner:
             elif rarity == "uncommon":
                 success = await self._handle_uncommon(fs, catch, location_data)
             elif rarity == "rare":
-                # Phase 3 placeholder — auto-success for now
-                success = await self._handle_placeholder(fs, catch, location_data)
+                success = await self._handle_rare(fs, catch, location_data)
             elif rarity == "legendary":
                 # Phase 4 placeholder — auto-success for now
                 success = await self._handle_placeholder(fs, catch, location_data)
@@ -426,6 +473,140 @@ class ActiveFishingRunner:
             description=(
                 f"*{passage}*\n\n"
                 f"Your word: **{view.word}** — not quite the right feel."
+            ),
+            color=0x95A5A6,
+        )
+        try:
+            await message.edit(embed=fail_embed, view=None)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+        return False
+
+    async def _handle_rare(
+        self,
+        fs,
+        catch: dict[str, Any],
+        location_data: dict[str, Any],
+    ) -> bool:
+        """Rare haiku: LLM writes opening 5-7 lines, player closes with 5.
+
+        PASS → catch the fish AND save the haiku to the player's log.
+        FAIL or timeout → fish escapes, bait burned, haiku not saved.
+        """
+        channel = self.bot.get_channel(fs.channel_id)
+        if channel is None:
+            return False
+
+        loc_name = location_data.get("name", fs.location_name)
+
+        # Generate the opening two lines
+        opening = await llm.generate_haiku_opening(
+            catch["name"], catch.get("rarity", "rare"), loc_name
+        )
+        if opening is None:
+            logger.warning("Haiku opening generation returned None; escaping bite")
+            try:
+                await channel.send(
+                    f"<@{fs.user_id}> — a rare catch slips by before the "
+                    f"words can form. (LLM unavailable.)"
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            return False
+
+        line_1, line_2 = opening
+
+        # Post the opening with a haiku button
+        prompt = discord.Embed(
+            title=f"✨ A rare stir at {loc_name}...",
+            description=(
+                f"<@{fs.user_id}>\n\n"
+                f"*{line_1}*\n"
+                f"*{line_2}*\n"
+                f"*_______________*\n\n"
+                f"Close the haiku with a 5-syllable line in "
+                f"**{RARE_HAIKU_TIMEOUT}s**."
+            ),
+            color=0x9B59B6,
+        )
+        view = HaikuView(user_id=fs.user_id)
+        try:
+            message = await channel.send(embed=prompt, view=view)
+        except (discord.Forbidden, discord.HTTPException):
+            return False
+
+        timed_out = await view.wait()
+
+        if timed_out or not view.submitted or not view.line_3:
+            escape_embed = discord.Embed(
+                title="🌊 The rare one slips away...",
+                description=(
+                    f"*{line_1}*\n"
+                    f"*{line_2}*\n"
+                    f"*(unfinished)*"
+                ),
+                color=0x95A5A6,
+            )
+            try:
+                await message.edit(embed=escape_embed, view=None)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            return False
+
+        # Judge the closing line
+        verdict = await llm.judge_haiku(line_1, line_2, view.line_3)
+        if verdict is None:
+            # Fail closed when the judge can't be reached
+            verdict = False
+
+        if verdict:
+            # Save the haiku to the player's log
+            now = datetime.now(timezone.utc)
+            try:
+                async with self.bot.scheduler.sessionmaker() as db:
+                    await fish_repo.save_haiku(
+                        db,
+                        user_id=fs.user_id,
+                        guild_id=fs.guild_id,
+                        location_name=fs.location_name,
+                        fish_species=catch["name"],
+                        line_1=line_1,
+                        line_2=line_2,
+                        line_3=view.line_3,
+                        created_at=now,
+                    )
+            except Exception:
+                logger.exception("Failed to save haiku")
+
+            details: list[str] = []
+            if catch.get("length"):
+                details.append(f"{catch['length']}in")
+            details.append(f"{catch['value']} coins")
+            result_embed = discord.Embed(
+                title=f"🐟 You caught a {catch['name']}!",
+                description=(
+                    f"*{line_1}*\n"
+                    f"*{line_2}*\n"
+                    f"*{view.line_3}*\n\n"
+                    f"**{catch['name']}** • {' • '.join(details)}\n"
+                    f"*Added to your haiku log — `/fish haiku mine`*"
+                ),
+                color=0x9B59B6,
+            )
+            try:
+                await message.edit(embed=result_embed, view=None)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            return True
+
+        # FAIL
+        fail_embed = discord.Embed(
+            title="🌊 The rare one slips away...",
+            description=(
+                f"*{line_1}*\n"
+                f"*{line_2}*\n"
+                f"*{view.line_3}*\n\n"
+                f"*The rhythm wasn't quite right.*"
             ),
             color=0x95A5A6,
         )
