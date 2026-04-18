@@ -960,6 +960,100 @@ class Fishing(commands.Cog, name="fishing"):
         embed.description = f"Trophies earned: **{earned}/{total}**"
         await context.send(embed=embed, ephemeral=True)
 
+    # ------------------------------------------------------------------
+    # /fish haiku (subgroup) — player haiku log from rare catches
+    # ------------------------------------------------------------------
+
+    @fish.group(name="haiku", description="Your haikus from rare catches")
+    async def fish_haiku(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await context.send(
+                "Use `/fish haiku mine` or `/fish haiku random`.",
+                ephemeral=True,
+            )
+
+    @fish_haiku.command(name="mine", description="View your saved haikus")
+    async def fish_haiku_mine(self, context: Context) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            haikus = await fish_repo.get_player_haikus(
+                session, user_id, guild_id, limit=10,
+            )
+
+        if not haikus:
+            await context.send(
+                "You haven't composed any haikus yet. "
+                "Start an active session with `/fish active` and complete "
+                "a rare catch's poem to add to your log.",
+                ephemeral=True,
+            )
+            return
+
+        locations = fish_logic.load_locations()
+        embed = discord.Embed(
+            title="\U0001F4D6 Your Haikus",
+            description=f"Your most recent **{len(haikus)}** haikus:",
+            color=0x9B59B6,
+        )
+        for h in haikus:
+            loc_data = locations.get(h.location_name, {})
+            loc_display = loc_data.get("name", h.location_name)
+            date_str = h.created_at.strftime("%Y-%m-%d")
+            embed.add_field(
+                name=f"{h.fish_species} @ {loc_display} \u2014 {date_str}",
+                value=f"*{h.line_1}*\n*{h.line_2}*\n*{h.line_3}*",
+                inline=False,
+            )
+
+        await context.send(embed=embed, ephemeral=True)
+
+    @fish_haiku.command(
+        name="random",
+        description="Post a random haiku from the guild (public)",
+    )
+    async def fish_haiku_random(self, context: Context) -> None:
+        await context.defer()
+        guild_id = context.guild.id if context.guild else 0
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            haiku = await fish_repo.get_random_guild_haiku(session, guild_id)
+
+        if haiku is None:
+            await context.send(
+                "No haikus have been composed in this guild yet. "
+                "Start fishing actively and complete a rare catch to change that!",
+                ephemeral=True,
+            )
+            return
+
+        locations = fish_logic.load_locations()
+        loc_data = locations.get(haiku.location_name, {})
+        loc_display = loc_data.get("name", haiku.location_name)
+        date_str = haiku.created_at.strftime("%Y-%m-%d")
+
+        embed = discord.Embed(
+            title="\U0001F4D6 From the haiku log...",
+            description=(
+                f"*{haiku.line_1}*\n"
+                f"*{haiku.line_2}*\n"
+                f"*{haiku.line_3}*"
+            ),
+            color=0x9B59B6,
+        )
+        embed.set_footer(
+            text=f"{haiku.fish_species} @ {loc_display} \u2014 {date_str}"
+        )
+
+        # Attribution — mention the author
+        await context.send(
+            content=f"<@{haiku.user_id}> once wrote:",
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(users=False),
+        )
+
 
 async def setup(bot) -> None:
     await bot.add_cog(Fishing(bot))

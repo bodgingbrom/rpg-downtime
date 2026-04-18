@@ -101,10 +101,31 @@ class DailyCatchSummary(Base):
     biggest_catch_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class PlayerHaiku(Base):
+    """A completed haiku from an active-mode rare catch.
+
+    Stored per-player, attributable so they can be resurfaced by
+    ``/fish haiku random`` as ambient guild poetry.
+    """
+
+    __tablename__ = "player_haikus"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    location_name: Mapped[str] = mapped_column(String, nullable=False)
+    fish_species: Mapped[str] = mapped_column(String, nullable=False)
+    line_1: Mapped[str] = mapped_column(String, nullable=False)
+    line_2: Mapped[str] = mapped_column(String, nullable=False)
+    line_3: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 __all__ = [
     "FishingPlayer",
     "PlayerBait",
     "FishingSession",
     "FishCatch",
     "DailyCatchSummary",
+    "PlayerHaiku",
 ]

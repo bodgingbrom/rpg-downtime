@@ -5,7 +5,14 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import DailyCatchSummary, FishCatch, FishingPlayer, FishingSession, PlayerBait
+from .models import (
+    DailyCatchSummary,
+    FishCatch,
+    FishingPlayer,
+    FishingSession,
+    PlayerBait,
+    PlayerHaiku,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -394,3 +401,70 @@ async def get_guild_daily_summaries(
         )
     )
     return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Player haikus (completed rare catches in active mode)
+# ---------------------------------------------------------------------------
+
+
+async def save_haiku(
+    session: AsyncSession,
+    user_id: int,
+    guild_id: int,
+    location_name: str,
+    fish_species: str,
+    line_1: str,
+    line_2: str,
+    line_3: str,
+    created_at: datetime,
+) -> PlayerHaiku:
+    """Store a completed haiku from a successful rare catch."""
+    haiku = PlayerHaiku(
+        user_id=user_id,
+        guild_id=guild_id,
+        location_name=location_name,
+        fish_species=fish_species,
+        line_1=line_1,
+        line_2=line_2,
+        line_3=line_3,
+        created_at=created_at,
+    )
+    session.add(haiku)
+    await session.commit()
+    await session.refresh(haiku)
+    return haiku
+
+
+async def get_player_haikus(
+    session: AsyncSession,
+    user_id: int,
+    guild_id: int,
+    limit: int = 10,
+) -> list[PlayerHaiku]:
+    """Return a player's haikus, most recent first."""
+    result = await session.execute(
+        select(PlayerHaiku)
+        .where(
+            PlayerHaiku.user_id == user_id,
+            PlayerHaiku.guild_id == guild_id,
+        )
+        .order_by(PlayerHaiku.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_random_guild_haiku(
+    session: AsyncSession, guild_id: int
+) -> PlayerHaiku | None:
+    """Return a single random haiku from any player in the guild."""
+    from sqlalchemy import func
+
+    result = await session.execute(
+        select(PlayerHaiku)
+        .where(PlayerHaiku.guild_id == guild_id)
+        .order_by(func.random())
+        .limit(1)
+    )
+    return result.scalars().first()
