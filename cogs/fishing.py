@@ -11,8 +11,10 @@ from discord.ext.commands import Context
 from config import resolve_guild_setting
 from derby import repositories as derby_repo
 from economy import repositories as wallet_repo
+from fishing import llm as fish_llm
 from fishing import logic as fish_logic
 from fishing import repositories as fish_repo
+from fishing.active import ActiveFishingRunner
 
 
 async def location_autocomplete(
@@ -33,12 +35,15 @@ async def location_autocomplete(
 class Fishing(commands.Cog, name="fishing"):
     def __init__(self, bot) -> None:
         self.bot = bot
-
-    async def cog_check(self, ctx: Context) -> bool:
-        return await checks.in_bot_channel(ctx, "fishing_channel")
         # Pre-load data caches
         fish_logic.load_rods()
         fish_logic.load_locations()
+        # Attach the active-mode runner to the bot (shared singleton)
+        if not hasattr(bot, "fishing_runner"):
+            bot.fishing_runner = ActiveFishingRunner(bot)
+
+    async def cog_check(self, ctx: Context) -> bool:
+        return await checks.in_bot_channel(ctx, "fishing_channel")
 
     # ------------------------------------------------------------------
     # /fish  (top-level group)
@@ -88,13 +93,14 @@ class Fishing(commands.Cog, name="fishing"):
             return
 
         async with self.bot.scheduler.sessionmaker() as session:
-            # Guard: already fishing?
+            # Guard: already fishing (in either mode)?
             active = await fish_repo.get_active_session(session, user_id, guild_id)
             if active:
                 loc = locations.get(active.location_name, {})
                 loc_name = loc.get("name", active.location_name)
+                mode_label = "actively" if active.mode == "active" else "AFK"
                 await context.send(
-                    f"You're already fishing at **{loc_name}**! "
+                    f"You're already {mode_label} fishing at **{loc_name}**! "
                     "Use `/fish stop` to end your session first.",
                     ephemeral=True,
                 )
@@ -218,12 +224,190 @@ class Fishing(commands.Cog, name="fishing"):
                 message_id=0,
                 started_at=now,
                 next_catch_at=next_catch,
+                mode="afk",
             )
 
         bait_name = fish_logic.BAIT_TYPES.get(selected_bait, {}).get("name", selected_bait)
         await context.send(
             f"Started fishing at **{loc_display}** with **{bait_name}** "
             f"({bait_count} casts). Good luck!",
+            ephemeral=True,
+        )
+
+    # ------------------------------------------------------------------
+    # /fish active <location> [bait]
+    # ------------------------------------------------------------------
+
+    @fish.command(
+        name="active",
+        description="Start an active fishing session (interactive, LLM-driven)",
+    )
+    @app_commands.describe(
+        location="The fishing spot to cast your line",
+        bait="Bait type to use (defaults to first available)",
+    )
+    @app_commands.autocomplete(location=location_autocomplete)
+    @app_commands.choices(bait=[
+        app_commands.Choice(name="Worm", value="worm"),
+        app_commands.Choice(name="Insect", value="insect"),
+        app_commands.Choice(name="Shiny Lure", value="shiny_lure"),
+        app_commands.Choice(name="Premium Bait", value="premium"),
+    ])
+    async def fish_active(
+        self,
+        context: Context,
+        location: str,
+        bait: str | None = None,
+    ) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        # Require LLM availability — active mode is LLM-driven
+        if not fish_llm.is_available():
+            await context.send(
+                "Active fishing requires LLM support, which isn't configured on "
+                "this bot. Ask your admin to set `ANTHROPIC_API_KEY`.",
+                ephemeral=True,
+            )
+            return
+
+        # Validate location
+        locations = fish_logic.load_locations()
+        if location not in locations:
+            await context.send(
+                f"Unknown location `{location}`. Use `/fish locations` to see available spots.",
+                ephemeral=True,
+            )
+            return
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            # Guard: already fishing (either mode)?
+            existing = await fish_repo.get_active_session(session, user_id, guild_id)
+            if existing:
+                loc = locations.get(existing.location_name, {})
+                loc_name = loc.get("name", existing.location_name)
+                mode_label = "actively" if existing.mode == "active" else "AFK"
+                await context.send(
+                    f"You're already {mode_label} fishing at **{loc_name}**! "
+                    "Use `/fish stop` to end your session first.",
+                    ephemeral=True,
+                )
+                return
+
+            player = await fish_repo.get_or_create_player(session, user_id, guild_id)
+
+            # Skill level gate (same as AFK)
+            loc_data = locations[location]
+            player_level = fish_logic.get_level(player.fishing_xp)
+            if not fish_logic.can_fish_at_location(player_level, loc_data):
+                required = loc_data.get("skill_level", 1)
+                loc_display = loc_data.get("name", location)
+                await context.send(
+                    f"You need **Fishing Level {required}** to fish at "
+                    f"**{loc_display}**! You're currently Level {player_level}.",
+                    ephemeral=True,
+                )
+                return
+
+            # Determine bait type (same logic as AFK)
+            if bait:
+                bait_inv = await fish_repo.get_bait(session, user_id, guild_id, bait)
+                if not bait_inv or bait_inv.quantity <= 0:
+                    bait_name = fish_logic.BAIT_TYPES.get(bait, {}).get("name", bait)
+                    await context.send(
+                        f"You don't have any **{bait_name}**! "
+                        "Buy some with `/fish buy-bait`.",
+                        ephemeral=True,
+                    )
+                    return
+                selected_bait = bait
+                bait_count = bait_inv.quantity
+            else:
+                all_bait = await fish_repo.get_all_bait(session, user_id, guild_id)
+                available = [
+                    b for b in all_bait
+                    if b.quantity > 0 and b.bait_type in fish_logic.BAIT_TYPES
+                ]
+                if not available:
+                    await context.send(
+                        "You have no bait! Buy some with `/fish buy-bait`.",
+                        ephemeral=True,
+                    )
+                    return
+                bait_order = list(fish_logic.BAIT_TYPES.keys())
+                available.sort(
+                    key=lambda b: bait_order.index(b.bait_type)
+                    if b.bait_type in bait_order else 99
+                )
+                selected_bait = available[0].bait_type
+                bait_count = available[0].quantity
+
+            # First cast uses the active timing (30-90s base) with reductions
+            loc_display = loc_data.get("name", location)
+            rod_data = fish_logic.get_rod(player.rod_id)
+            skill_reduction = fish_logic.get_skill_cast_reduction(
+                player_level, loc_data.get("skill_level", 1)
+            )
+            caught_species = await fish_repo.get_caught_species_at_location(
+                session, user_id, guild_id, location
+            )
+            trophy_reduction = (
+                fish_logic.TROPHY_CAST_REDUCTION
+                if fish_logic.has_location_trophy(caught_species, loc_data)
+                else 0.0
+            )
+            cast_seconds = fish_logic.calculate_active_cast_time(
+                rod_data, selected_bait,
+                skill_reduction=skill_reduction,
+                trophy_reduction=trophy_reduction,
+            )
+
+            now = datetime.now(timezone.utc)
+            next_catch = now + timedelta(seconds=cast_seconds)
+
+            # Public announcement
+            await context.channel.send(
+                f"\U0001F3A3 **{context.author.display_name}** has begun an "
+                f"**active** fishing session at **{loc_display}**!"
+            )
+
+            # Reserve bait
+            consumed = await fish_repo.consume_bait(
+                session, user_id, guild_id, selected_bait, bait_count,
+            )
+            if not consumed:
+                await context.send(
+                    "Something went wrong reserving your bait. Try again.",
+                    ephemeral=True,
+                )
+                return
+
+            # Create the active session record
+            fs = await fish_repo.create_session(
+                session,
+                user_id=user_id,
+                guild_id=guild_id,
+                location_name=location,
+                rod_id=player.rod_id,
+                bait_type=selected_bait,
+                bait_remaining=bait_count,
+                channel_id=context.channel.id,
+                message_id=0,
+                started_at=now,
+                next_catch_at=next_catch,
+                mode="active",
+            )
+
+        # Spawn the runner task (outside the DB session)
+        self.bot.fishing_runner.start_session(fs.id)
+
+        bait_name = fish_logic.BAIT_TYPES.get(selected_bait, {}).get("name", selected_bait)
+        await context.send(
+            f"\U0001F3A3 Active fishing started at **{loc_display}** with "
+            f"**{bait_name}** ({bait_count} casts).\n"
+            f"Stay close — bites will come every 30-90 seconds. "
+            f"Use `/fish stop` to end early and refund unused bait.",
             ephemeral=True,
         )
 
@@ -251,6 +435,10 @@ class Fishing(commands.Cog, name="fishing"):
                 )
 
             await fish_repo.end_session(session, active.id)
+
+        # If this was an active-mode session, cancel its runner task
+        if active.mode == "active" and hasattr(self.bot, "fishing_runner"):
+            self.bot.fishing_runner.stop_session(active.id)
 
         embed = fish_logic.build_session_embed(
             active, catch=None, session_ended=True
