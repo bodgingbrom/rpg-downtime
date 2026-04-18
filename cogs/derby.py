@@ -1645,6 +1645,113 @@ class Derby(commands.Cog, name="derby"):
             embed.set_footer(text=f"Hint: {hint}")
         await context.send(embed=embed)
 
+    @racer_group.command(
+        name="rebuild-appearances",
+        description="Wipe and regenerate appearance + description for racers in this guild (admin)",
+    )
+    @app_commands.describe(
+        skip_descriptions="If True, only reroll appearance attributes and skip LLM description calls (fast).",
+        unowned_only="If True, only rebuild racers that no player owns (leaves player-owned racers alone).",
+    )
+    async def racer_rebuild_appearances(
+        self,
+        context: Context,
+        skip_descriptions: bool = False,
+        unowned_only: bool = False,
+    ) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+            flavor = getattr(gs, "racer_flavor", None) if gs else None
+            if unowned_only:
+                all_racers = await repo.get_unowned_guild_racers(
+                    session, guild_id, eligible_only=False,
+                )
+            else:
+                all_racers = await repo.get_guild_racers(
+                    session, guild_id, eligible_only=False,
+                )
+
+        if not all_racers:
+            scope = "unowned " if unowned_only else ""
+            await context.send(f"No {scope}racers found in this guild.", ephemeral=True)
+            return
+
+        total = len(all_racers)
+        scope_label = "unowned racers" if unowned_only else "racers"
+        warn = (
+            f"Rebuilding **{total}** {scope_label}"
+            + ("" if skip_descriptions else f" — this will call the LLM {total} times and may take a while.")
+            + " Starting now..."
+        )
+        await context.send(warn, ephemeral=True)
+
+        rolled_count = 0
+        described_count = 0
+        failed_count = 0
+
+        # Sequential per-racer processing: one commit per racer so partial
+        # progress survives any mid-run failure.
+        for racer_obj in all_racers:
+            try:
+                rolled = appearance.roll_appearance()
+                new_desc: str | None = None
+
+                if rolled and flavor and not skip_descriptions:
+                    new_desc = await descriptions.generate_description(
+                        name=racer_obj.name,
+                        speed=racer_obj.speed,
+                        cornering=racer_obj.cornering,
+                        stamina=racer_obj.stamina,
+                        temperament=racer_obj.temperament,
+                        gender=racer_obj.gender,
+                        flavor=flavor,
+                        appearance=rolled,
+                    )
+
+                async with self.bot.scheduler.sessionmaker() as session:
+                    updates: dict = {}
+                    if rolled:
+                        updates["appearance"] = appearance.serialize(rolled)
+                        rolled_count += 1
+                    if new_desc:
+                        updates["description"] = new_desc
+                        described_count += 1
+                    elif not skip_descriptions and flavor:
+                        # Clear stale description so lazy-regen can refill later
+                        updates["description"] = None
+                    if updates:
+                        await repo.update_racer(session, racer_obj.id, **updates)
+            except Exception:
+                self.bot.logger.exception(
+                    "Failed to rebuild appearance for racer %s", racer_obj.id,
+                )
+                failed_count += 1
+
+        scope_summary = "unowned racer" if unowned_only else "racer"
+        summary_lines = [
+            f"Rebuilt **{rolled_count}/{total}** {scope_summary} appearances.",
+        ]
+        if not skip_descriptions:
+            summary_lines.append(
+                f"Generated **{described_count}/{total}** new descriptions."
+            )
+            if described_count < total and flavor is None:
+                summary_lines.append(
+                    "*No `racer_flavor` set — descriptions were cleared but not regenerated.*"
+                )
+        if failed_count:
+            summary_lines.append(f"\u26a0\ufe0f **{failed_count}** racers failed (see logs).")
+
+        embed = discord.Embed(
+            title="Stable Rebuild Complete",
+            description="\n".join(summary_lines),
+            color=0x2ECC71 if failed_count == 0 else 0xF1C40F,
+        )
+        await context.send(embed=embed, ephemeral=True)
+
     # ------------------------------------------------------------------
     # NPC commands
     # ------------------------------------------------------------------
