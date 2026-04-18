@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
+    ActiveFishingEventLog,
     DailyCatchSummary,
     FishCatch,
     FishingPlayer,
@@ -615,3 +616,132 @@ async def get_caught_legendaries(
     query = query.order_by(LegendaryFish.caught_at.desc()).limit(limit)
     result = await session.execute(query)
     return list(result.scalars().all())
+
+
+async def get_recent_guild_encounters(
+    session: AsyncSession,
+    guild_id: int,
+    since: datetime,
+    limit: int = 10,
+) -> list[tuple[LegendaryEncounter, LegendaryFish]]:
+    """Recent guild-wide legendary encounters, joined with the fish character.
+
+    Used by the /reports fishing-legendary report. Returns tuples of
+    ``(encounter, legendary)`` ordered by most-recent first.
+    """
+    result = await session.execute(
+        select(LegendaryEncounter, LegendaryFish)
+        .join(LegendaryFish, LegendaryFish.id == LegendaryEncounter.legendary_id)
+        .where(
+            LegendaryFish.guild_id == guild_id,
+            LegendaryEncounter.created_at >= since,
+        )
+        .order_by(LegendaryEncounter.created_at.desc())
+        .limit(limit)
+    )
+    return [(enc, leg) for enc, leg in result.all()]
+
+
+async def get_legendary_outcome_counts(
+    session: AsyncSession,
+    guild_id: int,
+    since: datetime,
+) -> dict[str, int]:
+    """Count legendary encounters by outcome within the window."""
+    from sqlalchemy import func
+
+    result = await session.execute(
+        select(LegendaryEncounter.outcome, func.count())
+        .join(LegendaryFish, LegendaryFish.id == LegendaryEncounter.legendary_id)
+        .where(
+            LegendaryFish.guild_id == guild_id,
+            LegendaryEncounter.created_at >= since,
+        )
+        .group_by(LegendaryEncounter.outcome)
+    )
+    return {outcome: count for outcome, count in result.all()}
+
+
+# ---------------------------------------------------------------------------
+# Active fishing event log (uncommons + rares) — for /reports visibility
+# ---------------------------------------------------------------------------
+
+
+async def log_active_event(
+    session: AsyncSession,
+    user_id: int,
+    guild_id: int,
+    rarity: str,
+    location_name: str,
+    fish_species: str,
+    prompt_text: str,
+    player_response: str,
+    outcome: str,
+    created_at: datetime,
+) -> ActiveFishingEventLog:
+    """Record a single completed uncommon or rare active-mode event."""
+    row = ActiveFishingEventLog(
+        user_id=user_id,
+        guild_id=guild_id,
+        rarity=rarity,
+        location_name=location_name,
+        fish_species=fish_species,
+        prompt_text=prompt_text,
+        player_response=player_response,
+        outcome=outcome,
+        created_at=created_at,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+async def get_recent_active_events(
+    session: AsyncSession,
+    guild_id: int,
+    rarity: str,
+    since: datetime,
+    limit: int = 10,
+) -> list[ActiveFishingEventLog]:
+    """Last N events of a given rarity within the window, newest first."""
+    result = await session.execute(
+        select(ActiveFishingEventLog)
+        .where(
+            ActiveFishingEventLog.guild_id == guild_id,
+            ActiveFishingEventLog.rarity == rarity,
+            ActiveFishingEventLog.created_at >= since,
+        )
+        .order_by(ActiveFishingEventLog.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_active_event_counts(
+    session: AsyncSession,
+    guild_id: int,
+    since: datetime,
+) -> dict[tuple[str, str], int]:
+    """Counts grouped by (rarity, outcome) within the window.
+
+    Returns e.g. ``{("uncommon", "caught"): 87, ("rare", "escaped"): 28, ...}``.
+    """
+    from sqlalchemy import func
+
+    result = await session.execute(
+        select(
+            ActiveFishingEventLog.rarity,
+            ActiveFishingEventLog.outcome,
+            func.count(),
+        )
+        .where(
+            ActiveFishingEventLog.guild_id == guild_id,
+            ActiveFishingEventLog.created_at >= since,
+        )
+        .group_by(
+            ActiveFishingEventLog.rarity,
+            ActiveFishingEventLog.outcome,
+        )
+    )
+    return {(rarity, outcome): count for rarity, outcome, count in result.all()}

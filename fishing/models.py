@@ -146,6 +146,32 @@ class LegendaryFish(Base):
     )
 
 
+class ActiveFishingEventLog(Base):
+    """Structured log of LLM-driven active fishing events (uncommon + rare).
+
+    Lets us inspect what the LLM asked, what the player typed, and whether
+    it succeeded — useful for tuning prompts and seeing where the judge is
+    being too generous/strict. Legendaries use ``legendary_encounters``
+    instead; commons are not logged (always pass, high volume).
+    """
+
+    __tablename__ = "active_fishing_event_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    rarity: Mapped[str] = mapped_column(String, nullable=False)  # "uncommon" | "rare"
+    location_name: Mapped[str] = mapped_column(String, nullable=False)
+    fish_species: Mapped[str] = mapped_column(String, nullable=False)
+    # Uncommon: the atmospheric passage. Rare: "line1\nline2".
+    prompt_text: Mapped[str] = mapped_column(String, nullable=False)
+    # Uncommon: the one word. Rare: the closing line. Empty on timeout.
+    player_response: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # "caught" (judge PASS) | "escaped" (judge FAIL) | "timeout"
+    outcome: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class LegendaryEncounter(Base):
     """A single encounter between a player and a legendary fish.
 
@@ -172,6 +198,7 @@ __all__ = [
     "FishCatch",
     "DailyCatchSummary",
     "PlayerHaiku",
+    "ActiveFishingEventLog",
     "LegendaryFish",
     "LegendaryEncounter",
 ]
