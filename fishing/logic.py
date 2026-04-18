@@ -264,6 +264,7 @@ def select_catch(
     bait_type: str,
     rare_weight_bonus: float = 0.0,
     include_trash: bool = True,
+    include_legendary: bool = True,
 ) -> dict[str, Any]:
     """Pick a catch from the location's fish + trash pool.
 
@@ -273,8 +274,13 @@ def select_catch(
 
     *rare_weight_bonus*: additive boost to rare+ fish weight (Human +0.05).
     *include_trash*: when False (active mode), exclude trash from the pool.
+    *include_legendary*: when False (AFK mode), legendaries are never rolled.
     """
-    fish_pool: list[dict] = location_data.get("fish", [])
+    all_fish: list[dict] = location_data.get("fish", [])
+    fish_pool: list[dict] = [
+        f for f in all_fish
+        if include_legendary or f.get("rarity") != "legendary"
+    ]
     trash_pool: list[dict] = location_data.get("trash", []) if include_trash else []
 
     trash_multiplier = rod_data.get("trash_multiplier", 1.0)

@@ -2443,11 +2443,12 @@ class DerbyScheduler:
                     )
                     _race = profile.race
 
-                    # Resolve the catch
+                    # Resolve the catch — AFK mode never rolls legendaries
                     rare_bonus = get_racial_modifier(_race, "fishing.rare_weight_bonus", 0.0)
                     catch = fish_logic.select_catch(
                         location_data, rod_data, fs.bait_type,
                         rare_weight_bonus=rare_bonus,
+                        include_legendary=False,
                     )
 
                     # Elf Twin Cast: 10% chance to catch two fish
@@ -2457,6 +2458,7 @@ class DerbyScheduler:
                         twin_catch = fish_logic.select_catch(
                             location_data, rod_data, fs.bait_type,
                             rare_weight_bonus=rare_bonus,
+                            include_legendary=False,
                         )
 
                     # Credit coins to wallet

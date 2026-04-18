@@ -10,6 +10,8 @@ from .models import (
     FishCatch,
     FishingPlayer,
     FishingSession,
+    LegendaryEncounter,
+    LegendaryFish,
     PlayerBait,
     PlayerHaiku,
 )
@@ -468,3 +470,148 @@ async def get_random_guild_haiku(
         .limit(1)
     )
     return result.scalars().first()
+
+
+# ---------------------------------------------------------------------------
+# Legendary fish + encounters
+# ---------------------------------------------------------------------------
+
+
+async def get_active_legendary(
+    session: AsyncSession, guild_id: int, location_name: str
+) -> LegendaryFish | None:
+    """Return the currently active legendary for a (guild, location), if any."""
+    result = await session.execute(
+        select(LegendaryFish).where(
+            LegendaryFish.guild_id == guild_id,
+            LegendaryFish.location_name == location_name,
+            LegendaryFish.active == True,  # noqa: E712
+        )
+    )
+    return result.scalars().first()
+
+
+async def create_legendary(
+    session: AsyncSession,
+    guild_id: int,
+    location_name: str,
+    species_name: str,
+    name: str,
+    personality: str,
+    created_at: datetime,
+) -> LegendaryFish:
+    """Create a new active legendary for a (guild, location)."""
+    legendary = LegendaryFish(
+        guild_id=guild_id,
+        location_name=location_name,
+        species_name=species_name,
+        name=name,
+        personality=personality,
+        active=True,
+        created_at=created_at,
+    )
+    session.add(legendary)
+    await session.commit()
+    await session.refresh(legendary)
+    return legendary
+
+
+async def mark_legendary_caught(
+    session: AsyncSession,
+    legendary_id: int,
+    caught_by: int,
+    caught_at: datetime,
+) -> LegendaryFish | None:
+    """Retire a legendary — mark inactive, record who caught it and when."""
+    result = await session.execute(
+        select(LegendaryFish).where(LegendaryFish.id == legendary_id)
+    )
+    legendary = result.scalars().first()
+    if legendary is None:
+        return None
+    legendary.active = False
+    legendary.caught_by = caught_by
+    legendary.caught_at = caught_at
+    await session.commit()
+    await session.refresh(legendary)
+    return legendary
+
+
+async def save_encounter(
+    session: AsyncSession,
+    legendary_id: int,
+    user_id: int,
+    outcome: str,
+    dialogue_summary: str,
+    created_at: datetime,
+) -> LegendaryEncounter:
+    """Record a single encounter with a legendary."""
+    enc = LegendaryEncounter(
+        legendary_id=legendary_id,
+        user_id=user_id,
+        outcome=outcome,
+        dialogue_summary=dialogue_summary,
+        created_at=created_at,
+    )
+    session.add(enc)
+    await session.commit()
+    await session.refresh(enc)
+    return enc
+
+
+async def get_player_encounter_history(
+    session: AsyncSession,
+    legendary_id: int,
+    user_id: int,
+    limit: int = 5,
+) -> list[LegendaryEncounter]:
+    """Past encounters a specific player has had with this legendary."""
+    result = await session.execute(
+        select(LegendaryEncounter)
+        .where(
+            LegendaryEncounter.legendary_id == legendary_id,
+            LegendaryEncounter.user_id == user_id,
+        )
+        .order_by(LegendaryEncounter.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_recent_legendary_encounters(
+    session: AsyncSession,
+    legendary_id: int,
+    exclude_user_id: int,
+    limit: int = 5,
+) -> list[LegendaryEncounter]:
+    """Recent encounters with this legendary by OTHER players."""
+    result = await session.execute(
+        select(LegendaryEncounter)
+        .where(
+            LegendaryEncounter.legendary_id == legendary_id,
+            LegendaryEncounter.user_id != exclude_user_id,
+        )
+        .order_by(LegendaryEncounter.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_caught_legendaries(
+    session: AsyncSession,
+    guild_id: int,
+    user_id: int | None = None,
+    limit: int = 20,
+) -> list[LegendaryFish]:
+    """All legendaries that have been caught. If user_id given, filters to
+    ones that specific player caught."""
+    query = select(LegendaryFish).where(
+        LegendaryFish.guild_id == guild_id,
+        LegendaryFish.active == False,  # noqa: E712
+        LegendaryFish.caught_at.is_not(None),
+    )
+    if user_id is not None:
+        query = query.where(LegendaryFish.caught_by == user_id)
+    query = query.order_by(LegendaryFish.caught_at.desc()).limit(limit)
+    result = await session.execute(query)
+    return list(result.scalars().all())
