@@ -242,16 +242,16 @@ class Reports(commands.Cog, name="reports"):
             ts = r.created_at.strftime("%m-%d %H:%M")
             loc = locations.get(r.location_name, {}).get("name", r.location_name)
             emoji = self._outcome_emoji(r.outcome)
-            # prompt_text is "line1\nline2"
-            lines = r.prompt_text.split("\n", 1)
-            opening = " / ".join(
-                ln.strip() for ln in lines if ln.strip()
-            ) if lines else r.prompt_text
-            closing = r.player_response or "(no response)"
+            # prompt_text is the full 3-line haiku with `_______________` in
+            # the slot the player filled (or filled for legacy 2-line rows).
+            displayed = " / ".join(
+                ln.strip() for ln in r.prompt_text.splitlines() if ln.strip()
+            ) or r.prompt_text
+            response = r.player_response or "(no response)"
             blocks.append(
                 f"`{ts}` <@{r.user_id}> @ {loc} \u2014 {r.fish_species}\n"
-                f"  *{opening}*\n"
-                f"  Closing: **{closing}** \u2192 {emoji} {r.outcome.upper()}"
+                f"  *{displayed}*\n"
+                f"  Response: **{response}** \u2192 {emoji} {r.outcome.upper()}"
             )
 
         embed = discord.Embed(

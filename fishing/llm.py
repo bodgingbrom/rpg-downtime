@@ -210,64 +210,70 @@ async def judge_vibe(passage: str, player_word: str) -> bool | None:
 
 
 # ---------------------------------------------------------------------------
-# Rare haiku — opening two lines (5-7) and a loose judge of the player's close
+# Rare haiku — full three-line haiku generation; one line is blanked for the
+# player to fill in. Judge scores the player's line for fit.
 # ---------------------------------------------------------------------------
 
-HAIKU_OPENING_SYSTEM = (
-    "You write the opening two lines of a nature haiku for a Discord fishing "
-    "minigame. The player has hooked a rare fish and will write a closing "
-    "5-syllable line. Your opening must be:\n"
+HAIKU_FULL_SYSTEM = (
+    "You write complete three-line nature haikus for a Discord fishing "
+    "minigame. One of the three lines will be blanked out and given to the "
+    "player to fill in — so all three lines must work as a coherent whole. "
+    "Structure:\n"
     "- Line 1: roughly 5 syllables\n"
     "- Line 2: roughly 7 syllables\n"
+    "- Line 3: roughly 5 syllables\n"
     "- Themed to the fish and the location, but never name the fish outright\n"
     "- Evocative, concrete, sensory — imagistic rather than abstract\n"
     "- No emoji, no quotes, no explanation, no extra commentary\n\n"
-    "Output EXACTLY two lines separated by a single newline. Nothing else.\n\n"
+    "Output EXACTLY three lines separated by single newlines. Nothing else.\n\n"
     "Example (Calm Pond):\n"
     "mist on the water\n"
-    "a silver shape turns below\n\n"
+    "a silver shape turns below\n"
+    "silence swallows all\n\n"
     "Example (Deep Lake):\n"
     "black water yawning\n"
-    "something older than the stars\n\n"
+    "something older than the stars\n"
+    "pulls the line downward\n\n"
     "Example (River Rapids):\n"
     "white foam and cold stone\n"
-    "a shadow threads the current"
+    "a shadow threads the current\n"
+    "gone before you know"
 )
 
 
-async def generate_haiku_opening(
+async def generate_full_haiku(
     fish_name: str, rarity: str, location_name: str
-) -> tuple[str, str] | None:
-    """Generate the first two lines of a haiku.
+) -> tuple[str, str, str] | None:
+    """Generate all three lines of a haiku.
 
-    Returns (line1, line2) on success, or None if the LLM is unavailable or
-    returns malformed output.
+    Returns (line_1, line_2, line_3) on success, or None if the LLM is
+    unavailable or returns malformed output.
     """
     client = _get_client()
     if client is None:
         return None
 
     user_prompt = (
-        f"Write the opening two lines for a haiku about a {rarity} fish "
-        f"called {fish_name} at {location_name}. Do not name the fish."
+        f"Write a complete three-line haiku about a {rarity} fish called "
+        f"{fish_name} at {location_name}. Do not name the fish."
     )
 
     try:
         response = await asyncio.to_thread(
             client.messages.create,
             model=CHEAP_MODEL,
-            max_tokens=120,
-            system=HAIKU_OPENING_SYSTEM,
+            max_tokens=160,
+            system=HAIKU_FULL_SYSTEM,
             messages=[{"role": "user", "content": user_prompt}],
         )
         text = response.content[0].text.strip()
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        if len(lines) < 2:
-            logger.warning("Haiku opener returned fewer than 2 lines: %r", text)
+        if len(lines) < 3:
+            logger.warning("Haiku generator returned fewer than 3 lines: %r", text)
             return None
-        return lines[0], lines[1]
+        return lines[0], lines[1], lines[2]
     except Exception:
-        logger.exception("Failed to generate haiku opening")
+        logger.exception("Failed to generate full haiku")
         return None
 
 
@@ -603,7 +609,7 @@ __all__ = [
     "generate_whisper",
     "generate_vibe_passage",
     "judge_vibe",
-    "generate_haiku_opening",
+    "generate_full_haiku",
     "judge_haiku",
     "generate_legendary",
     "generate_legendary_line",
