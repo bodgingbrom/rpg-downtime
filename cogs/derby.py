@@ -2100,6 +2100,63 @@ class Derby(commands.Cog, name="derby"):
         # doesn't stall after a force-start consumes the pending race.
         await self.bot.scheduler._create_next_race(guild_id)
 
+    @race_admin.command(
+        name="test-race",
+        description="Run a test race with unowned racers only — no side effects (admin)",
+    )
+    @app_commands.describe(
+        count="Number of test races to run (1-20, default 1)",
+        silent="If True, skip commentary/results embeds — fast for padding analytics",
+    )
+    async def race_test_race(
+        self,
+        context: Context,
+        count: int = 1,
+        silent: bool = False,
+    ) -> None:
+        await context.defer(ephemeral=True)
+        count = max(1, min(20, count))
+        guild_id = context.guild.id if context.guild else 0
+
+        if count > 1 and not silent:
+            await context.send(
+                f"Running **{count}** test races with full commentary. "
+                "This may take a while — consider `silent:True` for bulk runs.",
+                ephemeral=True,
+            )
+
+        ran = 0
+        skipped = 0
+        for _ in range(count):
+            try:
+                race_id, _placements = await self.bot.scheduler.run_test_race(
+                    guild_id, silent=silent,
+                )
+            except Exception:
+                self.bot.logger.exception("Test race failed")
+                skipped += 1
+                continue
+            if race_id is None:
+                skipped += 1
+            else:
+                ran += 1
+
+        summary_lines = [f"Ran **{ran}/{count}** test races."]
+        if skipped:
+            summary_lines.append(
+                f"\u26a0\ufe0f Skipped {skipped} — not enough eligible unowned racers."
+            )
+        if silent and ran:
+            summary_lines.append(
+                "*(Silent mode: no commentary posted. Proc logs persisted.)*"
+            )
+        embed = discord.Embed(
+            title="Test Races Complete",
+            description="\n".join(summary_lines),
+            color=0x2ECC71 if skipped == 0 else 0xF1C40F,
+        )
+        await context.send(embed=embed, ephemeral=True)
+
     @derby_group.group(name="debug", description="Debug commands")
     async def debug_group(self, context: Context) -> None:
         if context.invoked_subcommand is None:

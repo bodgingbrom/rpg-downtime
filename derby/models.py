@@ -58,6 +58,10 @@ class Race(Base):
     biggest_payout: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     biggest_payout_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     biggest_payout_racer_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Admin-run test races don't apply race-completion side-effects (no
+    # injury rolls, no retirements, no mood drift, no training counter
+    # resets, no bet resolution). Filtered out of /race history by default.
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Bet(Base):
