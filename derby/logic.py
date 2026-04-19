@@ -1337,6 +1337,7 @@ def simulate_race(
                     ability_events.append(
                         _abilities_mod.format_commentary_event(
                             proc, color_map.get(rid, ""),
+                            names.get(rid, f"Racer {rid}"),
                         )
                     )
 
