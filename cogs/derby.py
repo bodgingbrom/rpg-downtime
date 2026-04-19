@@ -2064,7 +2064,9 @@ class Derby(commands.Cog, name="derby"):
             ready_embed.add_field(
                 name="Track Layout", value=layout, inline=False
             )
-        await context.send(embed=ready_embed)
+        # Command defers ephemerally, but the race build-up is part of
+        # the public race experience — override so players see it.
+        await context.send(embed=ready_embed, ephemeral=False)
 
         # Generate LLM commentary (runs during the "getting ready" moment)
         log = await commentary.generate_commentary(result)
