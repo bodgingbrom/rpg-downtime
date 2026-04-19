@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
+    AbilityProcLog,
     Bet,
     CommandLog,
     CourseSegment,
@@ -759,3 +760,143 @@ async def get_commands_in_period(
         )
     )
     return {row[0] for row in result.all()}
+
+
+# ---------------------------------------------------------------------------
+# Ability analytics
+# ---------------------------------------------------------------------------
+
+
+async def get_ability_stats(
+    session: AsyncSession,
+    guild_id: int,
+    *,
+    include_test: bool = True,
+    last_n_races: int = 0,
+) -> tuple[dict[str, dict], int]:
+    """Return per-ability stats for the guild.
+
+    ``include_test`` — when False, excludes ``is_test=True`` races. Default
+    True because test races are a deliberate balance-data source.
+    ``last_n_races`` — when > 0, restrict the analysis to the N most
+    recent finished races for the guild.
+
+    Returns ``(stats, races_analyzed)`` where ``stats`` maps
+    ``ability_key → {procs, races_procced, races_entered, wins, top3, avg_finish}``.
+    ``wins`` counts procs in races the racer won; ``top3`` counts procs
+    in races the racer finished top-3; ``avg_finish`` averages the
+    racer's final position across procs. ``races_entered`` is the number
+    of distinct finished races the ability was present in (at least one
+    entered racer had it as signature or quirk).
+    """
+    # Gather eligible race IDs
+    race_q = select(Race.id).where(
+        Race.guild_id == guild_id, Race.finished.is_(True),
+    )
+    if not include_test:
+        race_q = race_q.where(Race.is_test.is_(False))
+    race_q = race_q.order_by(Race.id.desc())
+    if last_n_races > 0:
+        race_q = race_q.limit(last_n_races)
+    race_ids = {rid for (rid,) in (await session.execute(race_q)).all()}
+    races_analyzed = len(race_ids)
+    if not race_ids:
+        return {}, 0
+
+    # All race entries in those races
+    entry_rows = (
+        await session.execute(
+            select(RaceEntry.race_id, RaceEntry.racer_id)
+            .where(RaceEntry.race_id.in_(race_ids))
+        )
+    ).all()
+    racer_ids = {racer_id for (_, racer_id) in entry_rows}
+
+    # Ability mapping for those racers
+    racer_rows = (
+        await session.execute(
+            select(
+                Racer.id, Racer.signature_ability, Racer.quirk_ability,
+            ).where(Racer.id.in_(racer_ids))
+        )
+    ).all()
+    racer_abilities: dict[int, tuple[str | None, str | None]] = {
+        rid: (sig, quirk) for (rid, sig, quirk) in racer_rows
+    }
+
+    # Build: ability_key -> set of race_ids it was entered in
+    ability_races: dict[str, set[int]] = {}
+    for race_id, racer_id in entry_rows:
+        sig, quirk = racer_abilities.get(racer_id, (None, None))
+        for key in (sig, quirk):
+            if key:
+                ability_races.setdefault(key, set()).add(race_id)
+
+    # Proc rows
+    proc_rows = (
+        await session.execute(
+            select(
+                AbilityProcLog.ability_key,
+                AbilityProcLog.race_id,
+                AbilityProcLog.finish_position,
+            ).where(
+                AbilityProcLog.guild_id == guild_id,
+                AbilityProcLog.race_id.in_(race_ids),
+            )
+        )
+    ).all()
+
+    # Aggregate per ability
+    agg: dict[str, dict] = {}
+    for ability_key, race_id, finish_position in proc_rows:
+        slot = agg.setdefault(
+            ability_key,
+            {
+                "procs": 0,
+                "races_procced": set(),
+                "wins": 0,
+                "top3": 0,
+                "finish_sum": 0,
+                "finish_count": 0,
+            },
+        )
+        slot["procs"] += 1
+        slot["races_procced"].add(race_id)
+        if finish_position is not None:
+            slot["finish_sum"] += finish_position
+            slot["finish_count"] += 1
+            if finish_position == 1:
+                slot["wins"] += 1
+            if finish_position <= 3:
+                slot["top3"] += 1
+
+    # Assemble final stats — include abilities that were entered even if
+    # they never procced (so "0% proc rate" surfaces).
+    stats: dict[str, dict] = {}
+    all_keys = set(ability_races.keys()) | set(agg.keys())
+    for key in all_keys:
+        entered = len(ability_races.get(key, set()))
+        a = agg.get(key)
+        if a is None:
+            stats[key] = {
+                "procs": 0,
+                "races_procced": 0,
+                "races_entered": entered,
+                "wins": 0,
+                "top3": 0,
+                "avg_finish": None,
+            }
+        else:
+            finish_count = a["finish_count"]
+            stats[key] = {
+                "procs": a["procs"],
+                "races_procced": len(a["races_procced"]),
+                "races_entered": entered,
+                "wins": a["wins"],
+                "top3": a["top3"],
+                "avg_finish": (
+                    a["finish_sum"] / finish_count if finish_count else None
+                ),
+            }
+
+    return stats, races_analyzed
