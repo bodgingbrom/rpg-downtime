@@ -32,6 +32,46 @@ async def location_autocomplete(
     return choices
 
 
+def _as_unix(dt) -> int:
+    """Convert a possibly-naive UTC datetime to a Unix timestamp."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
+
+
+def _existing_session_message(active, locations: dict) -> str:
+    """Explain exactly what session the player already has running.
+
+    Used by both ``/fish start`` and ``/fish active`` when the player is
+    already mid-session. Includes the mode, location, when it started,
+    bait remaining, and the ETA of the next event — so the user can see
+    at a glance what they forgot about.
+    """
+    loc_name = locations.get(active.location_name, {}).get(
+        "name", active.location_name
+    )
+    if active.mode == "active":
+        mode_label = "**actively**"
+        action_hint = (
+            f"Next bite <t:{_as_unix(active.next_catch_at)}:R> "
+            "(bites come every 30-90 seconds)."
+        )
+    else:
+        mode_label = "**AFK**"
+        action_hint = (
+            f"Next catch <t:{_as_unix(active.next_catch_at)}:R>. "
+            "AFK mode runs silently \u2014 catches happen in the background. "
+            "Use `/fish active` if you wanted button prompts instead."
+        )
+    started_rel = f"<t:{_as_unix(active.started_at)}:R>"
+    return (
+        f"You're already {mode_label} fishing at **{loc_name}** "
+        f"(started {started_rel}, **{active.bait_remaining}** casts remaining).\n"
+        f"{action_hint}\n"
+        f"Use `/fish stop` to end it and refund unused bait."
+    )
+
+
 class Fishing(commands.Cog, name="fishing"):
     def __init__(self, bot) -> None:
         self.bot = bot
@@ -96,12 +136,8 @@ class Fishing(commands.Cog, name="fishing"):
             # Guard: already fishing (in either mode)?
             active = await fish_repo.get_active_session(session, user_id, guild_id)
             if active:
-                loc = locations.get(active.location_name, {})
-                loc_name = loc.get("name", active.location_name)
-                mode_label = "actively" if active.mode == "active" else "AFK"
                 await context.send(
-                    f"You're already {mode_label} fishing at **{loc_name}**! "
-                    "Use `/fish stop` to end your session first.",
+                    _existing_session_message(active, locations),
                     ephemeral=True,
                 )
                 return
@@ -229,8 +265,12 @@ class Fishing(commands.Cog, name="fishing"):
 
         bait_name = fish_logic.BAIT_TYPES.get(selected_bait, {}).get("name", selected_bait)
         await context.send(
-            f"Started fishing at **{loc_display}** with **{bait_name}** "
-            f"({bait_count} casts). Good luck!",
+            f"\U0001F3A3 Started **AFK** fishing at **{loc_display}** with "
+            f"**{bait_name}** ({bait_count} casts).\n"
+            f"First catch <t:{_as_unix(next_catch)}:R>. "
+            "AFK runs silently in the background \u2014 check `/fish status` anytime, "
+            "or use `/fish stop` to end early.\n"
+            "*Want button prompts instead? Stop this and try `/fish active`.*",
             ephemeral=True,
         )
 
@@ -285,12 +325,8 @@ class Fishing(commands.Cog, name="fishing"):
             # Guard: already fishing (either mode)?
             existing = await fish_repo.get_active_session(session, user_id, guild_id)
             if existing:
-                loc = locations.get(existing.location_name, {})
-                loc_name = loc.get("name", existing.location_name)
-                mode_label = "actively" if existing.mode == "active" else "AFK"
                 await context.send(
-                    f"You're already {mode_label} fishing at **{loc_name}**! "
-                    "Use `/fish stop` to end your session first.",
+                    _existing_session_message(existing, locations),
                     ephemeral=True,
                 )
                 return
@@ -404,10 +440,11 @@ class Fishing(commands.Cog, name="fishing"):
 
         bait_name = fish_logic.BAIT_TYPES.get(selected_bait, {}).get("name", selected_bait)
         await context.send(
-            f"\U0001F3A3 Active fishing started at **{loc_display}** with "
+            f"\U0001F3A3 Started **active** fishing at **{loc_display}** with "
             f"**{bait_name}** ({bait_count} casts).\n"
-            f"Stay close — bites will come every 30-90 seconds. "
-            f"Use `/fish stop` to end early and refund unused bait.",
+            f"First bite <t:{_as_unix(next_catch)}:R>. "
+            "Stay close \u2014 you'll need to respond to each bite within its "
+            "timer. Use `/fish stop` to end early and refund unused bait.",
             ephemeral=True,
         )
 
