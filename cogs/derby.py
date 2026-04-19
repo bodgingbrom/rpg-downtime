@@ -2180,6 +2180,195 @@ class Derby(commands.Cog, name="derby"):
         )
         await context.send(embed=embed, ephemeral=True)
 
+    # ------------------------------------------------------------------
+    # Ability analytics
+    # ------------------------------------------------------------------
+
+    @derby_group.group(name="abilities", description="Ability analytics commands")
+    async def abilities_group(self, context: Context) -> None:
+        if context.invoked_subcommand is None:
+            await context.send("Specify a subcommand", ephemeral=True)
+
+    POOL_CHOICES = [
+        app_commands.Choice(name="All pools", value="all"),
+        app_commands.Choice(name="Speed pool", value="speed_pool"),
+        app_commands.Choice(name="Cornering pool", value="cornering_pool"),
+        app_commands.Choice(name="Stamina pool", value="stamina_pool"),
+        app_commands.Choice(name="Quirk pool", value="quirk_pool"),
+    ]
+
+    @abilities_group.command(
+        name="report",
+        description="Show ability proc rates, win rates, and avg finish per ability",
+    )
+    @app_commands.describe(
+        pool="Limit report to one ability pool (default: all)",
+        include_test="Include test races (default True — they're a deliberate data source)",
+        last_n_races="Only consider the N most recent finished races (default 0 = all)",
+        min_samples="Hide abilities with fewer than N procs (default 0)",
+    )
+    @app_commands.choices(pool=POOL_CHOICES)
+    async def abilities_report(
+        self,
+        context: Context,
+        pool: app_commands.Choice[str] | None = None,
+        include_test: bool = True,
+        last_n_races: int = 0,
+        min_samples: int = 0,
+    ) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            stats, races_analyzed = await repo.get_ability_stats(
+                session, guild_id,
+                include_test=include_test,
+                last_n_races=last_n_races,
+            )
+
+        if races_analyzed == 0:
+            await context.send(
+                "No finished races found for this guild yet.",
+                ephemeral=True,
+            )
+            return
+
+        # Map ability key → pool for grouping
+        pool_value = pool.value if isinstance(pool, app_commands.Choice) else (pool or "all")
+        ability_pool_lookup: dict[str, str] = {}
+        ability_meta: dict[str, abilities.Ability] = abilities.load_abilities()
+        raw_yaml = abilities._load_ability_pool()
+        for pool_key in ("speed_pool", "cornering_pool", "stamina_pool", "quirk_pool"):
+            for entry in raw_yaml.get(pool_key) or []:
+                if entry.get("key"):
+                    ability_pool_lookup[entry["key"]] = pool_key
+
+        # Bucket stats by pool
+        by_pool: dict[str, list[tuple[str, dict]]] = {
+            "speed_pool": [], "cornering_pool": [],
+            "stamina_pool": [], "quirk_pool": [],
+        }
+        for key, s in stats.items():
+            if s["procs"] < min_samples:
+                continue
+            p = ability_pool_lookup.get(key)
+            if p is None:
+                continue  # legacy/removed ability
+            if pool_value != "all" and p != pool_value:
+                continue
+            by_pool[p].append((key, s))
+
+        # Sort each pool by procs descending (busiest first)
+        for p in by_pool:
+            by_pool[p].sort(key=lambda kv: kv[1]["procs"], reverse=True)
+
+        # Render
+        filters = []
+        if not include_test:
+            filters.append("excluding test races")
+        if last_n_races > 0:
+            filters.append(f"last {last_n_races} races")
+        if min_samples > 0:
+            filters.append(f"\u2265{min_samples} procs")
+        filter_str = f" ({', '.join(filters)})" if filters else ""
+
+        embed = discord.Embed(
+            title="Ability Balance Report",
+            description=f"**{races_analyzed}** races analyzed{filter_str}",
+            color=0x3498DB,
+        )
+
+        pool_labels = {
+            "speed_pool": "\u26a1 Speed Pool",
+            "cornering_pool": "\U0001f501 Cornering Pool",
+            "stamina_pool": "\U0001f4aa Stamina Pool",
+            "quirk_pool": "\u2728 Quirk Pool",
+        }
+
+        any_data = False
+        for p, label in pool_labels.items():
+            rows = by_pool[p]
+            if not rows:
+                continue
+            any_data = True
+            lines = [
+                f"{'Ability':<22} {'Procs':>6} {'Proc%':>6} {'Win%':>5} {'Top3%':>6} {'AvgFin':>7}"
+            ]
+            for key, s in rows:
+                ab = ability_meta.get(key)
+                name = ab.name if ab else key
+                # Truncate to fit column
+                name = name[:21]
+                entered = s["races_entered"] or 0
+                proc_pct = (
+                    f"{int(100 * s['races_procced'] / entered)}%"
+                    if entered else "—"
+                )
+                win_pct = (
+                    f"{int(100 * s['wins'] / s['procs'])}%"
+                    if s["procs"] else "—"
+                )
+                top3_pct = (
+                    f"{int(100 * s['top3'] / s['procs'])}%"
+                    if s["procs"] else "—"
+                )
+                avg = (
+                    f"{s['avg_finish']:.1f}"
+                    if s["avg_finish"] is not None else "—"
+                )
+                lines.append(
+                    f"{name:<22} {s['procs']:>6} {proc_pct:>6} {win_pct:>5} {top3_pct:>6} {avg:>7}"
+                )
+            block = "```\n" + "\n".join(lines) + "\n```"
+            embed.add_field(name=label, value=block, inline=False)
+
+        if not any_data:
+            embed.add_field(
+                name="No data",
+                value=(
+                    "No ability procs recorded for the selected filters. "
+                    "Run some races (or `/derby race test-race count:10 silent:True`) "
+                    "to start collecting data."
+                ),
+                inline=False,
+            )
+
+        # Balance warnings
+        warnings_list: list[str] = []
+        for p in by_pool:
+            for key, s in by_pool[p]:
+                if s["procs"] < 10:
+                    continue  # Not enough data for a warning
+                entered = s["races_entered"] or 0
+                proc_rate = s["races_procced"] / entered if entered else 0
+                win_rate = s["wins"] / s["procs"] if s["procs"] else 0
+                name = ability_meta.get(key).name if ability_meta.get(key) else key
+                if proc_rate >= 0.85 and win_rate >= 0.4:
+                    warnings_list.append(
+                        f"\U0001f6a8 **{name}** — {int(proc_rate*100)}% proc rate, "
+                        f"{int(win_rate*100)}% win rate (possibly overpowered)"
+                    )
+                elif proc_rate <= 0.15:
+                    warnings_list.append(
+                        f"\U0001f634 **{name}** — only {int(proc_rate*100)}% proc "
+                        f"rate in {entered} races entered (trigger too narrow?)"
+                    )
+
+        if warnings_list:
+            embed.add_field(
+                name="Balance Warnings",
+                value="\n".join(warnings_list[:10]),
+                inline=False,
+            )
+
+        embed.set_footer(
+            text=(
+                "Proc% = races procced / races entered. "
+                "Win% = procs in races the racer won."
+            )
+        )
+        await context.send(embed=embed, ephemeral=True)
+
     @derby_group.group(name="debug", description="Debug commands")
     async def debug_group(self, context: Context) -> None:
         if context.invoked_subcommand is None:

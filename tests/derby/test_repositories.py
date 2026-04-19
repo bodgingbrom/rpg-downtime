@@ -373,3 +373,146 @@ async def test_get_racers_by_rank(session: AsyncSession):
     c_unowned = await repo.get_racers_by_rank(session, guild_id=1, rank="C", unowned_only=True)
     assert len(c_unowned) == 1
     assert c_unowned[0].name == "C1"
+
+
+# ---------------------------------------------------------------------------
+# Ability analytics
+# ---------------------------------------------------------------------------
+
+
+async def _make_racer(session, name, guild_id, sig, quirk):
+    """Helper: create a racer and directly assign ability fields the
+    repo's create_racer doesn't expose in its signature."""
+    r = await repo.create_racer(
+        session, name=name, owner_id=0, guild_id=guild_id,
+        speed=10, cornering=10, stamina=10, temperament="Bold",
+    )
+    await repo.update_racer(
+        session, r.id, signature_ability=sig, quirk_ability=quirk,
+    )
+    return r
+
+
+@pytest.mark.asyncio
+async def test_get_ability_stats_basic(session: AsyncSession):
+    """Basic smoke test: racers with abilities, a race, some procs land in stats."""
+    from derby.models import AbilityProcLog, Race, RaceEntry
+
+    # Two racers, one ability each
+    r1 = await _make_racer(session, "A", 1, "closing_surge", "rival_hunter")
+    r2 = await _make_racer(session, "B", 1, "front_runner", "slow_starter")
+
+    # One finished race with both racers entered
+    race = await repo.create_race(session, guild_id=1, finished=True)
+    await repo.create_race_entries(session, race.id, [r1.id, r2.id])
+
+    # A procs closing_surge twice (segments 0 and 2), r1 wins (finish=1)
+    session.add(AbilityProcLog(
+        race_id=race.id, racer_id=r1.id, guild_id=1,
+        ability_key="closing_surge", segment_index=0, finish_position=1,
+    ))
+    session.add(AbilityProcLog(
+        race_id=race.id, racer_id=r1.id, guild_id=1,
+        ability_key="closing_surge", segment_index=2, finish_position=1,
+    ))
+    # B procs front_runner once, B finishes 2nd
+    session.add(AbilityProcLog(
+        race_id=race.id, racer_id=r2.id, guild_id=1,
+        ability_key="front_runner", segment_index=1, finish_position=2,
+    ))
+    await session.commit()
+
+    stats, races_analyzed = await repo.get_ability_stats(session, guild_id=1)
+
+    assert races_analyzed == 1
+    # closing_surge: 2 procs, both in same race, win (r1 finished 1st)
+    cs = stats["closing_surge"]
+    assert cs["procs"] == 2
+    assert cs["races_procced"] == 1
+    assert cs["races_entered"] == 1
+    assert cs["wins"] == 2  # per-proc win count
+    assert cs["top3"] == 2
+    assert cs["avg_finish"] == 1.0
+
+    # front_runner: 1 proc, r2 finished 2nd (top3 yes, win no)
+    fr = stats["front_runner"]
+    assert fr["procs"] == 1
+    assert fr["wins"] == 0
+    assert fr["top3"] == 1
+    assert fr["avg_finish"] == 2.0
+
+    # rival_hunter was entered (on r1) but never procced
+    rh = stats["rival_hunter"]
+    assert rh["procs"] == 0
+    assert rh["races_entered"] == 1
+    assert rh["avg_finish"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_ability_stats_excludes_test_races(session: AsyncSession):
+    """include_test=False filters out is_test=True races and their procs."""
+    from derby.models import AbilityProcLog, Race
+
+    r1 = await _make_racer(session, "A", 1, "closing_surge", None)
+
+    # One real race, one test race
+    real_race = await repo.create_race(session, guild_id=1, finished=True, is_test=False)
+    test_race = await repo.create_race(session, guild_id=1, finished=True, is_test=True)
+    await repo.create_race_entries(session, real_race.id, [r1.id])
+    await repo.create_race_entries(session, test_race.id, [r1.id])
+
+    session.add(AbilityProcLog(
+        race_id=real_race.id, racer_id=r1.id, guild_id=1,
+        ability_key="closing_surge", segment_index=0, finish_position=1,
+    ))
+    session.add(AbilityProcLog(
+        race_id=test_race.id, racer_id=r1.id, guild_id=1,
+        ability_key="closing_surge", segment_index=0, finish_position=1,
+    ))
+    await session.commit()
+
+    # Default include_test=True: both races counted
+    stats_all, races_all = await repo.get_ability_stats(session, guild_id=1)
+    assert races_all == 2
+    assert stats_all["closing_surge"]["procs"] == 2
+
+    # include_test=False: only real race
+    stats_real, races_real = await repo.get_ability_stats(
+        session, guild_id=1, include_test=False,
+    )
+    assert races_real == 1
+    assert stats_real["closing_surge"]["procs"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_ability_stats_last_n_races_limit(session: AsyncSession):
+    """last_n_races restricts analysis to the N most recent finished races."""
+    from derby.models import AbilityProcLog, Race
+
+    r1 = await _make_racer(session, "A", 1, "closing_surge", None)
+
+    # Create 5 finished races, each with a closing_surge proc
+    race_ids = []
+    for _ in range(5):
+        race = await repo.create_race(session, guild_id=1, finished=True)
+        await repo.create_race_entries(session, race.id, [r1.id])
+        race_ids.append(race.id)
+        session.add(AbilityProcLog(
+            race_id=race.id, racer_id=r1.id, guild_id=1,
+            ability_key="closing_surge", segment_index=0, finish_position=1,
+        ))
+    await session.commit()
+
+    # last_n_races=3 → only 3 most recent counted
+    stats, races_analyzed = await repo.get_ability_stats(
+        session, guild_id=1, last_n_races=3,
+    )
+    assert races_analyzed == 3
+    assert stats["closing_surge"]["procs"] == 3
+
+
+@pytest.mark.asyncio
+async def test_get_ability_stats_empty_guild(session: AsyncSession):
+    stats, races_analyzed = await repo.get_ability_stats(session, guild_id=999)
+    assert stats == {}
+    assert races_analyzed == 0
