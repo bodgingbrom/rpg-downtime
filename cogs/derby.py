@@ -2285,20 +2285,23 @@ class Derby(commands.Cog, name="derby"):
             "quirk_pool": "\u2728 Quirk Pool",
         }
 
+        header_line = (
+            f"{'Ability':<22} {'Procs':>6} {'Proc%':>6} {'Win%':>5} "
+            f"{'Top3%':>6} {'AvgFin':>7}"
+        )
+
+        # Collect all pool sections first (list of (label, data_rows))
+        sections: list[tuple[str, list[str]]] = []
         any_data = False
         for p, label in pool_labels.items():
             rows = by_pool[p]
             if not rows:
                 continue
             any_data = True
-            lines = [
-                f"{'Ability':<22} {'Procs':>6} {'Proc%':>6} {'Win%':>5} {'Top3%':>6} {'AvgFin':>7}"
-            ]
+            data_rows: list[str] = []
             for key, s in rows:
                 ab = ability_meta.get(key)
-                name = ab.name if ab else key
-                # Truncate to fit column
-                name = name[:21]
+                name = (ab.name if ab else key)[:21]
                 entered = s["races_entered"] or 0
                 proc_pct = (
                     f"{int(100 * s['races_procced'] / entered)}%"
@@ -2316,58 +2319,174 @@ class Derby(commands.Cog, name="derby"):
                     f"{s['avg_finish']:.1f}"
                     if s["avg_finish"] is not None else "—"
                 )
-                lines.append(
-                    f"{name:<22} {s['procs']:>6} {proc_pct:>6} {win_pct:>5} {top3_pct:>6} {avg:>7}"
+                data_rows.append(
+                    f"{name:<22} {s['procs']:>6} {proc_pct:>6} {win_pct:>5} "
+                    f"{top3_pct:>6} {avg:>7}"
                 )
-            block = "```\n" + "\n".join(lines) + "\n```"
-            embed.add_field(name=label, value=block, inline=False)
+            sections.append((label, data_rows))
 
-        if not any_data:
-            embed.add_field(
-                name="No data",
-                value=(
-                    "No ability procs recorded for the selected filters. "
-                    "Run some races (or `/derby race test-race count:10 silent:True`) "
-                    "to start collecting data."
-                ),
-                inline=False,
-            )
-
-        # Balance warnings
+        # Collect balance warnings as plain strings
         warnings_list: list[str] = []
         for p in by_pool:
             for key, s in by_pool[p]:
                 if s["procs"] < 10:
-                    continue  # Not enough data for a warning
+                    continue
                 entered = s["races_entered"] or 0
                 proc_rate = s["races_procced"] / entered if entered else 0
                 win_rate = s["wins"] / s["procs"] if s["procs"] else 0
-                name = ability_meta.get(key).name if ability_meta.get(key) else key
+                name = (
+                    ability_meta.get(key).name
+                    if ability_meta.get(key) else key
+                )
                 if proc_rate >= 0.85 and win_rate >= 0.4:
                     warnings_list.append(
-                        f"\U0001f6a8 **{name}** — {int(proc_rate*100)}% proc rate, "
+                        f"\U0001f6a8 **{name}** \u2014 "
+                        f"{int(proc_rate*100)}% proc rate, "
                         f"{int(win_rate*100)}% win rate (possibly overpowered)"
                     )
                 elif proc_rate <= 0.15:
                     warnings_list.append(
-                        f"\U0001f634 **{name}** — only {int(proc_rate*100)}% proc "
-                        f"rate in {entered} races entered (trigger too narrow?)"
+                        f"\U0001f634 **{name}** \u2014 only "
+                        f"{int(proc_rate*100)}% proc rate in "
+                        f"{entered} races entered (trigger too narrow?)"
                     )
 
-        if warnings_list:
-            embed.add_field(
-                name="Balance Warnings",
-                value="\n".join(warnings_list[:10]),
+        # --- Build embeds with chunking for Discord's 1024-char field limit
+        # and 6000-char total embed limit. Rollover into additional embeds
+        # if the data is too big for one.
+        FIELD_VALUE_MAX = 1024
+        EMBED_TOTAL_MAX = 5500  # leave margin under 6000
+
+        def _chunk_table(header: str, rows: list[str]) -> list[str]:
+            """Split header + rows into ≤1024-char code blocks.
+
+            Each block is ``` ... ``` wrapped and contains the header
+            line followed by as many rows as fit. Rows are never split.
+            """
+            wrapper = 8  # ```\n + \n```
+            blocks: list[str] = []
+            current = [header]
+            # +1 for the newline after each line
+            current_size = len(header) + 1 + wrapper
+            for row in rows:
+                addition = len(row) + 1
+                if (
+                    current_size + addition > FIELD_VALUE_MAX
+                    and len(current) > 1
+                ):
+                    blocks.append("```\n" + "\n".join(current) + "\n```")
+                    current = [header]
+                    current_size = len(header) + 1 + wrapper
+                current.append(row)
+                current_size += addition
+            blocks.append("```\n" + "\n".join(current) + "\n```")
+            return blocks
+
+        def _chunk_bullets(items: list[str]) -> list[str]:
+            """Split bullet lines into ≤1024-char chunks (no code block)."""
+            chunks: list[str] = []
+            current: list[str] = []
+            current_size = 0
+            for item in items:
+                addition = len(item) + 1
+                if (
+                    current_size + addition > FIELD_VALUE_MAX
+                    and current
+                ):
+                    chunks.append("\n".join(current))
+                    current = []
+                    current_size = 0
+                current.append(item)
+                current_size += addition
+            if current:
+                chunks.append("\n".join(current))
+            return chunks
+
+        filters_applied = []
+        if not include_test:
+            filters_applied.append("excluding test races")
+        if last_n_races > 0:
+            filters_applied.append(f"last {last_n_races} races")
+        if min_samples > 0:
+            filters_applied.append(f"\u2265{min_samples} procs")
+        filter_str = (
+            f" ({', '.join(filters_applied)})" if filters_applied else ""
+        )
+
+        def _make_embed(
+            title_suffix: str = "",
+        ) -> discord.Embed:
+            title = "Ability Balance Report"
+            if title_suffix:
+                title += f" {title_suffix}"
+            return discord.Embed(
+                title=title,
+                description=f"**{races_analyzed}** races analyzed{filter_str}",
+                color=0x3498DB,
+            )
+
+        embeds: list[discord.Embed] = []
+        current_embed = _make_embed()
+
+        def _current_len(e: discord.Embed) -> int:
+            """Approximate the embed's total-chars count."""
+            total = len(e.title or "") + len(e.description or "")
+            for f in e.fields:
+                total += len(f.name) + len(str(f.value))
+            return total
+
+        def _add_chunked_field(
+            e: discord.Embed, base_name: str, chunks: list[str],
+        ) -> discord.Embed:
+            """Add one or more fields to e, rolling over to a new embed
+            if adding a chunk would push past EMBED_TOTAL_MAX.
+            Returns the current embed (possibly a new one)."""
+            for i, chunk in enumerate(chunks):
+                suffix = (
+                    "" if len(chunks) == 1
+                    else f" ({i + 1}/{len(chunks)})"
+                )
+                name = f"{base_name}{suffix}"
+                if (
+                    _current_len(e) + len(name) + len(chunk) > EMBED_TOTAL_MAX
+                    and e.fields
+                ):
+                    embeds.append(e)
+                    e = _make_embed(title_suffix=f"(cont.)")
+                e.add_field(name=name, value=chunk, inline=False)
+            return e
+
+        for label, data_rows in sections:
+            blocks = _chunk_table(header_line, data_rows)
+            current_embed = _add_chunked_field(current_embed, label, blocks)
+
+        if not any_data:
+            current_embed.add_field(
+                name="No data",
+                value=(
+                    "No ability procs recorded for the selected filters. "
+                    "Run some races (or `/derby race test-race "
+                    "count:10 silent:True`) to start collecting data."
+                ),
                 inline=False,
             )
 
-        embed.set_footer(
+        if warnings_list:
+            warning_chunks = _chunk_bullets(warnings_list)
+            current_embed = _add_chunked_field(
+                current_embed, "Balance Warnings", warning_chunks,
+            )
+
+        current_embed.set_footer(
             text=(
                 "Proc% = races procced / races entered. "
                 "Win% = procs in races the racer won."
             )
         )
-        await context.send(embed=embed, ephemeral=True)
+        embeds.append(current_embed)
+
+        # Discord allows up to 10 embeds per message
+        await context.send(embeds=embeds[:10], ephemeral=True)
 
     @derby_group.group(name="debug", description="Debug commands")
     async def debug_group(self, context: Context) -> None:
