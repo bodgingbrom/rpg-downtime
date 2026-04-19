@@ -380,6 +380,7 @@ class DerbyScheduler:
             race_migrations = {
                 "placements": ("VARCHAR", "NULL"),
                 "map_name": ("VARCHAR", "NULL"),
+                "is_test": ("BOOLEAN", "0"),
                 "biggest_payout": ("INTEGER", "NULL"),
                 "biggest_payout_user_id": ("INTEGER", "NULL"),
                 "biggest_payout_racer_id": ("INTEGER", "NULL"),
@@ -660,6 +661,138 @@ class DerbyScheduler:
             extra={"guild_id": guild_id, "race_id": race.id},
         )
         return race
+
+    async def run_test_race(
+        self,
+        guild_id: int,
+        silent: bool = False,
+        channel_override: "discord.abc.Messageable | None" = None,
+    ) -> tuple[int | None, list[int]]:
+        """Run a one-off test race using only unowned racers.
+
+        Creates a full Race row flagged ``is_test=True``, runs the
+        simulation with the normal ability hooks, persists ability proc
+        logs (so test races contribute to balance analytics), and
+        optionally announces the race.
+
+        When ``channel_override`` is supplied, the commentary + results
+        are posted there instead of the configured derby channel — lets
+        admins run test races in a private channel without spamming
+        players.
+
+        Does NOT apply any race-completion side effects: no bet
+        resolution, no injuries, no retirements, no mood drift, no
+        placement prizes, no training counter resets, no
+        ``races_completed`` increment, no buff consumption.
+
+        Returns ``(race_id, placements)``. If no valid field can be
+        formed, returns ``(None, [])``.
+        """
+        gs = await self._load_guild_settings(guild_id)
+        min_train = self._resolve("min_training_to_race", gs)
+
+        async with self.sessionmaker() as session:
+            pool = await repo.get_unowned_guild_racers(
+                session, guild_id, eligible_only=True,
+            )
+
+        # Apply the same min_training gate that normal races use.
+        # (get_unowned_guild_racers doesn't accept min_training directly.)
+        racers = [
+            r for r in pool
+            if r.sire_id is None or (r.training_count or 0) >= min_train
+        ]
+
+        if len(racers) < 2:
+            return None, []
+
+        max_racers = self._resolve("max_racers_per_race", gs)
+        window_size = self._resolve("race_stat_window", gs)
+        participants = self._pick_competitive_field(
+            racers, max_racers, window_size,
+        )
+        if participants is None:
+            return None, []
+
+        race_map = logic.pick_map()
+        async with self.sessionmaker() as session:
+            race = await repo.create_race(
+                session,
+                guild_id=guild_id,
+                map_name=race_map.name if race_map else None,
+                is_test=True,
+            )
+            await repo.create_race_entries(
+                session, race.id, [r.id for r in participants]
+            )
+
+        # Build abilities + color context for simulation
+        from . import abilities as _abilities
+        abilities_map = {
+            r.id: (
+                getattr(r, "signature_ability", None),
+                getattr(r, "quirk_ability", None),
+            )
+            for r in participants
+        }
+        color_map = _abilities.assign_race_colors([r.id for r in participants])
+
+        result = logic.simulate_race(
+            {"racers": participants}, race.id, race_map=race_map,
+            abilities_map=abilities_map, color_map=color_map,
+        )
+        winner_id = result.placements[0] if result.placements else None
+        placements_json = json.dumps(result.placements)
+
+        async with self.sessionmaker() as session:
+            await repo.update_race(
+                session, race.id, finished=True, winner_id=winner_id,
+                placements=placements_json,
+            )
+            # Persist ability proc log — test races still contribute to
+            # balance analytics (the whole point of this command).
+            if result.proc_log:
+                placement_index = {
+                    rid: (idx + 1) for idx, rid in enumerate(result.placements)
+                }
+                for (rid, ability_key, seg_idx) in result.proc_log:
+                    session.add(
+                        models.AbilityProcLog(
+                            race_id=race.id,
+                            racer_id=rid,
+                            guild_id=guild_id,
+                            ability_key=ability_key,
+                            segment_index=seg_idx,
+                            finish_position=placement_index.get(rid),
+                        )
+                    )
+                await session.commit()
+
+        self.bot.logger.info(
+            "Test race finished",
+            extra={
+                "guild_id": guild_id, "race_id": race.id,
+                "participants": len(participants),
+                "procs": len(result.proc_log),
+            },
+        )
+
+        if not silent:
+            log = await commentary.generate_commentary(result)
+            if log is None:
+                log = commentary.build_template_commentary(result)
+            await self._stream_commentary(
+                race.id, guild_id, log,
+                delay=self._resolve("commentary_delay", gs),
+                guild_settings=gs,
+                channel_override=channel_override,
+            )
+            await self._post_results(
+                guild_id, result.placements, result.racer_names,
+                channel_override=channel_override,
+            )
+
+        return race.id, result.placements
 
     async def _ensure_flavor_names(self, guild_id: int) -> None:
         """Generate flavor-specific racer names if needed.
@@ -1511,13 +1644,17 @@ class DerbyScheduler:
         guild_id: int,
         placements: list[int],
         names: dict[int, str] | None = None,
+        channel_override: "discord.abc.Messageable | None" = None,
     ) -> None:
-        guild = self.bot.get_guild(guild_id)
-        if guild is None:
-            return
-        channel = self._get_channel(guild)
-        if channel is None:
-            return
+        if channel_override is not None:
+            channel = channel_override
+        else:
+            guild = self.bot.get_guild(guild_id)
+            if guild is None:
+                return
+            channel = self._get_channel(guild)
+            if channel is None:
+                return
         if names is None:
             async with self.sessionmaker() as session:
                 racers = (
@@ -1793,13 +1930,17 @@ class DerbyScheduler:
     async def _stream_commentary(
         self, race_id: int, guild_id: int, log: list[str], delay: float = 6.0,
         guild_settings: models.GuildSettings | None = None,
+        channel_override: "discord.abc.Messageable | None" = None,
     ) -> None:
-        guild = self.bot.get_guild(guild_id)
-        if guild is None:
-            return
-        channel = self._get_channel(guild)
-        if channel is None:
-            return
+        if channel_override is not None:
+            channel = channel_override
+        else:
+            guild = self.bot.get_guild(guild_id)
+            if guild is None:
+                return
+            channel = self._get_channel(guild)
+            if channel is None:
+                return
 
         message: discord.Message | None = None
         lines: list[str] = []

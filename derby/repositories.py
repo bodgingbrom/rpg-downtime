@@ -364,7 +364,11 @@ async def get_race_history(
 
     result = await session.execute(
         select(Race)
-        .where(Race.guild_id == guild_id, Race.finished.is_(True))
+        .where(
+            Race.guild_id == guild_id,
+            Race.finished.is_(True),
+            Race.is_test.is_(False),
+        )
         .order_by(Race.id.desc())
         .limit(limit)
     )
