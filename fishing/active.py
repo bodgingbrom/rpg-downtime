@@ -376,21 +376,40 @@ class ActiveFishingRunner:
 
     # --- helpers ---------------------------------------------------------
 
-    def _resolve_display_name(self, guild_id: int, user_id: int) -> str:
-        """Return a Discord member's display name, or a fallback string.
+    def _resolve_display_name(self, fs) -> str:
+        """Return the angler's display name for embed text.
 
-        Used for embed titles/descriptions where a raw ``<@id>`` mention
-        would render as ugly text (notably in embed titles). Safe to call
-        even when the member isn't cached — falls back to ``"Angler"``.
+        Prefers the snapshotted name stored on the session (set at
+        ``/fish active`` time from ``context.author.display_name``), then
+        falls back to the member cache, then to ``"Angler"`` as a
+        last resort. Embed titles don't render raw ``<@id>`` mentions,
+        so we always need a resolved string.
         """
+        snapshot = getattr(fs, "angler_name", None)
+        if snapshot:
+            return snapshot
         try:
-            guild = self.bot.get_guild(guild_id)
-            member = guild.get_member(user_id) if guild else None
+            guild = self.bot.get_guild(fs.guild_id)
+            member = guild.get_member(fs.user_id) if guild else None
             if member is not None:
                 return member.display_name
         except Exception:
             pass
         return "Angler"
+
+    def _get_post_target(self, fs):
+        """Return the channel/thread the session should post to.
+
+        Active sessions have a dedicated thread; AFK sessions post in the
+        original channel. Falls back to ``channel_id`` if the thread is
+        gone (deleted, archived past the bot's view, etc.).
+        """
+        thread_id = getattr(fs, "thread_id", None)
+        if thread_id:
+            target = self.bot.get_channel(thread_id)
+            if target is not None:
+                return target
+        return self.bot.get_channel(fs.channel_id)
 
     # --- event handlers ---------------------------------------------------
 
@@ -404,7 +423,7 @@ class ActiveFishingRunner:
 
         Timeout just means they miss the flavor text; they still catch.
         """
-        channel = self.bot.get_channel(fs.channel_id)
+        channel = self._get_post_target(fs)
         if channel is None:
             return True
 
@@ -447,7 +466,7 @@ class ActiveFishingRunner:
         elif timed_out or not view.clicked:
             result_lines.append("\n*(The fish slipped away from your attention...but you still pulled it in.)*")
 
-        angler = self._resolve_display_name(fs.guild_id, fs.user_id)
+        angler = self._resolve_display_name(fs)
         result_embed = discord.Embed(
             title=f"🐟 {angler} caught a {catch['name']}!",
             description="\n".join(result_lines),
@@ -502,7 +521,7 @@ class ActiveFishingRunner:
 
         PASS → catch the fish. FAIL or timeout → fish escapes, bait burned.
         """
-        channel = self.bot.get_channel(fs.channel_id)
+        channel = self._get_post_target(fs)
         if channel is None:
             # No channel to prompt in — conservative: escape
             return False
@@ -578,7 +597,7 @@ class ActiveFishingRunner:
             result_lines.append(
                 f"\n*{passage}*\n\nTheir word: **{view.word}** — the water agrees."
             )
-            angler = self._resolve_display_name(fs.guild_id, fs.user_id)
+            angler = self._resolve_display_name(fs)
             result_embed = discord.Embed(
                 title=f"🐟 {angler} caught a {catch['name']}!",
                 description="\n".join(result_lines),
@@ -626,7 +645,7 @@ class ActiveFishingRunner:
         PASS → catch the fish AND save the haiku to the player's log.
         FAIL or timeout → fish escapes, bait burned, haiku not saved.
         """
-        channel = self.bot.get_channel(fs.channel_id)
+        channel = self._get_post_target(fs)
         if channel is None:
             return False
 
@@ -744,7 +763,7 @@ class ActiveFishingRunner:
             if catch.get("length"):
                 details.append(f"{catch['length']}in")
             details.append(f"{catch['value']} coins")
-            angler = self._resolve_display_name(fs.guild_id, fs.user_id)
+            angler = self._resolve_display_name(fs)
             result_embed = discord.Embed(
                 title=f"🐟 {angler} caught a {catch['name']}!",
                 description=(
@@ -807,7 +826,7 @@ class ActiveFishingRunner:
         - True + legendary caught + new one generated
         - False (UNCONVINCED or timeout or LLM unavailable) → fish stays, bait burned
         """
-        channel = self.bot.get_channel(fs.channel_id)
+        channel = self._get_post_target(fs)
         if channel is None:
             return False
 
@@ -854,14 +873,7 @@ class ActiveFishingRunner:
             legendary_personality = legendary.personality
 
         # Resolve player display name for LLM context
-        player_name = f"<user:{fs.user_id}>"
-        try:
-            guild = self.bot.get_guild(fs.guild_id)
-            member = guild.get_member(fs.user_id) if guild else None
-            if member is not None:
-                player_name = member.display_name
-        except Exception:
-            pass
+        player_name = self._resolve_display_name(fs)
 
         past_summaries = [e.dialogue_summary for e in past_encounters]
         other_summaries: list[tuple[str, str]] = []
@@ -1094,15 +1106,26 @@ class ActiveFishingRunner:
                 except Exception:
                     logger.exception("Failed to generate replacement legendary")
 
-        # Public flavor announcement on catch
+        # Public flavor announcement on catch — post in the thread (record)
+        # AND cross-post to the main channel (showoff). Legendary catches
+        # are rare enough to justify the cross-post.
         if outcome == "caught":
+            announcement = (
+                f"👑 <@{fs.user_id}> has landed **{legendary_name}** at "
+                f"**{loc_name}**! A new legend has already begun to circle..."
+            )
             try:
-                await channel.send(
-                    f"👑 <@{fs.user_id}> has landed **{legendary_name}** at "
-                    f"**{loc_name}**! A new legend has already begun to circle..."
-                )
+                await channel.send(announcement)
             except (discord.Forbidden, discord.HTTPException):
                 pass
+            # Cross-post to the parent channel if we're in a thread
+            if getattr(fs, "thread_id", None):
+                parent = self.bot.get_channel(fs.channel_id)
+                if parent is not None:
+                    try:
+                        await parent.send(announcement)
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
 
         return outcome == "caught"
 
@@ -1117,7 +1140,7 @@ class ActiveFishingRunner:
         Posts a plain "you caught it" message and returns True. Replaced
         in Phases 2-4 with the real mechanics.
         """
-        channel = self.bot.get_channel(fs.channel_id)
+        channel = self._get_post_target(fs)
         if channel is not None:
             rarity = catch.get("rarity", "common")
             try:
@@ -1237,7 +1260,7 @@ class ActiveFishingRunner:
         await fish_repo.update_session(db, fs.id, **update_kwargs)
 
         # Announcements
-        channel = self.bot.get_channel(fs.channel_id)
+        channel = self._get_post_target(fs)
         if channel is not None:
             try:
                 if success and new_level > old_level:

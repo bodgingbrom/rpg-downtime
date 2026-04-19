@@ -454,7 +454,7 @@ class DerbyScheduler:
                         )
                     )
 
-            # Add mode column to fishing_sessions if missing
+            # Add mode / thread_id / angler_name columns to fishing_sessions
             if "fishing_sessions" in tables:
                 fs_cols = await conn.run_sync(
                     lambda c: get_table_columns(c, "fishing_sessions")
@@ -464,6 +464,20 @@ class DerbyScheduler:
                         text(
                             "ALTER TABLE fishing_sessions "
                             "ADD COLUMN mode TEXT NOT NULL DEFAULT 'afk'"
+                        )
+                    )
+                if "thread_id" not in fs_cols:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE fishing_sessions "
+                            "ADD COLUMN thread_id INTEGER DEFAULT NULL"
+                        )
+                    )
+                if "angler_name" not in fs_cols:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE fishing_sessions "
+                            "ADD COLUMN angler_name TEXT DEFAULT NULL"
                         )
                     )
 

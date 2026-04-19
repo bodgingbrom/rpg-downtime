@@ -59,6 +59,17 @@ class FishingSession(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     # "afk" (scheduler-driven, passive) or "active" (asyncio-driven, interactive)
     mode: Mapped[str] = mapped_column(String, default="afk", nullable=False)
+    # Active-mode sessions get their own thread to avoid channel clutter.
+    # NULL for AFK sessions (they post announcements directly to channel_id).
+    thread_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=None
+    )
+    # Snapshotted display name at session-start time. The bot runs without
+    # the Members intent, so ``guild.get_member`` is often empty — storing
+    # the name here avoids the "Angler" fallback in catch embeds.
+    angler_name: Mapped[str | None] = mapped_column(
+        String, nullable=True, default=None
+    )
 
 
 class FishCatch(Base):
