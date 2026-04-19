@@ -261,6 +261,7 @@ class Fishing(commands.Cog, name="fishing"):
                 started_at=now,
                 next_catch_at=next_catch,
                 mode="afk",
+                angler_name=context.author.display_name,
             )
 
         bait_name = fish_logic.BAIT_TYPES.get(selected_bait, {}).get("name", selected_bait)
@@ -402,11 +403,36 @@ class Fishing(commands.Cog, name="fishing"):
             now = datetime.now(timezone.utc)
             next_catch = now + timedelta(seconds=cast_seconds)
 
-            # Public announcement
-            await context.channel.send(
-                f"\U0001F3A3 **{context.author.display_name}** has begun an "
+            # Public announcement — this also anchors the per-session thread
+            angler_display = context.author.display_name
+            announcement = await context.channel.send(
+                f"\U0001F3A3 **{angler_display}** has begun an "
                 f"**active** fishing session at **{loc_display}**!"
             )
+
+            # Spin up a thread off the announcement so bite prompts don't
+            # clutter the main channel. If thread creation fails (missing
+            # permissions, not a text channel, etc.) fall back to posting
+            # in the channel directly.
+            thread_id = None
+            try:
+                thread = await announcement.create_thread(
+                    name=f"\U0001F3A3 {angler_display}'s fishing session",
+                    auto_archive_duration=1440,  # 24h, the max without boost
+                )
+                thread_id = thread.id
+                # Seed the thread so the player sees it exists
+                try:
+                    await thread.send(
+                        f"<@{user_id}> \u2014 your bites will appear here. "
+                        f"First bite <t:{_as_unix(next_catch)}:R>."
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+            except (discord.Forbidden, discord.HTTPException):
+                # Thread not possible in this channel/perms — keep the
+                # session alive, just post to the channel instead.
+                thread_id = None
 
             # Reserve bait
             consumed = await fish_repo.consume_bait(
@@ -433,16 +459,22 @@ class Fishing(commands.Cog, name="fishing"):
                 started_at=now,
                 next_catch_at=next_catch,
                 mode="active",
+                thread_id=thread_id,
+                angler_name=angler_display,
             )
 
         # Spawn the runner task (outside the DB session)
         self.bot.fishing_runner.start_session(fs.id)
 
         bait_name = fish_logic.BAIT_TYPES.get(selected_bait, {}).get("name", selected_bait)
+        thread_hint = (
+            f"Bites will appear in <#{thread_id}>. "
+            if thread_id else "Bites will appear in this channel. "
+        )
         await context.send(
             f"\U0001F3A3 Started **active** fishing at **{loc_display}** with "
             f"**{bait_name}** ({bait_count} casts).\n"
-            f"First bite <t:{_as_unix(next_catch)}:R>. "
+            f"{thread_hint}First bite <t:{_as_unix(next_catch)}:R>. "
             "Stay close \u2014 you'll need to respond to each bite within its "
             "timer. Use `/fish stop` to end early and refund unused bait.",
             ephemeral=True,
@@ -476,6 +508,23 @@ class Fishing(commands.Cog, name="fishing"):
         # If this was an active-mode session, cancel its runner task
         if active.mode == "active" and hasattr(self.bot, "fishing_runner"):
             self.bot.fishing_runner.stop_session(active.id)
+
+        # Say goodbye in the session thread (if any) and archive it
+        if active.thread_id:
+            thread = self.bot.get_channel(active.thread_id)
+            if thread is not None:
+                try:
+                    await thread.send(
+                        f"\U0001F44B Session ended by <@{user_id}>. "
+                        "Thread will archive shortly."
+                    )
+                    # Try to archive the thread — harmless if we lack perms
+                    try:
+                        await thread.edit(archived=True)
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
 
         embed = fish_logic.build_session_embed(
             active, catch=None, session_ended=True
