@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 import checks
 from config import resolve_guild_setting
-from derby import appearance, commentary, descriptions, flavor_names, logic, models
+from derby import abilities, appearance, commentary, descriptions, flavor_names, logic, models
 from derby import repositories as repo
 from economy import repositories as wallet_repo
 from rpg import repositories as rpg_repo
@@ -1346,6 +1346,12 @@ class Derby(commands.Cog, name="derby"):
             rolled = appearance.roll_appearance()
             if rolled:
                 racer.appearance = appearance.serialize(rolled)
+            # Roll abilities (signature tied to highest stat, quirk from general pool)
+            sig_key, quirk_key = abilities.roll_abilities(racer)
+            if sig_key:
+                racer.signature_ability = sig_key
+            if quirk_key:
+                racer.quirk_ability = quirk_key
             gs = await repo.get_guild_settings(session, guild_id)
             flavor = getattr(gs, "racer_flavor", None) if gs else None
             if flavor:
@@ -3375,6 +3381,14 @@ class Stable(commands.Cog, name="stable"):
             if appearance_text:
                 embed.add_field(name="Appearance", value=appearance_text, inline=False)
 
+        # Abilities (signature + quirk)
+        ability_text = abilities.display_summary(
+            getattr(racer_obj, "signature_ability", None),
+            getattr(racer_obj, "quirk_ability", None),
+        )
+        if ability_text:
+            embed.add_field(name="Abilities", value=ability_text, inline=False)
+
         # Description
         if racer_obj.description:
             desc = racer_obj.description
@@ -3506,6 +3520,14 @@ class Stable(commands.Cog, name="stable"):
             appearance_text = appearance.format_appearance_for_display(appearance_data)
             if appearance_text:
                 embed.add_field(name="Appearance", value=appearance_text, inline=False)
+
+        # Abilities (signature + quirk)
+        ability_text = abilities.display_summary(
+            getattr(racer_obj, "signature_ability", None),
+            getattr(racer_obj, "quirk_ability", None),
+        )
+        if ability_text:
+            embed.add_field(name="Abilities", value=ability_text, inline=False)
 
         # Description
         if racer_obj.description:
@@ -4292,6 +4314,17 @@ class Stable(commands.Cog, name="stable"):
                     foal.appearance = appearance.serialize(foal_app)
             else:
                 foal_app = {}
+
+            # Inherit abilities: one slot from one parent, the other fresh-rolled
+            foal_sig, foal_quirk = abilities.inherit_abilities(
+                sire.signature_ability, sire.quirk_ability,
+                dam.signature_ability, dam.quirk_ability,
+                foal,
+            )
+            if foal_sig:
+                foal.signature_ability = foal_sig
+            if foal_quirk:
+                foal.quirk_ability = foal_quirk
 
             if flavor and sire.description and dam.description:
                 foal_desc = await descriptions.generate_description(

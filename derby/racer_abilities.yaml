@@ -1,0 +1,539 @@
+# Racer ability pool
+#
+# Each racer rolls two abilities at creation:
+#   - signature: drawn from the pool matching their highest stat
+#                (speed_pool / cornering_pool / stamina_pool)
+#   - quirk: drawn from quirk_pool, weighted by temperament
+#
+# Triggers are evaluated per segment during simulation. When a trigger's
+# conditions are all true, the ability's effect fires and its commentary
+# line is surfaced to the LLM/template commentary.
+#
+# Effects are intentionally small (+1 to +3) — the commentary does the
+# heavy lifting. Aim for each ability to fire in 30-80% of races.
+#
+# Language is generic (not horse-specific) since server owners race
+# lizards, dragons, and whatever else.
+#
+# Trigger keys (all optional, all must match for the ability to fire):
+#   segment: opening | mid | final_stretch | any
+#   segment_type: straight | corner | climb | descent | hazard | any
+#   position: leading | trailing | mid_pack | any
+#     (leading = top third, trailing = bottom third, mid_pack = middle)
+#   event: stumble | gained_position | lost_position | surged
+#   rival_condition: higher_rank_in_field | lower_rank_in_field | sibling_in_field
+#   min_field_size: integer
+#   once_per_race: bool
+#
+# Effect kinds:
+#   score_bonus: flat add to this segment's score (value: int)
+#   stumble_save: if this racer is stumbling this segment, clamp noise to 0.75
+#   segment_ramp: piecewise by phase (values: {opening, mid, final_stretch})
+#   rival_debuff: subtract from the leading rival's next segment (value: int)
+
+# ===========================================================================
+# SPEED POOL — aggressive, burst-focused. Signature for high-speed racers.
+# ===========================================================================
+speed_pool:
+  - key: closing_surge
+    name: Closing Surge
+    summary: Final stretch boost when trailing.
+    trigger:
+      segment: final_stretch
+      position: trailing
+    effect:
+      kind: score_bonus
+      value: 3
+    commentary: "{name} is making a move — closing the gap!"
+
+  - key: front_runner
+    name: Front Runner
+    summary: Extra push when holding the lead.
+    trigger:
+      segment: any
+      position: leading
+      min_segment_index: 1
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} sets the pace and isn't giving it back."
+
+  - key: flash_start
+    name: Flash Start
+    summary: Explosive first-segment burst.
+    trigger:
+      segment: opening
+      once_per_race: true
+    effect:
+      kind: score_bonus
+      value: 3
+    commentary: "{name} launches out of the gate — they've taken an early edge!"
+
+  - key: breakaway
+    name: Breakaway
+    summary: After gaining ground, chains into another surge.
+    trigger:
+      event: gained_position
+      once_per_race: true
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} has cracked the field open — watch them go!"
+
+  - key: opportunist
+    name: Opportunist
+    summary: Thrives on long straights.
+    trigger:
+      segment_type: straight
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} finds clean air on the straight and eats it up."
+
+  - key: final_push
+    name: Final Push
+    summary: Extra drive in the closing stretch.
+    trigger:
+      segment: final_stretch
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} digs deep for the finish — pushing hard to the line!"
+
+  - key: pacesetter
+    name: Pacesetter
+    summary: Consistent mid-race pace when leading.
+    trigger:
+      segment: mid
+      position: leading
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} is dictating the tempo and the rest of the field is reacting."
+
+  - key: dash_response
+    name: Dash Response
+    summary: After a surge event, chains into another.
+    trigger:
+      event: surged
+      once_per_race: true
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} feels the momentum and isn't done — another gear!"
+
+# ===========================================================================
+# CORNERING POOL — technique, saves, handling.
+# ===========================================================================
+cornering_pool:
+  - key: sure_footed
+    name: Sure-Footed
+    summary: Shrugs off the first stumble of the race.
+    trigger:
+      event: stumble
+      once_per_race: true
+    effect:
+      kind: stumble_save
+    commentary: "{name} held the line where most would have fumbled — clean recovery!"
+
+  - key: inside_line
+    name: Inside Line
+    summary: Finds daylight on corners.
+    trigger:
+      segment_type: corner
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} threads the inside line and takes it."
+
+  - key: recovery_stride
+    name: Recovery Stride
+    summary: Bounces back fast after stumbling.
+    trigger:
+      event: post_stumble
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "Shake it off, {name} — already back up to pace!"
+
+  - key: clean_line
+    name: Clean Line
+    summary: Navigates hazards cleanly.
+    trigger:
+      segment_type: hazard
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} slips through the chaos untouched."
+
+  - key: cornering_expert
+    name: Cornering Expert
+    summary: Just better at turns.
+    trigger:
+      segment_type: corner
+      position: leading
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name}'s line through the turn is textbook — nobody gains on them here."
+
+  - key: graceful_recovery
+    name: Graceful Recovery
+    summary: Stumble-resistant after a stumble.
+    trigger:
+      event: post_stumble
+      once_per_race: true
+    effect:
+      kind: stumble_save
+    commentary: "{name} wobbled once and now they're locked in — no second mistake."
+
+  - key: balanced_approach
+    name: Balanced Approach
+    summary: Steadier on mixed terrain.
+    trigger:
+      segment_type: hazard
+      position: mid_pack
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} stays balanced where others are flailing."
+
+  - key: pivot
+    name: Pivot
+    summary: Capitalizes on recent position gains through corners.
+    trigger:
+      segment_type: corner
+      event: gained_position_last
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} had momentum and the corner only helps — another place gained!"
+
+# ===========================================================================
+# STAMINA POOL — endurance, late-race, resilience.
+# ===========================================================================
+stamina_pool:
+  - key: second_wind
+    name: Second Wind
+    summary: Finds extra gas in the final stretch.
+    trigger:
+      segment: final_stretch
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "Everyone else is fading — {name} just kicked into a new gear!"
+
+  - key: grinder
+    name: Grinder
+    summary: Steady gains across the middle of the race.
+    trigger:
+      segment: mid
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} doesn't know the word 'tire' — grinding out every inch."
+
+  - key: iron_lungs
+    name: Iron Lungs
+    summary: Powers through climbs.
+    trigger:
+      segment_type: climb
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} eats up the climb while the pack gasps for air."
+
+  - key: bloodline_heart
+    name: Bloodline Heart
+    summary: Extra edge if descended from a winner.
+    trigger:
+      rival_condition: offspring_of_winner
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "You can see the lineage in {name} — they run with that old fire."
+
+  - key: enduring_spirit
+    name: Enduring Spirit
+    summary: Gains strength as the race wears on.
+    trigger:
+      segment: final_stretch
+      position: trailing
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "Written off too early — {name} refuses to fade!"
+
+  - key: steady_climb
+    name: Steady Climb
+    summary: Consistent on elevation changes.
+    trigger:
+      segment_type: descent
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} controls the descent while others run wild."
+
+  - key: late_kick
+    name: Late Kick
+    summary: Huge push from mid-pack in the final stretch.
+    trigger:
+      segment: final_stretch
+      position: mid_pack
+    effect:
+      kind: score_bonus
+      value: 3
+    commentary: "{name} has been biding their time — and now they move!"
+
+  - key: unflappable
+    name: Unflappable
+    summary: Unshaken by setbacks.
+    trigger:
+      event: post_stumble
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} barely registers the stumble — right back to work."
+
+# ===========================================================================
+# QUIRK POOL — shared by all racers. Temperament weights nudge the roll.
+# ===========================================================================
+quirk_pool:
+  - key: rival_hunter
+    name: Rival Hunter
+    summary: Sharper against higher-ranked opponents.
+    trigger:
+      segment: final_stretch
+      rival_condition: higher_rank_in_field
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} doesn't care about the odds — they smell blood!"
+    temperament_weight:
+      Bold: 2.5
+      Burly: 1.5
+
+  - key: slow_starter
+    name: Slow Starter
+    summary: Weak opening, stronger late.
+    trigger:
+      segment: any
+    effect:
+      kind: segment_ramp
+      values: {opening: -1, mid: 0, final_stretch: 2}
+    commentary: "{name} was last out of the gate — but they've been catching up every step."
+    temperament_weight:
+      Quirky: 2.5
+      Mellow: 2.0
+
+  - key: crowd_lover
+    name: Crowd Lover
+    summary: Thrives in a packed field.
+    trigger:
+      segment: any
+      min_field_size: 5
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} loves the chaos — more traffic, more trouble for everyone else."
+    temperament_weight:
+      Bold: 1.5
+
+  - key: solo_runner
+    name: Solo Runner
+    summary: Prefers an uncrowded track.
+    trigger:
+      segment: any
+      max_field_size: 4
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} runs alone well — nothing to distract them."
+    temperament_weight:
+      Mellow: 2.0
+      Steady: 1.5
+
+  - key: underdog
+    name: Underdog
+    summary: Extra fire when they're the lowest-ranked in the field.
+    trigger:
+      segment: final_stretch
+      rival_condition: lowest_ranked
+    effect:
+      kind: score_bonus
+      value: 3
+    commentary: "Written off before the gate — but {name} isn't reading the program!"
+    temperament_weight:
+      Bold: 1.5
+      Quirky: 1.5
+
+  - key: favorite
+    name: Favorite
+    summary: Rises to the pressure when expected to win.
+    trigger:
+      segment: any
+      rival_condition: highest_ranked
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} carries the weight of expectation and doesn't flinch."
+    temperament_weight:
+      Steady: 2.0
+      Burly: 1.5
+
+  - key: sibling_rivalry
+    name: Sibling Rivalry
+    summary: Sharper when racing against kin.
+    trigger:
+      segment: any
+      rival_condition: sibling_in_field
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} will not — absolutely will not — let their sibling finish ahead."
+    temperament_weight:
+      Bold: 1.5
+      Quirky: 2.0
+
+  - key: dramatic_finisher
+    name: Dramatic Finisher
+    summary: Small chance of a clutch final-stretch surge.
+    trigger:
+      segment: final_stretch
+      position: mid_pack
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "Out of nowhere — {name} threads the needle! Where did that come from?"
+    temperament_weight:
+      Quirky: 2.5
+
+  - key: mudder
+    name: Mudder
+    summary: Excels on hazard-heavy courses.
+    trigger:
+      segment_type: hazard
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "Nobody else wants to be out here — but {name} was born for this."
+    temperament_weight:
+      Burly: 2.0
+      Steady: 1.5
+
+  - key: glass_cannon
+    name: Glass Cannon
+    summary: Big early burst, but fumbles the first stumble.
+    trigger:
+      segment: opening
+    effect:
+      kind: score_bonus
+      value: 3
+    commentary: "Spectacular start from {name} — but can they keep it together?"
+    temperament_weight:
+      Quirky: 2.0
+      Bold: 1.5
+
+  - key: lucky_break
+    name: Lucky Break
+    summary: Sometimes gets a boost from nowhere.
+    trigger:
+      segment: mid
+      once_per_race: true
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "Something just clicked for {name} — they found a gap nobody else saw."
+    temperament_weight:
+      Quirky: 2.5
+
+  - key: stubborn_streak
+    name: Stubborn Streak
+    summary: Refuses to give up position once gained.
+    trigger:
+      event: lost_position
+      once_per_race: true
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} is not letting that one go — digging back in immediately!"
+    temperament_weight:
+      Burly: 2.0
+      Bold: 1.5
+
+  - key: early_bird
+    name: Early Bird
+    summary: Peaks early in the race.
+    trigger:
+      segment: opening
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} is feeling it from the very first step."
+
+  - key: mountain_heart
+    name: Mountain Heart
+    summary: Finds extra power on climbs and descents.
+    trigger:
+      segment_type: climb
+      position: trailing
+    effect:
+      kind: score_bonus
+      value: 3
+    commentary: "{name} loves this climb — and they're clawing back!"
+    temperament_weight:
+      Burly: 1.5
+      Mellow: 1.5
+
+  - key: spotlight_seeker
+    name: Spotlight Seeker
+    summary: Steps up when the field is full of talent.
+    trigger:
+      segment: any
+      rival_condition: higher_rank_in_field
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} doesn't shrink from the talent in the field — they lean in."
+    temperament_weight:
+      Bold: 2.0
+
+  - key: patient_hunter
+    name: Patient Hunter
+    summary: Waits for the mid-race to strike.
+    trigger:
+      segment: mid
+      position: mid_pack
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} has been measuring the field — and now they move!"
+    temperament_weight:
+      Steady: 2.0
+      Mellow: 1.5
+
+  - key: unshakeable
+    name: Unshakeable
+    summary: Immune to the first mood loss of the race.
+    trigger:
+      event: stumble
+      once_per_race: true
+    effect:
+      kind: score_bonus
+      value: 1
+    commentary: "{name} felt that but didn't let it show — total focus."
+    temperament_weight:
+      Steady: 2.5
+
+  - key: wild_card
+    name: Wild Card
+    summary: Unpredictable bursts throughout the race.
+    trigger:
+      segment: any
+      random_chance: 0.25
+    effect:
+      kind: score_bonus
+      value: 2
+    commentary: "{name} does something nobody expected — and it works!"
+    temperament_weight:
+      Quirky: 3.0
