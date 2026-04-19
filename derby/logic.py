@@ -143,6 +143,9 @@ class RaceResult:
     map_name: str = ""
     stumble_counts: dict[int, int] = field(default_factory=dict)  # racer_id -> count
     form: dict[int, float] = field(default_factory=dict)  # racer_id -> race day form offset
+    # Ability procs: list of (racer_id, ability_key, segment_index) tuples
+    # for post-race persistence + analytics
+    proc_log: list[tuple[int, str, int]] = field(default_factory=list)
 
 
 _MAPS_DIR = os.path.join(os.path.dirname(__file__), "maps")
@@ -1183,13 +1186,23 @@ def simulate_race(
     race_map: RaceMap | None = None,
     stat_buffs: dict[int, dict[str, int]] | None = None,
     mood_buffs: dict[int, int] | None = None,
+    abilities_map: dict[int, tuple[str | None, str | None]] | None = None,
+    color_map: dict[int, str] | None = None,
 ) -> RaceResult:
     """Simulate a race and return a RaceResult.
 
     When ``race_map`` is provided, runs a segment-by-segment simulation where
     each segment type favors different stats. Without a map, falls back to a
     single-pass power + noise calculation.
+
+    ``abilities_map`` maps racer_id → (signature_key, quirk_key). When supplied,
+    ability triggers are evaluated each segment and proc events are appended to
+    the segment's event list (prefixed with [ABILITY <color>]). Score bonuses
+    and stumble-saves apply to the racer's segment roll. ``color_map`` maps
+    racer_id → color emoji for proc line formatting.
     """
+    from . import abilities as _abilities_mod
+
     rng = random.Random(seed)
 
     if isinstance(race, dict):
@@ -1232,6 +1245,33 @@ def simulate_race(
             for r in raw_racers
         }
 
+        # --- Abilities context pre-compute ---
+        abilities_map = abilities_map or {}
+        color_map = color_map or {}
+        # Per-racer ability state carried across segments
+        once_per_race_fired: Dict[int, set[str]] = {r.id: set() for r in raw_racers}
+        stumbled_last_segment: Dict[int, bool] = {r.id: False for r in raw_racers}
+        gained_position_last: Dict[int, bool] = {r.id: False for r in raw_racers}
+        lost_position_last: Dict[int, bool] = {r.id: False for r in raw_racers}
+        # Rival / lineage context (static for the race)
+        racer_ranks: Dict[int, str | None] = {
+            r.id: getattr(r, "rank", None) for r in raw_racers
+        }
+        # Sibling detection: any two racers sharing a sire_id or dam_id
+        sibling_lookup: Dict[int, set[int]] = {r.id: set() for r in raw_racers}
+        for r in raw_racers:
+            r_sire = getattr(r, "sire_id", None)
+            r_dam = getattr(r, "dam_id", None)
+            for other in raw_racers:
+                if other.id == r.id:
+                    continue
+                o_sire = getattr(other, "sire_id", None)
+                o_dam = getattr(other, "dam_id", None)
+                if (r_sire and r_sire == o_sire) or (r_dam and r_dam == o_dam):
+                    sibling_lookup[r.id].add(other.id)
+        # Proc log for post-race persistence
+        proc_log: list[tuple[int, str, int]] = []
+
         for seg_idx, seg in enumerate(race_map.segments):
             seg_scores: Dict[int, float] = {}
             noise_rolls: Dict[int, float] = {}
@@ -1250,8 +1290,60 @@ def simulate_race(
 
                 seg_scores[rid] = score
                 noise_rolls[rid] = noise_mult
-                cumulative[rid] += score
-                if noise_mult < 0.65:
+
+            # --- Ability hooks: evaluate and apply before cumulative update ---
+            ability_events: list[str] = []
+            # Position heading into this segment = rank in prev_order
+            pos_map = {rid: (i + 1) for i, rid in enumerate(prev_order)}
+            for rid in list(noise_rolls.keys()):
+                sig_key, quirk_key = abilities_map.get(rid, (None, None))
+                if not sig_key and not quirk_key:
+                    continue
+
+                ctx = _abilities_mod.SegmentContext(
+                    racer_id=rid,
+                    segment_index=seg_idx,
+                    total_segments=len(race_map.segments),
+                    segment_type=seg.type,
+                    position=pos_map.get(rid, 1),
+                    field_size=len(raw_racers),
+                    is_stumbling=(noise_rolls[rid] < 0.65),
+                    surged=(noise_rolls[rid] > 1.35),
+                    gained_position_last_segment=gained_position_last.get(rid, False),
+                    lost_position_last_segment=lost_position_last.get(rid, False),
+                    stumbled_last_segment=stumbled_last_segment.get(rid, False),
+                    rival_ranks=[racer_ranks[other] for other in racer_ranks if other != rid],
+                    own_rank=racer_ranks.get(rid),
+                    sibling_ids_in_field=sibling_lookup.get(rid, set()),
+                    is_offspring_of_winner=False,  # reserved for future lineage tracking
+                    once_per_race_fired=once_per_race_fired[rid],
+                )
+                procs = _abilities_mod.evaluate(
+                    sig_key, quirk_key, names.get(rid, f"Racer {rid}"), ctx, rng,
+                )
+                for proc in procs:
+                    # Apply effect
+                    kind = proc.effect.get("kind")
+                    if kind in ("score_bonus", "segment_ramp"):
+                        seg_scores[rid] = _abilities_mod.apply_score_effect(
+                            proc.effect, seg_scores[rid], ctx.segment_phase,
+                        )
+                    elif kind == "stumble_save" and noise_rolls[rid] < 0.65:
+                        noise_rolls[rid] = 0.75  # clamp: no longer a stumble
+                    # Track proc
+                    if proc.ability.trigger.get("once_per_race"):
+                        once_per_race_fired[rid].add(proc.ability.key)
+                    proc_log.append((rid, proc.ability.key, seg_idx))
+                    ability_events.append(
+                        _abilities_mod.format_commentary_event(
+                            proc, color_map.get(rid, ""),
+                        )
+                    )
+
+            # Update cumulative + stumble counts AFTER ability effects applied
+            for rid in noise_rolls.keys():
+                cumulative[rid] += seg_scores[rid]
+                if noise_rolls[rid] < 0.65:
                     stumble_counts[rid] += 1
 
             curr_order = sorted(
@@ -1278,6 +1370,11 @@ def simulate_race(
                     else:
                         events.append(f"{rname} loses concentration. (d20: {d20})")
 
+            # Prepend ability proc events so they land near the top of the segment
+            # narrative. Commentary LLM weaves them in as key story beats.
+            if ability_events:
+                events = ability_events + events
+
             segment_results.append(
                 SegmentResult(
                     position=seg_idx + 1,
@@ -1287,6 +1384,16 @@ def simulate_race(
                     events=events,
                 )
             )
+
+            # Update per-segment state for next iteration
+            new_pos_map = {rid: (i + 1) for i, rid in enumerate(curr_order)}
+            for rid in cumulative.keys():
+                old_pos = pos_map.get(rid, len(raw_racers))
+                new_pos = new_pos_map.get(rid, len(raw_racers))
+                gained_position_last[rid] = new_pos < old_pos
+                lost_position_last[rid] = new_pos > old_pos
+                stumbled_last_segment[rid] = noise_rolls[rid] < 0.65
+
             prev_order = curr_order
 
         placements = [rid for rid, _, _ in segment_results[-1].standings]
@@ -1297,6 +1404,7 @@ def simulate_race(
             map_name=map_name,
             stumble_counts=stumble_counts,
             form=race_form,
+            proc_log=proc_log,
         )
 
     # --- Legacy single-pass fallback ---

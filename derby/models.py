@@ -39,6 +39,8 @@ class Racer(Base):
     tournament_placements: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     appearance: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    signature_ability: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    quirk_ability: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     pool_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     npc_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
@@ -245,6 +247,25 @@ class RacerBuff(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AbilityProcLog(Base):
+    """Record of an ability firing during a race.
+
+    finish_position is filled in after the race concludes so we can
+    compute win rate / average finish per ability for balance tuning.
+    """
+
+    __tablename__ = "ability_proc_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    race_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    racer_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ability_key: Mapped[str] = mapped_column(String, nullable=False)
+    segment_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    fired_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finish_position: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+
 __all__ = [
     "Base",
     "Racer",
@@ -260,4 +281,5 @@ __all__ = [
     "TournamentEntry",
     "NPC",
     "RacerBuff",
+    "AbilityProcLog",
 ]

@@ -77,7 +77,7 @@ def _build_prompt(result: RaceResult) -> str:
 
 
 SYSTEM_PROMPT = (
-    "You are an enthusiastic fantasy horse-racing commentator for a Discord bot game "
+    "You are an enthusiastic fantasy racing commentator for a Discord bot game "
     "called Downtime Derby. You narrate races in a dramatic, entertaining style with "
     "short punchy sentences. Use the race data provided to write segment-by-segment "
     "commentary.\n\n"
@@ -86,6 +86,10 @@ SYSTEM_PROMPT = (
     "- Separate each segment paragraph with a blank line\n"
     "- End with a final paragraph announcing the winner\n"
     "- Reference racer names, events (overtakes, stumbles, surges), and track features\n"
+    "- When you see an event tagged '[ABILITY <emoji>]', that is a KEY STORY BEAT. "
+    "Mention the ability by name, include the colored emoji before the racer's name, "
+    "and weave the effect into the narrative naturally. Do NOT skip ability events — "
+    "they are the most memorable moments of the race.\n"
     "- When mood events occur (d20 rolls, natural 1s or 20s, bursts of confidence or "
     "lost focus), weave them naturally into the narrative — don't list every one, just "
     "mention the most dramatic moments\n"

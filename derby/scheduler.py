@@ -228,6 +228,8 @@ class DerbyScheduler:
                 "tournament_placements": ("INTEGER", "0"),
                 "description": ("TEXT", "NULL"),
                 "appearance": ("TEXT", "NULL"),
+                "signature_ability": ("VARCHAR", "NULL"),
+                "quirk_ability": ("VARCHAR", "NULL"),
                 "pool_expires_at": ("DATETIME", "NULL"),
                 "npc_id": ("INTEGER", "NULL"),
             }
@@ -490,6 +492,34 @@ class DerbyScheduler:
 
             await seed_if_empty(session)
 
+        # One-time back-fill of abilities for racers that predate the abilities
+        # system. Idempotent: only touches racers with NULL signature_ability.
+        # Abilities are mechanical — the field must be uniform, so we can't
+        # leave legacy racers without abilities (unlike the appearance system).
+        try:
+            from . import abilities as _abilities
+
+            async with self.sessionmaker() as session:
+                result = await session.execute(
+                    select(models.Racer).where(
+                        models.Racer.signature_ability.is_(None)
+                    )
+                )
+                pending = result.scalars().all()
+                if pending:
+                    self.bot.logger.info(
+                        "Back-filling abilities for %d racers", len(pending),
+                    )
+                    for r in pending:
+                        sig, quirk = _abilities.roll_abilities(r)
+                        if sig:
+                            r.signature_ability = sig
+                        if quirk:
+                            r.quirk_ability = quirk
+                    await session.commit()
+        except Exception:
+            self.bot.logger.exception("Abilities back-fill failed")
+
         self._initialized = True
 
     async def _run(self) -> None:
@@ -747,13 +777,19 @@ class DerbyScheduler:
                         npc_id=npc.id,
                     )
 
-                    # Roll appearance and generate description if flavor is set
+                    # Roll appearance + abilities; generate description if flavor is set
                     try:
                         from . import appearance as _appearance
+                        from . import abilities as _abilities_roll
                         rolled = _appearance.roll_appearance()
+                        sig_key, quirk_key = _abilities_roll.roll_abilities(racer)
                         updates: dict = {}
                         if rolled:
                             updates["appearance"] = _appearance.serialize(rolled)
+                        if sig_key:
+                            updates["signature_ability"] = sig_key
+                        if quirk_key:
+                            updates["quirk_ability"] = quirk_key
                         if racer_flavor:
                             desc = await descriptions.generate_description(
                                 name=racer.name,
@@ -1264,9 +1300,21 @@ class DerbyScheduler:
             raw_buffs = await repo.get_race_buffs_for_racers(session, racer_ids)
         stat_buffs, mood_buffs = logic.convert_buffs(raw_buffs)
 
+        # Build abilities + color context for the race
+        from . import abilities as _abilities
+        abilities_map = {
+            r.id: (
+                getattr(r, "signature_ability", None),
+                getattr(r, "quirk_ability", None),
+            )
+            for r in participants
+        }
+        color_map = _abilities.assign_race_colors([r.id for r in participants])
+
         result = logic.simulate_race(
             {"racers": participants}, race_id, race_map=race_map,
             stat_buffs=stat_buffs, mood_buffs=mood_buffs,
+            abilities_map=abilities_map, color_map=color_map,
         )
         winner_id = result.placements[0] if result.placements else None
         placements_json = json.dumps(result.placements)
@@ -1275,6 +1323,23 @@ class DerbyScheduler:
                 session, race_id, finished=True, winner_id=winner_id,
                 placements=placements_json,
             )
+            # Persist ability proc log with final finish positions
+            if result.proc_log:
+                placement_index = {
+                    rid: (idx + 1) for idx, rid in enumerate(result.placements)
+                }
+                for (rid, ability_key, seg_idx) in result.proc_log:
+                    session.add(
+                        models.AbilityProcLog(
+                            race_id=race_id,
+                            racer_id=rid,
+                            guild_id=guild_id,
+                            ability_key=ability_key,
+                            segment_index=seg_idx,
+                            finish_position=placement_index.get(rid),
+                        )
+                    )
+                await session.commit()
             bets = (
                 (
                     await session.execute(
@@ -1375,17 +1440,22 @@ class DerbyScheduler:
                     except (discord.NotFound, discord.HTTPException):
                         owner_names[pid] = f"Player #{pid}"
 
+                from . import abilities as _abilities_pre
+                race_colors_pre = _abilities_pre.assign_race_colors(
+                    [r.id for r in participants]
+                )
                 sorted_participants = sorted(participants, key=lambda r: r.name.lower())
                 lineup_lines = []
                 for r in sorted_participants:
                     name = r.name
+                    color = race_colors_pre.get(r.id, "")
                     if r.npc_id and r.npc_id in npc_names:
                         owner_tag = npc_names[r.npc_id]
                     elif r.owner_id and r.owner_id != 0:
                         owner_tag = owner_names.get(r.owner_id, f"Player #{r.owner_id}")
                     else:
                         owner_tag = "Unowned"
-                    lineup_lines.append(f"**{name}** ({owner_tag})")
+                    lineup_lines.append(f"{color} **{name}** ({owner_tag})".strip())
 
                 lineup = "\n".join(lineup_lines)
                 track_info = f" on **{result.map_name}**" if result.map_name else ""
@@ -1463,11 +1533,14 @@ class DerbyScheduler:
                 )
             names = {r.id: r.name for r in racers}
 
+        from . import abilities as _abilities_post
+        race_colors_post = _abilities_post.assign_race_colors(list(placements))
         results_lines: list[str] = []
         for i, rid in enumerate(placements, start=1):
             medal = self.MEDAL_EMOJI.get(i, f"**{i}.**")
             racer_name = names.get(rid, f"Racer {rid}")
-            results_lines.append(f"{medal} {racer_name}")
+            color = race_colors_post.get(rid, "")
+            results_lines.append(f"{medal} {color} {racer_name}".strip())
 
         winner_name = names.get(placements[0], "Unknown") if placements else "Unknown"
         embed = discord.Embed(
@@ -1842,6 +1915,10 @@ class DerbyScheduler:
                 except (discord.NotFound, discord.HTTPException):
                     owner_names[pid] = f"Player #{pid}"
 
+        # Assign per-race color emoji so procs can be tied back to a racer
+        from . import abilities as _abilities
+        race_colors = _abilities.assign_race_colors([r.id for r in racers])
+
         for r in sorted(racers, key=lambda r: r.name.lower()):
             if r.npc_id and r.npc_id in npc_names:
                 owner_tag = npc_names[r.npc_id]
@@ -1850,8 +1927,9 @@ class DerbyScheduler:
             else:
                 owner_tag = "Unowned"
             mult = odds.get(r.id, 0)
+            color = race_colors.get(r.id, "")
             embed.add_field(
-                name=f"{r.name} (#{r.id})",
+                name=f"{color} {r.name} (#{r.id})".strip(),
                 value=f"{mult:.1f}x \u2014 bet 100, win {int(100 * mult)}\nOwner: {owner_tag}",
                 inline=False,
             )
@@ -1963,12 +2041,18 @@ class DerbyScheduler:
 
             # Roll appearance + generate description
             from . import appearance as _appearance
+            from . import abilities as _abilities_roll2
             from . import descriptions
             try:
                 rolled = _appearance.roll_appearance()
+                sig_key, quirk_key = _abilities_roll2.roll_abilities(new_racer)
                 updates: dict = {}
                 if rolled:
                     updates["appearance"] = _appearance.serialize(rolled)
+                if sig_key:
+                    updates["signature_ability"] = sig_key
+                if quirk_key:
+                    updates["quirk_ability"] = quirk_key
                 if racer_flavor:
                     desc = await descriptions.generate_description(
                         name=new_racer.name,
