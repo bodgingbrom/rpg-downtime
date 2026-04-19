@@ -2112,29 +2112,40 @@ class Derby(commands.Cog, name="derby"):
     @app_commands.describe(
         count="Number of test races to run (1-20, default 1)",
         silent="If True, skip commentary/results embeds — fast for padding analytics",
+        public="If True, post race output to the configured derby channel (users will see it)",
     )
     async def race_test_race(
         self,
         context: Context,
         count: int = 1,
         silent: bool = False,
+        public: bool = False,
     ) -> None:
         await context.defer(ephemeral=True)
         count = max(1, min(20, count))
         guild_id = context.guild.id if context.guild else 0
 
         if count > 1 and not silent:
+            channel_label = "the public derby channel" if public else "this channel"
             await context.send(
                 f"Running **{count}** test races with full commentary "
-                f"in this channel. This may take a while — "
+                f"in {channel_label}. This may take a while — "
                 "consider `silent:True` for bulk runs.",
                 ephemeral=True,
             )
 
-        # Post the race output to the channel the admin invoked the
-        # command in, not the configured derby channel — so admins can
-        # run tests privately without spamming players.
-        channel_override = context.channel if not silent else None
+        # Channel routing:
+        # - silent=True  → no output anywhere
+        # - public=True  → output goes to the configured derby channel
+        #                   (preview exactly what players will see)
+        # - default      → output goes to the channel the admin invoked
+        #                   from (private preview without spamming players)
+        if silent:
+            channel_override = None
+        elif public:
+            channel_override = None  # falls back to _get_channel (derby channel)
+        else:
+            channel_override = context.channel
 
         ran = 0
         skipped = 0

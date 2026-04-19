@@ -320,10 +320,15 @@ def test_format_commentary_event_prefix():
     ctx = _make_ctx(segment_index=3, total_segments=4, position=4, field_size=4)
     procs = abilities.evaluate("closing_surge", None, "Thunderhoof", ctx, random.Random(0))
     assert procs
-    text = abilities.format_commentary_event(procs[0], "🟥")
-    assert text.startswith("[ABILITY 🟥]")
+    text = abilities.format_commentary_event(procs[0], "🟥", "Thunderhoof")
+    # Lightning bolt prefix flags this as an ability proc for the LLM
+    assert text.startswith("\u26a1")
+    # The emoji must appear immediately before the racer's name so the
+    # LLM doesn't mistake "🟥 Closing Surge Thunderhoof" for a compound name
+    assert "🟥 **Thunderhoof" in text
     assert "Closing Surge" in text
-    assert "Thunderhoof" in text  # name substituted
+    # Ability name is quoted and bolded so the LLM preserves it as-is
+    assert "\u201cClosing Surge\u201d" in text
 
 
 # ---------------------------------------------------------------------------

@@ -484,10 +484,22 @@ def display_summary(signature_key: str | None, quirk_key: str | None) -> str:
     return "\n".join(lines)
 
 
-def format_commentary_event(proc: AbilityProc, color_emoji: str) -> str:
-    """Format an ability proc as an event string for the commentary system."""
-    prefix = f"[ABILITY {color_emoji}]"
-    return f"{prefix} {proc.ability.name}: {proc.commentary_rendered}"
+def format_commentary_event(
+    proc: AbilityProc, color_emoji: str, racer_name: str,
+) -> str:
+    """Format an ability proc as an event string for the commentary system.
+
+    The format puts the colored emoji immediately before the racer name
+    (so they read as a visual pair), uses possessive phrasing to bind the
+    ability to the racer, and marks the ability name with bold + quotes
+    so the LLM doesn't mistake it for part of the racer's name. The ⚡
+    prefix lets the LLM recognise ability procs without an `[ABILITY]`
+    tag that gets awkwardly copied verbatim.
+    """
+    return (
+        f"\u26a1 {color_emoji} **{racer_name}'s \u201c{proc.ability.name}\u201d** "
+        f"activates \u2014 {proc.commentary_rendered}"
+    )
 
 
 # ---------------------------------------------------------------------------

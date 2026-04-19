@@ -230,10 +230,18 @@ def test_simulate_race_with_abilities_populates_proc_log():
     assert final_proc[0] == 2
     assert final_proc[2] == 2
 
-    # Events list should contain the ability callouts with color emoji
+    # Events list should contain the ability callouts — lightning-bolt
+    # prefix + colored emoji immediately before the racer name, ability
+    # name in curly quotes so the LLM preserves the phrasing.
     all_events = [e for seg in result.segments for e in seg.events]
-    assert any("[ABILITY 🟥]" in e and "Flash Start" in e for e in all_events)
-    assert any("[ABILITY 🟦]" in e and "Final Push" in e for e in all_events)
+    assert any(
+        e.startswith("\u26a1") and "🟥 **Flash's" in e and "Flash Start" in e
+        for e in all_events
+    )
+    assert any(
+        e.startswith("\u26a1") and "🟦 **Slow's" in e and "Final Push" in e
+        for e in all_events
+    )
 
 
 def test_simulate_race_without_abilities_backward_compat():
