@@ -822,6 +822,11 @@ class Derby(commands.Cog, name="derby"):
         self.bot = bot
 
     async def cog_check(self, ctx: Context) -> bool:
+        # Guild admins can run derby commands from any channel — useful for
+        # running /derby race test-race, force-start, debug commands, etc.
+        # in a private admin channel without spamming players.
+        if ctx.guild and ctx.author.guild_permissions.manage_guild:
+            return True
         return await checks.in_bot_channel(ctx, "derby_channel")
 
     def _racer_emoji(self, gs=None) -> str:
@@ -2120,10 +2125,16 @@ class Derby(commands.Cog, name="derby"):
 
         if count > 1 and not silent:
             await context.send(
-                f"Running **{count}** test races with full commentary. "
-                "This may take a while — consider `silent:True` for bulk runs.",
+                f"Running **{count}** test races with full commentary "
+                f"in this channel. This may take a while — "
+                "consider `silent:True` for bulk runs.",
                 ephemeral=True,
             )
+
+        # Post the race output to the channel the admin invoked the
+        # command in, not the configured derby channel — so admins can
+        # run tests privately without spamming players.
+        channel_override = context.channel if not silent else None
 
         ran = 0
         skipped = 0
@@ -2131,6 +2142,7 @@ class Derby(commands.Cog, name="derby"):
             try:
                 race_id, _placements = await self.bot.scheduler.run_test_race(
                     guild_id, silent=silent,
+                    channel_override=channel_override,
                 )
             except Exception:
                 self.bot.logger.exception("Test race failed")

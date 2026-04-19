@@ -663,14 +663,22 @@ class DerbyScheduler:
         return race
 
     async def run_test_race(
-        self, guild_id: int, silent: bool = False,
+        self,
+        guild_id: int,
+        silent: bool = False,
+        channel_override: "discord.abc.Messageable | None" = None,
     ) -> tuple[int | None, list[int]]:
         """Run a one-off test race using only unowned racers.
 
         Creates a full Race row flagged ``is_test=True``, runs the
         simulation with the normal ability hooks, persists ability proc
         logs (so test races contribute to balance analytics), and
-        optionally announces the race to the derby channel.
+        optionally announces the race.
+
+        When ``channel_override`` is supplied, the commentary + results
+        are posted there instead of the configured derby channel — lets
+        admins run test races in a private channel without spamming
+        players.
 
         Does NOT apply any race-completion side effects: no bet
         resolution, no injuries, no retirements, no mood drift, no
@@ -777,9 +785,11 @@ class DerbyScheduler:
                 race.id, guild_id, log,
                 delay=self._resolve("commentary_delay", gs),
                 guild_settings=gs,
+                channel_override=channel_override,
             )
             await self._post_results(
                 guild_id, result.placements, result.racer_names,
+                channel_override=channel_override,
             )
 
         return race.id, result.placements
@@ -1634,13 +1644,17 @@ class DerbyScheduler:
         guild_id: int,
         placements: list[int],
         names: dict[int, str] | None = None,
+        channel_override: "discord.abc.Messageable | None" = None,
     ) -> None:
-        guild = self.bot.get_guild(guild_id)
-        if guild is None:
-            return
-        channel = self._get_channel(guild)
-        if channel is None:
-            return
+        if channel_override is not None:
+            channel = channel_override
+        else:
+            guild = self.bot.get_guild(guild_id)
+            if guild is None:
+                return
+            channel = self._get_channel(guild)
+            if channel is None:
+                return
         if names is None:
             async with self.sessionmaker() as session:
                 racers = (
@@ -1916,13 +1930,17 @@ class DerbyScheduler:
     async def _stream_commentary(
         self, race_id: int, guild_id: int, log: list[str], delay: float = 6.0,
         guild_settings: models.GuildSettings | None = None,
+        channel_override: "discord.abc.Messageable | None" = None,
     ) -> None:
-        guild = self.bot.get_guild(guild_id)
-        if guild is None:
-            return
-        channel = self._get_channel(guild)
-        if channel is None:
-            return
+        if channel_override is not None:
+            channel = channel_override
+        else:
+            guild = self.bot.get_guild(guild_id)
+            if guild is None:
+                return
+            channel = self._get_channel(guild)
+            if channel is None:
+                return
 
         message: discord.Message | None = None
         lines: list[str] = []
