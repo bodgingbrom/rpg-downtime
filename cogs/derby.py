@@ -1762,6 +1762,94 @@ class Derby(commands.Cog, name="derby"):
         )
         await context.send(embed=embed, ephemeral=True)
 
+    @racer_group.command(
+        name="generate-names",
+        description="Generate more themed racer names based on racer_flavor (admin)",
+    )
+    @app_commands.describe(
+        count="How many new names to generate (default 50, max 200)",
+    )
+    async def racer_generate_names(
+        self, context: Context, count: int = 50,
+    ) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        count = max(1, min(200, count))
+
+        async with self.bot.scheduler.sessionmaker() as session:
+            gs = await repo.get_guild_settings(session, guild_id)
+        flavor = getattr(gs, "racer_flavor", None) if gs else None
+        if not flavor:
+            await context.send(
+                "No `racer_flavor` set for this server. Set one first "
+                "with `/derby settings set racer_flavor <theme>`.",
+                ephemeral=True,
+            )
+            return
+
+        await context.send(
+            f"Generating **{count}** themed names for **{flavor}**... "
+            "This may take up to a minute.",
+            ephemeral=True,
+        )
+
+        new_names = await flavor_names.generate_flavor_names(
+            flavor, count=count,
+        )
+        if not new_names:
+            await context.send(
+                "\u274c Name generation failed. Check the bot logs "
+                "(ANTHROPIC_API_KEY set? rate limit?).",
+                ephemeral=True,
+            )
+            return
+
+        # Merge with existing pool, dedupe case-insensitively against both
+        # the guild's flavor file AND the base game name list so we don't
+        # re-suggest names that are already pickable.
+        existing = flavor_names.load_flavor_names(guild_id)
+        base_names = {n.lower() for n in logic._load_names()}
+        existing_lower = {n.lower() for n in existing}
+
+        added: list[str] = []
+        for name in new_names:
+            key = name.lower()
+            if key in existing_lower or key in base_names:
+                continue
+            added.append(name)
+            existing_lower.add(key)
+
+        combined = existing + added
+        flavor_names.save_flavor_names(guild_id, combined)
+
+        duplicates = len(new_names) - len(added)
+        summary_lines = [
+            f"LLM returned **{len(new_names)}** names "
+            f"(requested {count}).",
+            f"Added **{len(added)}** new unique names to the pool.",
+        ]
+        if duplicates:
+            summary_lines.append(
+                f"Filtered **{duplicates}** duplicates (already in pool "
+                "or base name list)."
+            )
+        summary_lines.append(
+            f"Pool size: **{len(combined)}** themed names."
+        )
+
+        embed = discord.Embed(
+            title="Flavor Names Generated",
+            description="\n".join(summary_lines),
+            color=0x2ECC71 if added else 0xF1C40F,
+        )
+        if added:
+            # Preview a handful of the new names so the admin can sanity-check
+            preview = ", ".join(f"**{n}**" for n in added[:10])
+            if len(added) > 10:
+                preview += f", and {len(added) - 10} more"
+            embed.add_field(name="Preview", value=preview, inline=False)
+        await context.send(embed=embed, ephemeral=True)
+
     # ------------------------------------------------------------------
     # NPC commands
     # ------------------------------------------------------------------
