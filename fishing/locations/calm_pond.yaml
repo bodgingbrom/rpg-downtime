@@ -25,6 +25,7 @@ fish:
     length_range: [10, 20]
     preferred_bait: insect
     weight: 15
+    mood_pool: [patient, wary, still, curious, shy, hungry]
 
   - name: Golden Perch
     rarity: rare

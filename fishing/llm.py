@@ -109,33 +109,69 @@ async def generate_whisper(
 
 VIBE_PASSAGE_SYSTEM = (
     "You write tiny atmospheric bite descriptions for a Discord fishing "
-    "minigame called Lazy Lures. The angler has hooked an uncommon fish, and "
-    "your job is to write 1-2 short sentences evoking the *feel* of the bite. "
-    "Never name the fish. Never state its mood outright with an adjective — "
-    "show it through sensation. Write in second person, present tense. "
-    "Concrete, sensory, evocative. Never use emoji. Never explain. Output "
-    "only the passage, no quotes.\n\n"
-    "Examples:\n"
-    "- The line goes suddenly, impossibly still. Something is waiting below.\n"
-    "- A sharp jerk, then a steady thrum, as if the water itself is humming.\n"
-    "- Your rod bends low. The water has turned colder than it was a moment ago.\n"
-    "- Three quick tugs, playful and impatient, like a child at a sleeve.\n"
-    "- The line zigzags wildly, then pulls straight down with a quiet menace."
+    "minigame called Lazy Lures. You will be given a TARGET MOOD and your "
+    "job is to evoke it through concrete sensory imagery only — NEVER name "
+    "the mood or use the mood word (or obvious synonyms) in the passage. "
+    "The player will read your passage and try to name the mood themselves. "
+    "If your passage makes the answer too easy, you have failed.\n\n"
+    "Rules:\n"
+    "- 1-2 short sentences\n"
+    "- Second person, present tense\n"
+    "- Show the mood through motion, weight, sound, rhythm, temperature — "
+    "NOT through emotion-words or state-words\n"
+    "- Never name the fish\n"
+    "- Never use emoji or quotes or explanation\n"
+    "- Output only the passage\n\n"
+    "SHOW, DON'T TELL:\n"
+    "- Do NOT write 'patient' \u2014 write about waiting, stillness, a tug "
+    "that refuses to hurry\n"
+    "- Do NOT write 'hungry' \u2014 write about pull, eagerness in the "
+    "line, a yank that won't let go\n"
+    "- Do NOT write 'wary' \u2014 write about hesitation, the line moving "
+    "then freezing, the feeling of being measured\n"
+    "- Do NOT write 'weightless' \u2014 write about the line rising, slack "
+    "where there should be tension\n\n"
+    "Examples (mood in brackets for reference, never in your output):\n"
+    "- [still]: Three weights lift up through the water and settle against "
+    "your hook. Nothing else moves.\n"
+    "- [fierce]: The line snaps taut and drags toward the far bank before "
+    "you've even set your feet.\n"
+    "- [watchful]: A slow, deliberate tug \u2014 enough to let you know "
+    "something is there, and no more.\n"
+    "- [luminous]: A pale shimmer traces the line upward, then blinks out.\n"
+    "- [hollow]: The rod bends but there is no struggle in it, only weight."
 )
 
 
 async def generate_vibe_passage(
-    fish_name: str, rarity: str, location_name: str
+    fish_name: str,
+    rarity: str,
+    location_name: str,
+    mood: str | None = None,
 ) -> str | None:
-    """Generate a 1-2 sentence atmospheric passage for an uncommon bite."""
+    """Generate a 1-2 sentence atmospheric passage for an uncommon bite.
+
+    When *mood* is provided, the LLM is instructed to evoke that specific
+    mood through imagery (and is forbidden from naming it). Falls back to
+    an open-ended mood-matching passage when *mood* is None (legacy path).
+    """
     client = _get_client()
     if client is None:
         return None
 
-    user_prompt = (
-        f"Write the bite description for a {rarity} fish called {fish_name} "
-        f"at {location_name}. Do not name the fish."
-    )
+    if mood:
+        user_prompt = (
+            f"TARGET MOOD: {mood}\n"
+            f"Fish: {rarity} {fish_name} at {location_name} (do not name the fish)\n\n"
+            f"Write a 1-2 sentence passage that evokes \"{mood}\" through "
+            f"imagery alone. You MUST NOT use the word \"{mood}\" or obvious "
+            f"synonyms. Show the mood, do not state it."
+        )
+    else:
+        user_prompt = (
+            f"Write the bite description for a {rarity} fish called {fish_name} "
+            f"at {location_name}. Do not name the fish."
+        )
 
     try:
         response = await asyncio.to_thread(
@@ -155,25 +191,33 @@ async def generate_vibe_passage(
 
 
 VIBE_JUDGE_SYSTEM = (
-    "You are the judge for a fishing vibe-check minigame. A short atmospheric "
-    "passage describes a fish biting. The player responds with a single word "
-    "meant to capture the mood. Your job: decide whether that word fits the "
-    "passage's tone.\n\n"
+    "You are the judge for a fishing vibe-check minigame. A short passage "
+    "was written to evoke a specific TARGET MOOD. The player read it and "
+    "responded with a single word. Decide whether the player's word captures "
+    "the target mood.\n\n"
     "Be moderately generous:\n"
-    "- Accept direct matches, synonyms, and evocative adjacents\n"
-    "- Accept words that capture the same emotional register (tense ≈ wary ≈ uneasy)\n"
-    "- Accept sensory words that match the passage's imagery (heavy, cold, sharp)\n"
-    "- Accept a close-but-imperfect fit — err toward letting the player in\n"
-    "Reject only when the word clearly doesn't fit:\n"
-    "- Opposite emotional register (joy for a menacing passage)\n"
-    "- Totally unrelated or nonsense (random nouns, slang, proper nouns)\n"
-    "- Single letters or fewer than 3 characters\n\n"
-    "Respond with exactly one word — PASS or FAIL — and nothing else."
+    "- Direct matches PASS (target=patient, word=patient)\n"
+    "- Synonyms PASS (target=patient, word=waiting/still/calm)\n"
+    "- Adjacent moods in the same register PASS (target=hungry, word=eager)\n"
+    "- Close imagery-matches PASS if they clearly fit (target=weightless, "
+    "word=floating)\n"
+    "Reject:\n"
+    "- Opposite register (target=patient, word=frantic)\n"
+    "- Unrelated / nonsense / sabotage / single letters / under 3 characters\n"
+    "- Words that clearly don't match the target (target=weightless, "
+    "word=heavy \u2192 FAIL even if heavy-imagery appears in the passage)\n\n"
+    "If no target mood is provided, fall back to judging against the passage's "
+    "overall tone (legacy path).\n\n"
+    "Respond with exactly one word: PASS or FAIL."
 )
 
 
-async def judge_vibe(passage: str, player_word: str) -> bool | None:
-    """Judge whether the player's word matches the passage's mood.
+async def judge_vibe(
+    passage: str,
+    player_word: str,
+    target_mood: str | None = None,
+) -> bool | None:
+    """Judge whether the player's word matches the bite's target mood.
 
     Returns True (PASS), False (FAIL), or None if the LLM is unavailable
     (callers should treat None as a fail for safety).
@@ -182,11 +226,19 @@ async def judge_vibe(passage: str, player_word: str) -> bool | None:
     if client is None:
         return None
 
-    user_prompt = (
-        f"Passage: {passage}\n\n"
-        f"Player's word: {player_word}\n\n"
-        "Does this word capture the mood?"
-    )
+    if target_mood:
+        user_prompt = (
+            f"Target mood: {target_mood}\n\n"
+            f"Passage: {passage}\n\n"
+            f"Player's word: {player_word}\n\n"
+            "Does the player's word match the target mood?"
+        )
+    else:
+        user_prompt = (
+            f"Passage: {passage}\n\n"
+            f"Player's word: {player_word}\n\n"
+            "Does this word capture the passage's mood?"
+        )
 
     try:
         response = await asyncio.to_thread(

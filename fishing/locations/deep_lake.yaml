@@ -25,6 +25,7 @@ fish:
     length_range: [20, 32]
     preferred_bait: shiny_lure
     weight: 20
+    mood_pool: [watchful, secretive, hollow, slow, ancient, heavy]
 
   - name: Abyssal Char
     rarity: rare

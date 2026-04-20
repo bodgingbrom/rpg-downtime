@@ -25,6 +25,7 @@ fish:
     length_range: [18, 30]
     preferred_bait: shiny_lure
     weight: 18
+    mood_pool: [dreaming, elusive, playful, luminous, coy, strange]
 
   - name: Arcane Pike
     rarity: rare
