@@ -310,7 +310,7 @@ quirk_pool:
       value: 2
     commentary: "{name} doesn't care about the odds — they smell blood!"
     temperament_weight:
-      Bold: 2.5
+      Reckless: 2.5
       Burly: 1.5
 
   - key: slow_starter
@@ -324,7 +324,7 @@ quirk_pool:
     commentary: "{name} was last out of the gate — but they've been catching up every step."
     temperament_weight:
       Quirky: 2.5
-      Mellow: 2.0
+      Steady: 2.0
 
   - key: crowd_lover
     name: Crowd Lover
@@ -337,7 +337,7 @@ quirk_pool:
       value: 1
     commentary: "{name} loves the chaos — more traffic, more trouble for everyone else."
     temperament_weight:
-      Bold: 1.5
+      Reckless: 1.5
 
   - key: solo_runner
     name: Solo Runner
@@ -350,7 +350,7 @@ quirk_pool:
       value: 2
     commentary: "{name} runs alone well — nothing to distract them."
     temperament_weight:
-      Mellow: 2.0
+      Steady: 2.0
       Steady: 1.5
 
   - key: underdog
@@ -364,7 +364,7 @@ quirk_pool:
       value: 3
     commentary: "Written off before the gate — but {name} isn't reading the program!"
     temperament_weight:
-      Bold: 1.5
+      Reckless: 1.5
       Quirky: 1.5
 
   - key: favorite
@@ -392,7 +392,7 @@ quirk_pool:
       value: 2
     commentary: "{name} will not — absolutely will not — let their sibling finish ahead."
     temperament_weight:
-      Bold: 1.5
+      Reckless: 1.5
       Quirky: 2.0
 
   - key: dramatic_finisher
@@ -432,7 +432,7 @@ quirk_pool:
     commentary: "Spectacular start from {name} — but can they keep it together?"
     temperament_weight:
       Quirky: 2.0
-      Bold: 1.5
+      Reckless: 1.5
 
   - key: lucky_break
     name: Lucky Break
@@ -459,7 +459,7 @@ quirk_pool:
     commentary: "{name} is not letting that one go — digging back in immediately!"
     temperament_weight:
       Burly: 2.0
-      Bold: 1.5
+      Reckless: 1.5
 
   - key: early_bird
     name: Early Bird
@@ -483,7 +483,7 @@ quirk_pool:
     commentary: "{name} loves this climb — and they're clawing back!"
     temperament_weight:
       Burly: 1.5
-      Mellow: 1.5
+      Steady: 1.5
 
   - key: spotlight_seeker
     name: Spotlight Seeker
@@ -496,7 +496,7 @@ quirk_pool:
       value: 1
     commentary: "{name} doesn't shrink from the talent in the field — they lean in."
     temperament_weight:
-      Bold: 2.0
+      Reckless: 2.0
 
   - key: patient_hunter
     name: Patient Hunter
@@ -510,7 +510,7 @@ quirk_pool:
     commentary: "{name} has been measuring the field — and now they move!"
     temperament_weight:
       Steady: 2.0
-      Mellow: 1.5
+      Steady: 1.5
 
   - key: unshakeable
     name: Unshakeable
