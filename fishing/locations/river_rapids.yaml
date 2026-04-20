@@ -25,6 +25,7 @@ fish:
     length_range: [16, 28]
     preferred_bait: shiny_lure
     weight: 18
+    mood_pool: [fierce, restless, eager, stubborn, brash, hurried]
 
   - name: Crimson Salmon
     rarity: rare

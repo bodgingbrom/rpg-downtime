@@ -25,6 +25,7 @@ fish:
     length_range: [20, 34]
     preferred_bait: shiny_lure
     weight: 18
+    mood_pool: [giddy, restless, dizzy, chatty, weightless, bright]
 
   - name: Thunderscale Trout
     rarity: rare

@@ -528,9 +528,24 @@ class ActiveFishingRunner:
 
         loc_name = location_data.get("name", fs.location_name)
 
-        # Generate the atmospheric passage up front
+        # Roll a target mood from the fish's mood_pool (if defined in YAML).
+        # Falls back to None for species without a mood_pool — the LLM then
+        # free-writes whatever mood fits the fish, legacy-style.
+        fish_defs = location_data.get("fish", [])
+        fish_def = next(
+            (f for f in fish_defs if f.get("name") == catch["name"]), None
+        )
+        mood_pool = (fish_def or {}).get("mood_pool") or []
+        target_mood = random.choice(mood_pool) if mood_pool else None
+
+        # Generate the atmospheric passage up front, seeded with the rolled mood
         passage = await llm.generate_vibe_passage(
-            catch["name"], catch.get("rarity", "uncommon"), loc_name
+            catch["name"], catch.get("rarity", "uncommon"), loc_name,
+            mood=target_mood,
+        )
+        # Composed log text so /reports fishing-uncommon shows the rolled mood
+        log_prompt = (
+            f"[mood: {target_mood}]\n{passage}" if target_mood else (passage or "")
         )
         if passage is None:
             # LLM unavailable mid-session — escape, safer than auto-pass
@@ -575,13 +590,15 @@ class ActiveFishingRunner:
                 pass
             await self._log_event(
                 fs, "uncommon", catch["name"],
-                prompt_text=passage, player_response="",
+                prompt_text=log_prompt, player_response="",
                 outcome="timeout",
             )
             return False
 
-        # Judge the word
-        verdict = await llm.judge_vibe(passage, view.word)
+        # Judge the word against the rolled target mood
+        verdict = await llm.judge_vibe(
+            passage, view.word, target_mood=target_mood,
+        )
         if verdict is None:
             # LLM glitched — be fair and treat as pass? User said fail-closed.
             # Going with fail-closed for consistency.
@@ -609,7 +626,7 @@ class ActiveFishingRunner:
                 pass
             await self._log_event(
                 fs, "uncommon", catch["name"],
-                prompt_text=passage, player_response=view.word,
+                prompt_text=log_prompt, player_response=view.word,
                 outcome="caught",
             )
             return True
@@ -629,7 +646,7 @@ class ActiveFishingRunner:
             pass
         await self._log_event(
             fs, "uncommon", catch["name"],
-            prompt_text=passage, player_response=view.word,
+            prompt_text=log_prompt, player_response=view.word,
             outcome="escaped",
         )
         return False
