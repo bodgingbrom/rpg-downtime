@@ -2889,6 +2889,9 @@ class StableSellConfirmView(discord.ui.View):
         self.guild_id = guild_id
         self.sell_price = sell_price
         self.racer_name = racer_name
+        # discord.ui.View doesn't auto-populate this on send or edit_message;
+        # initialize so on_timeout's `if self.message` check doesn't AttributeError.
+        self.message: discord.Message | None = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -2977,6 +2980,10 @@ class StableTrainView(discord.ui.View):
         self.racer_id = racer_id
         self.user_id = user_id
         self.guild_id = guild_id
+        # Initialized here so on_timeout's `if self.message` check won't
+        # AttributeError when the view was attached via edit_message (which
+        # doesn't auto-populate .message).
+        self.message: discord.Message | None = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -3134,6 +3141,10 @@ class StableManageView(discord.ui.View):
         self.racer_id = racer_id
         self.user_id = user_id
         self.guild_id = guild_id
+        # Initialized here so on_timeout's `if self.message` check won't
+        # AttributeError when the view was attached via edit_message (which
+        # doesn't auto-populate .message).
+        self.message: discord.Message | None = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
@@ -3454,7 +3465,8 @@ class Stable(commands.Cog, name="stable"):
         data["bot_settings"] = self.bot.settings
         embed = _build_manage_embed(data)
         view = StableManageView(self.bot, racer, context.author.id, guild_id)
-        await context.send(embed=embed, view=view)
+        msg = await context.send(embed=embed, view=view)
+        view.message = msg
 
     _RANK_ORDER = {"D": 0, "C": 1, "B": 2, "A": 3, "S": 4}
 
