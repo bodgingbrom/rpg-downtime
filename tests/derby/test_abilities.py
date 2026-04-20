@@ -233,6 +233,18 @@ def test_evaluate_stumble_event():
     assert abilities.is_stumble_save(procs[0].effect)
 
 
+def test_evaluate_rival_same_rank():
+    """Class Rival (same_rank_in_field) fires only when a same-rank racer is present."""
+    # All B-rank — should fire
+    ctx_match = _make_ctx(own_rank="B", rival_ranks=["B", "C", "A"])
+    procs = abilities.evaluate(None, "sibling_rivalry", "x", ctx_match, random.Random(0))
+    assert len(procs) == 1
+    # No same-rank — should not fire
+    ctx_nomatch = _make_ctx(own_rank="B", rival_ranks=["A", "C", "D"])
+    procs = abilities.evaluate(None, "sibling_rivalry", "x", ctx_nomatch, random.Random(0))
+    assert len(procs) == 0
+
+
 def test_evaluate_rival_higher_rank():
     """rival_hunter fires only when a higher-ranked racer is in the field."""
     # Equal ranks — should not fire
@@ -248,15 +260,6 @@ def test_evaluate_rival_higher_rank():
         rival_ranks=["A", "B", "C"],
     )
     procs = abilities.evaluate(None, "rival_hunter", "x", ctx_rival, random.Random(0))
-    assert len(procs) == 1
-
-
-def test_evaluate_sibling_in_field():
-    ctx_no_sib = _make_ctx(sibling_ids_in_field=set())
-    procs = abilities.evaluate(None, "sibling_rivalry", "x", ctx_no_sib, random.Random(0))
-    assert len(procs) == 0
-    ctx_sib = _make_ctx(sibling_ids_in_field={5})
-    procs = abilities.evaluate(None, "sibling_rivalry", "x", ctx_sib, random.Random(0))
     assert len(procs) == 1
 
 

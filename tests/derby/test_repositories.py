@@ -512,6 +512,33 @@ async def test_get_ability_stats_last_n_races_limit(session: AsyncSession):
 
 
 @pytest.mark.asyncio
+async def test_get_ability_stats_races_entered_when_racer_deleted(session: AsyncSession):
+    """Procs can remain in the log after the racer is deleted. races_entered
+    should still reflect those races so Proc% renders correctly (not —)."""
+    from derby.models import AbilityProcLog
+
+    r1 = await _make_racer(session, "Gone", 1, "closing_surge", None)
+    race = await repo.create_race(session, guild_id=1, finished=True)
+    await repo.create_race_entries(session, race.id, [r1.id])
+    session.add(AbilityProcLog(
+        race_id=race.id, racer_id=r1.id, guild_id=1,
+        ability_key="closing_surge", segment_index=0, finish_position=1,
+    ))
+    await session.commit()
+
+    # Now delete the racer — simulates the admin running /derby racer delete
+    await repo.delete_racer(session, r1.id)
+
+    stats, _ = await repo.get_ability_stats(session, guild_id=1)
+    cs = stats["closing_surge"]
+    assert cs["procs"] == 1  # proc still there
+    # races_entered must be ≥ races_procced (the proc proves the race had
+    # the ability in play, even if the current racer state can't tell us)
+    assert cs["races_entered"] >= cs["races_procced"]
+    assert cs["races_entered"] == 1
+
+
+@pytest.mark.asyncio
 async def test_get_ability_stats_empty_guild(session: AsyncSession):
     stats, races_analyzed = await repo.get_ability_stats(session, guild_id=999)
     assert stats == {}
