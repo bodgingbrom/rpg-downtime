@@ -36,6 +36,27 @@ def test_yaml_pools_all_present():
         assert pool[section], f"Empty section: {section}"
 
 
+def test_all_temperament_weights_reference_valid_temperaments():
+    """Every temperament_weight key in the YAML must match a real
+    temperament. Dead keys silently fail — no error, just the weight
+    never applies. This test catches name drift (e.g. "Bold"/"Mellow"
+    that were used in the YAML but never existed as temperaments).
+    """
+    from derby.logic import TEMPERAMENTS
+    valid = set(TEMPERAMENTS.keys())
+    pool = abilities._load_ability_pool()
+    bad_refs: list[tuple[str, str]] = []
+    for section in ("speed_pool", "cornering_pool", "stamina_pool", "quirk_pool"):
+        for entry in pool.get(section) or []:
+            for temp in (entry.get("temperament_weight") or {}).keys():
+                if temp not in valid:
+                    bad_refs.append((entry.get("key", "?"), temp))
+    assert not bad_refs, (
+        f"Invalid temperament references in YAML: {bad_refs}. "
+        f"Valid: {sorted(valid)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rolling
 # ---------------------------------------------------------------------------
