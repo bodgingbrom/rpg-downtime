@@ -1956,30 +1956,52 @@ class DerbyScheduler:
             if channel is None:
                 return
 
-        message: discord.Message | None = None
-        lines: list[str] = []
+        # Discord embed descriptions cap at 4096 chars; edit silently
+        # clips anything over that and the climactic final paragraph
+        # gets cut off. When the accumulating text would blow the cap
+        # we "flush" — leave the current message as-is and start a new
+        # one with the next paragraph, so mid-race commentary lives in
+        # one edited message and the final (gold) beat always fits.
+        MAX_DESC_CHARS = 3800  # margin under the real 4096 limit
+
+        current_message: discord.Message | None = None
+        current_lines: list[str] = []
 
         for i, event in enumerate(log):
+            is_last = i == len(log) - 1
+
             # Check if race was cancelled
             async with self.sessionmaker() as session:
                 if await repo.get_race(session, race_id) is None:
                     return
 
-            lines.append(event)
+            # Would appending this event overflow the current message?
+            # +2 accounts for the "\n\n" separator joined between events.
+            projected = "\n\n".join(current_lines + [event])
+            if current_lines and len(projected) > MAX_DESC_CHARS:
+                # Flush: leave the current message as-is (mid-race, so it
+                # stays green — it represents an early portion of the
+                # race and the reader still has context). Start a fresh
+                # message for this event + anything that follows.
+                current_message = None
+                current_lines = [event]
+            else:
+                current_lines.append(event)
+
             embed = discord.Embed(
-                description="\n\n".join(lines),
-                color=0x2ECC71 if i < len(log) - 1 else 0xF1C40F,
+                description="\n\n".join(current_lines),
+                color=0xF1C40F if is_last else 0x2ECC71,
             )
 
             try:
-                if message is None:
-                    message = await channel.send(embed=embed)
+                if current_message is None:
+                    current_message = await channel.send(embed=embed)
                 else:
-                    await message.edit(embed=embed)
+                    await current_message.edit(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
                 return
 
-            if i < len(log) - 1:
+            if not is_last:
                 await asyncio.sleep(delay)
 
     async def _increment_careers(

@@ -119,6 +119,44 @@ async def test_generate_flavor_names_exception():
     assert result is None
 
 
+@pytest.mark.asyncio
+async def test_generate_flavor_names_respects_count_parameter():
+    """The count parameter should land in the prompt the LLM sees."""
+    fake_names = "\n".join([f"Name{i}" for i in range(30)])
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=fake_names)]
+
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+    flavor_names._client = mock_client
+
+    result = await flavor_names.generate_flavor_names("test theme", count=30)
+    assert result is not None
+    assert len(result) == 30
+
+    # Prompt should reference the requested count (30 in this case)
+    call_kwargs = mock_client.messages.create.call_args
+    system = call_kwargs.kwargs.get("system") or call_kwargs[1].get("system")
+    assert "exactly 30 unique" in system
+
+
+@pytest.mark.asyncio
+async def test_generate_flavor_names_small_count_allows_small_return():
+    """With a small count, the min-acceptable check scales down so
+    small top-ups don't get discarded for returning 'too few'."""
+    # Request 10, get 6 back — should pass (min_acceptable = max(5, 10//10) = 5)
+    names_text = "\n".join([f"N{i}" for i in range(6)])
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=names_text)]
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+    flavor_names._client = mock_client
+
+    result = await flavor_names.generate_flavor_names("test", count=10)
+    assert result is not None
+    assert len(result) == 6
+
+
 def test_pick_name_includes_flavor_names(tmp_path, monkeypatch):
     """pick_name should draw from both base and flavor name pools."""
     monkeypatch.setattr(flavor_names, "_FLAVOR_DIR", str(tmp_path))
