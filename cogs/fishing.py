@@ -763,7 +763,14 @@ class Fishing(commands.Cog, name="fishing"):
             color=0x3498DB,
         )
 
-        difficulty_emoji = {1: "\U0001F7E2", 2: "\U0001F7E1", 3: "\U0001F534"}
+        # 🟢 easy, 🟡 medium, 🔴 hard, 🟣 arcane, ⚫ apex
+        difficulty_emoji = {
+            1: "\U0001F7E2",
+            2: "\U0001F7E1",
+            3: "\U0001F534",
+            4: "\U0001F7E3",
+            5: "\u26AB",
+        }
 
         for key, loc in locations.items():
             skill = loc.get("skill_level", 1)

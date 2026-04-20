@@ -1,0 +1,61 @@
+name: Misty Grove
+description: A grove blanketed in magic mist where trolls fish alongside strange, glowing things. The water itself feels like it's listening.
+theme: grove
+skill_level: 4
+base_cast_time: 2700
+
+fish:
+  - name: Mistfin Minnow
+    rarity: common
+    value_range: [9, 15]
+    length_range: [6, 14]
+    preferred_bait: worm
+    weight: 30
+
+  - name: Grumblecarp
+    rarity: common
+    value_range: [10, 16]
+    length_range: [16, 30]
+    preferred_bait: insect
+    weight: 25
+
+  - name: Will-o-Wisp Bass
+    rarity: uncommon
+    value_range: [18, 31]
+    length_range: [18, 30]
+    preferred_bait: shiny_lure
+    weight: 18
+
+  - name: Arcane Pike
+    rarity: rare
+    value_range: [40, 70]
+    length_range: [24, 42]
+    preferred_bait: shiny_lure
+    weight: 8
+
+  - name: Mossbellow Frogfish
+    rarity: rare
+    value_range: [48, 78]
+    length_range: [20, 36]
+    preferred_bait: premium
+    weight: 5
+
+  - name: The Mirrormouth
+    rarity: legendary
+    value_range: [155, 275]
+    length_range: [36, 54]
+    required_bait: premium
+    weight: 1
+
+trash:
+  - name: Mist-Soaked Log
+    value: 0
+    weight: 6
+
+  - name: Troll Tusk
+    value: 3
+    weight: 4
+
+  - name: Glowing Mushroom Cap
+    value: 1
+    weight: 3

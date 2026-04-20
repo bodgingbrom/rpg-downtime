@@ -8,13 +8,13 @@ Every catch awards XP, which goes into your fishing level. Higher levels unlock 
 
 ### XP by rarity
 
-| Catch | Base XP | @ Lv1 loc | @ Lv2 loc | @ Lv3 loc |
-|-------|---------|-----------|-----------|-----------|
-| Trash | 1 | 1 | 2 | 3 |
-| Common | 5 | 5 | 10 | 15 |
-| Uncommon | 15 | 15 | 30 | 45 |
-| Rare | 40 | 40 | 80 | 120 |
-| Legendary | 100 | 100 | 200 | 300 |
+| Catch | Base XP | Lv1 | Lv2 | Lv3 | Lv4 | Lv5 |
+|-------|---------|-----|-----|-----|-----|-----|
+| Trash | 1 | 1 | 2 | 3 | 4 | 5 |
+| Common | 5 | 5 | 10 | 15 | 20 | 25 |
+| Uncommon | 15 | 15 | 30 | 45 | 60 | 75 |
+| Rare | 40 | 40 | 80 | 120 | 160 | 200 |
+| Legendary | 100 | 100 | 200 | 300 | 400 | 500 |
 
 XP is scaled by the location's `skill_level` (1/2/3), so harder spots reward proportionally more.
 
@@ -25,10 +25,10 @@ XP is scaled by the location's `skill_level` (1/2/3), so harder spots reward pro
 | Lv1 | 0 (start) | Calm Pond |
 | Lv2 | 100 | River Rapids |
 | Lv3 | 300 | Deep Lake |
-| Lv4 | 600 | — |
-| Lv5 | 1000 | — |
+| Lv4 | 600 | Misty Grove |
+| Lv5 | 1000 | Cloudmere |
 
-Max level is currently 5. Levels 4-5 don't unlock new locations but still grant cast-speed bonuses via over-leveling (see below).
+Max level is currently 5. Every level unlocks a new location — there are five in total.
 
 ### Over-leveling Bonus
 

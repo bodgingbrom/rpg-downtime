@@ -89,7 +89,7 @@ FISHING_HELP_CATEGORIES = {
         "Earn XP with every catch to unlock harder locations.\n"
         "`/fish locations` — All spots and their unlock status\n"
         "Skill-gated: Calm Pond (Lv1) \u2192 River Rapids (Lv2) \u2192 "
-        "Deep Lake (Lv3). "
+        "Deep Lake (Lv3) \u2192 Misty Grove (Lv4) \u2192 Cloudmere (Lv5). "
         "Over-leveling a spot gives a small cast-speed bonus."
     ),
     "Collection": (

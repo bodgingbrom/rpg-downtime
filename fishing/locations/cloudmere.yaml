@@ -1,0 +1,61 @@
+name: Cloudmere
+description: A lake held inside a colossal chunk of earth drifting through the open sky. The fish here have known more weather than water.
+theme: sky
+skill_level: 5
+base_cast_time: 3300
+
+fish:
+  - name: Breezeback Sunfish
+    rarity: common
+    value_range: [11, 19]
+    length_range: [8, 16]
+    preferred_bait: worm
+    weight: 30
+
+  - name: Cloudspring Carp
+    rarity: common
+    value_range: [13, 21]
+    length_range: [16, 32]
+    preferred_bait: insect
+    weight: 25
+
+  - name: Windlark Pike
+    rarity: uncommon
+    value_range: [22, 38]
+    length_range: [20, 34]
+    preferred_bait: shiny_lure
+    weight: 18
+
+  - name: Thunderscale Trout
+    rarity: rare
+    value_range: [48, 86]
+    length_range: [22, 40]
+    preferred_bait: shiny_lure
+    weight: 8
+
+  - name: Stormfeather Eel
+    rarity: rare
+    value_range: [58, 96]
+    length_range: [30, 52]
+    preferred_bait: premium
+    weight: 5
+
+  - name: The Zephyr That Remembers
+    rarity: legendary
+    value_range: [190, 335]
+    length_range: [42, 66]
+    required_bait: premium
+    weight: 1
+
+trash:
+  - name: Wind-Weathered Stone
+    value: 0
+    weight: 6
+
+  - name: Fallen Feather Bundle
+    value: 2
+    weight: 4
+
+  - name: Cloud-Crusted Anchor
+    value: 1
+    weight: 3

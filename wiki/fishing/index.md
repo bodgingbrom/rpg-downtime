@@ -21,7 +21,7 @@ The two modes share your bait, your gear, your XP, and your fish log. You just c
 |------|-------------|
 | [Getting Started](getting-started.md) | Your first cast, how bait works, earning your first coins |
 | [Gear & Bait](gear.md) | All four rod tiers, all four bait types, cast speed math |
-| [Locations](locations.md) | Calm Pond, River Rapids, Deep Lake — the fish at each |
+| [Locations](locations.md) | Calm Pond, River Rapids, Deep Lake, Misty Grove, Cloudmere — the fish at each |
 | [Progression](progression.md) | XP, levels, fish log, trophies |
 | [Active Mode](active-mode.md) | Whispers, vibe checks, haikus, and legendary encounters |
 
