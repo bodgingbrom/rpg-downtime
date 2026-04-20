@@ -339,19 +339,21 @@ quirk_pool:
     temperament_weight:
       Reckless: 1.5
 
+  # Was "Solo Runner" but pool-racer-heavy guilds almost never have small
+  # fields, so it was effectively dead. Repurposed as Hot Start — inverted
+  # segment ramp, thematic counterpoint to Slow Starter.
   - key: solo_runner
-    name: Solo Runner
-    summary: Prefers an uncrowded track.
+    name: Hot Start
+    summary: Burns bright early, fades late.
     trigger:
       segment: any
-      max_field_size: 4
     effect:
-      kind: score_bonus
-      value: 2
-    commentary: "{name} runs alone well — nothing to distract them."
+      kind: segment_ramp
+      values: {opening: 2, mid: 0, final_stretch: -1}
+    commentary: "{name} blazes out of the gate — you can almost see the fire dimming."
     temperament_weight:
-      Steady: 2.0
-      Steady: 1.5
+      Reckless: 2.0
+      Quirky: 1.5
 
   - key: underdog
     name: Underdog
@@ -381,16 +383,20 @@ quirk_pool:
       Steady: 2.0
       Burly: 1.5
 
+  # Was "Sibling Rivalry" but literal siblings in a field is nearly
+  # impossible (per-race owner dedup + pool racers having no lineage).
+  # Broadened to "rival of the same class" — sharper against racers of
+  # the same rank. Still captures the rival-energy flavor.
   - key: sibling_rivalry
-    name: Sibling Rivalry
-    summary: Sharper when racing against kin.
+    name: Class Rival
+    summary: Sharper against same-rank opponents.
     trigger:
       segment: any
-      rival_condition: sibling_in_field
+      rival_condition: same_rank_in_field
     effect:
       kind: score_bonus
       value: 2
-    commentary: "{name} will not — absolutely will not — let their sibling finish ahead."
+    commentary: "{name} refuses to let another of their class finish ahead."
     temperament_weight:
       Reckless: 1.5
       Quirky: 2.0
@@ -510,7 +516,7 @@ quirk_pool:
     commentary: "{name} has been measuring the field — and now they move!"
     temperament_weight:
       Steady: 2.0
-      Steady: 1.5
+      Tactical: 1.5
 
   - key: unshakeable
     name: Unshakeable

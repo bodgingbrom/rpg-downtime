@@ -344,6 +344,9 @@ def _trigger_matches(trigger: dict, ctx: SegmentContext, rng: random.Random) -> 
         elif rival == "lower_rank_in_field":
             if not _has_lower_ranked(ctx):
                 return False
+        elif rival == "same_rank_in_field":
+            if not _has_same_ranked(ctx):
+                return False
         elif rival == "sibling_in_field":
             if not ctx.sibling_ids_in_field:
                 return False
@@ -394,6 +397,11 @@ def _has_higher_ranked(ctx: SegmentContext) -> bool:
 def _has_lower_ranked(ctx: SegmentContext) -> bool:
     own = _rank_val(ctx.own_rank)
     return any(_rank_val(r) < own for r in ctx.rival_ranks)
+
+
+def _has_same_ranked(ctx: SegmentContext) -> bool:
+    own = _rank_val(ctx.own_rank)
+    return any(_rank_val(r) == own for r in ctx.rival_ranks)
 
 
 def _is_lowest_ranked(ctx: SegmentContext) -> bool:

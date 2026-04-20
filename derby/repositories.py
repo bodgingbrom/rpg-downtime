@@ -872,26 +872,36 @@ async def get_ability_stats(
 
     # Assemble final stats — include abilities that were entered even if
     # they never procced (so "0% proc rate" surfaces).
+    #
+    # races_entered uses the UNION of (a) races where a currently-living
+    # racer with this ability was entered and (b) races where this
+    # ability actually procced. The historical-procs-but-no-current-
+    # racer case happens when a racer was deleted between race time and
+    # report time (their procs remain in the log but current ability
+    # lookup returns nothing). A proc in race X proves ability was in
+    # race X, so the union gives an accurate floor and prevents
+    # divide-by-zero Proc% when procs exist.
     stats: dict[str, dict] = {}
     all_keys = set(ability_races.keys()) | set(agg.keys())
     for key in all_keys:
-        entered = len(ability_races.get(key, set()))
+        current_entered = ability_races.get(key, set())
         a = agg.get(key)
         if a is None:
             stats[key] = {
                 "procs": 0,
                 "races_procced": 0,
-                "races_entered": entered,
+                "races_entered": len(current_entered),
                 "wins": 0,
                 "top3": 0,
                 "avg_finish": None,
             }
         else:
             finish_count = a["finish_count"]
+            entered_union = current_entered | a["races_procced"]
             stats[key] = {
                 "procs": a["procs"],
                 "races_procced": len(a["races_procced"]),
-                "races_entered": entered,
+                "races_entered": len(entered_union),
                 "wins": a["wins"],
                 "top3": a["top3"],
                 "avg_finish": (
