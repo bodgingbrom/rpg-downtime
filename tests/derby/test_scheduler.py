@@ -230,6 +230,59 @@ async def test_stream_commentary(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_commentary_rolls_over_when_description_overflows(
+    tmp_path: Path,
+) -> None:
+    """When accumulated text would exceed Discord's embed description
+    limit, we flush to a new message so the final paragraph always fits
+    instead of getting clipped by Discord."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=guild.id)
+
+    # 5 long events — each ~1500 chars. Two fit per message (~3000 chars
+    # plus a \n\n separator). So we expect a rollover after every 2
+    # events, giving 3 distinct messages total by the end.
+    big = "A" * 1500
+    events = [f"[{i}] {big}" for i in range(5)]
+    await scheduler._stream_commentary(race.id, guild.id, events, delay=0)
+
+    # Every send and edit appends to channel.messages, so the final
+    # snapshot for each distinct message must contain the final paragraph
+    # in ONE of the messages (not clipped out of existence).
+    all_snapshots = guild.system_channel.messages
+    # Final event text should appear in at least one complete snapshot
+    final_tag = "[4]"
+    assert any(final_tag in s for s in all_snapshots), (
+        "Final paragraph must survive into at least one message snapshot"
+    )
+
+    # Each snapshot must fit under the embed description safety margin.
+    # This catches any regression where we'd let a single message grow
+    # past Discord's limit.
+    MAX = 3800
+    for snap in all_snapshots:
+        assert len(snap) <= MAX, (
+            f"Snapshot of length {len(snap)} exceeds MAX_DESC_CHARS={MAX}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_commentary_stops_when_cancelled(tmp_path: Path) -> None:
     db_path = tmp_path / "db.sqlite"
     settings = Settings(
