@@ -33,8 +33,31 @@ The end goal is a self-contained mini-game that runs daily and keeps downtime li
 Before committing any change:
 
 1. Install dependencies with `python -m pip install -r requirements.txt`.
-2. Run unit tests via `pytest` from the repository root. All tests should pass.
+2. Run the **scoped** test suite for the area you changed. All tests should pass.
 3. Ensure new features include accompanying tests.
+
+### Scoped test suites
+
+Tests are auto-tagged by path + filename via `tests/conftest.py`. Run only
+what's relevant to your change:
+
+```bash
+pytest -m fishing              # Lazy Lures changes
+pytest -m derby                # Downtime Derby changes
+pytest -m brewing              # Potion Panic changes
+pytest -m dungeon              # Monster Mash changes
+pytest -m rpg                  # player race / cross-game rpg changes
+pytest -m "derby or economy"   # multi-tag selection
+pytest -m admin                # reports / admin tooling
+```
+
+Run the **full suite** (`pytest`) when your change touches anything
+cross-cutting — the scheduler, the economy/wallet, the daily digest, the
+db schema, or shared config. When in doubt, run everything.
+
+Markers are listed in `pytest.ini`. If you add a new mini-game or a new
+top-level test file, add the marker there and the auto-tagging rule in
+`tests/conftest.py`.
 
 ## Running Locally
 
