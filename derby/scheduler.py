@@ -2041,10 +2041,20 @@ class DerbyScheduler:
             # +2 accounts for the "\n\n" separator joined between events.
             projected = "\n\n".join(current_lines + [event])
             if current_lines and len(projected) > MAX_DESC_CHARS:
-                # Flush: leave the current message as-is (mid-race, so it
-                # stays green — it represents an early portion of the
-                # race and the reader still has context). Start a fresh
-                # message for this event + anything that follows.
+                # Flush: leave the current message's commentary as-is,
+                # but strip the standings field off it — the new message
+                # will carry the fresh chart, and two messages showing
+                # standings side-by-side is visually redundant (the old
+                # one's chart is stale anyway).
+                if current_message is not None and charts:
+                    try:
+                        stripped = discord.Embed(
+                            description="\n\n".join(current_lines),
+                            color=0x2ECC71,
+                        )
+                        await current_message.edit(embed=stripped)
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass  # Non-fatal: stale chart stays on old msg
                 current_message = None
                 current_lines = [event]
             else:
@@ -2059,11 +2069,13 @@ class DerbyScheduler:
             # from description, so rollover math above doesn't need to juggle
             # chart size). Clamp to the last-known chart if the paragraph
             # stream is longer than the chart list (template fallback can
-            # produce multiple paragraphs per segment).
+            # produce multiple paragraphs per segment). On the final beat
+            # the title flips to "Final Standings" to punctuate the result.
             if charts:
                 chart_idx = min(i, len(charts) - 1)
+                field_name = "Final Standings" if is_last else "Current Standings"
                 embed.add_field(
-                    name="Current Standings",
+                    name=field_name,
                     value=charts[chart_idx],
                     inline=False,
                 )
