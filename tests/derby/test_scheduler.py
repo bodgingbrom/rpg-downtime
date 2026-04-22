@@ -32,12 +32,17 @@ class DummyMessage:
         elif content is not None:
             self.content = content
         self.channel.messages.append(self.content)
+        if embed is not None:
+            self.channel.sent_embeds.append(embed)
 
 
 class DummyChannel:
     def __init__(self, name: str = "general") -> None:
         self.name = name
         self.messages: list[str] = []
+        # Parallel list of the actual Embed objects for tests that need
+        # to inspect fields, colors, etc. (messages is description-only).
+        self.sent_embeds: list[discord.Embed] = []
 
     async def send(
         self, content: str | None = None, *, embed: discord.Embed | None = None,
@@ -49,6 +54,8 @@ class DummyChannel:
         elif content is not None:
             text = content
         self.messages.append(text)
+        if embed is not None:
+            self.sent_embeds.append(embed)
         return DummyMessage(self, text)
 
 
@@ -227,6 +234,90 @@ async def test_stream_commentary(tmp_path: Path) -> None:
         "E1\n\nE2",
         "E1\n\nE2\n\nE3",
     ]
+    # No charts passed → no "Current Standings" field on any embed (back-compat)
+    for embed in guild.system_channel.sent_embeds:
+        assert not any(f.name == "Current Standings" for f in embed.fields)
+
+
+@pytest.mark.asyncio
+async def test_stream_commentary_renders_standings_field_when_charts_passed(
+    tmp_path: Path,
+) -> None:
+    """When charts are provided, every embed update attaches a
+    'Current Standings' field with the correct per-event chart content."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=guild.id)
+
+    events = ["E1", "E2", "E3"]
+    charts = ["CHART_A", "CHART_B", "CHART_C"]
+    await scheduler._stream_commentary(
+        race.id, guild.id, events, delay=0, charts=charts,
+    )
+    # Every embed edit/send should carry a "Current Standings" field with
+    # the chart string at index min(i, len(charts)-1)
+    embeds = guild.system_channel.sent_embeds
+    assert len(embeds) == 3
+    for i, embed in enumerate(embeds):
+        field = next(
+            (f for f in embed.fields if f.name == "Current Standings"), None,
+        )
+        assert field is not None, f"Embed {i} missing standings field"
+        assert field.value == charts[i]
+
+
+@pytest.mark.asyncio
+async def test_stream_commentary_clamps_chart_index_when_log_longer(
+    tmp_path: Path,
+) -> None:
+    """If the log has more paragraphs than charts (template fallback
+    case), trailing paragraphs should re-use the last chart."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=guild.id)
+
+    events = ["E1", "E2", "E3", "E4", "E5"]
+    charts = ["CHART_A", "CHART_B"]  # fewer charts than events
+    await scheduler._stream_commentary(
+        race.id, guild.id, events, delay=0, charts=charts,
+    )
+    embeds = guild.system_channel.sent_embeds
+    field_values = [
+        next(f.value for f in e.fields if f.name == "Current Standings")
+        for e in embeds
+    ]
+    # Events 0, 1 get their own chart; events 2-4 all show CHART_B (last one)
+    assert field_values == ["CHART_A", "CHART_B", "CHART_B", "CHART_B", "CHART_B"]
 
 
 @pytest.mark.asyncio

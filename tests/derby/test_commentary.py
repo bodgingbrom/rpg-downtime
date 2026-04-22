@@ -9,6 +9,7 @@ import pytest
 from derby.commentary import (
     SYSTEM_PROMPT,
     _build_prompt,
+    build_standings_chart,
     build_template_commentary,
     generate_commentary,
 )
@@ -259,3 +260,134 @@ class TestGenerateCommentary:
                 "max_tokens" in rec.message.lower() for rec in caplog.records
             )
         mod._client = None  # cleanup
+
+
+# ---------------------------------------------------------------------------
+# Live standings bar chart
+# ---------------------------------------------------------------------------
+
+
+class TestBuildStandingsChart:
+    """Unit tests for the live per-segment bar chart helper."""
+
+    def _standings(self, cums: list[float]) -> list[tuple[int, float, float]]:
+        """Build a standings list from a list of cumulative scores.
+
+        The racer_id is just the index, seg_score is unused (set to 0).
+        Returned already sorted desc by cumulative, as simulate_race
+        produces.
+        """
+        return [
+            (i + 1, 0.0, c)
+            for i, c in enumerate(cums)
+        ]
+
+    def _names(self, count: int) -> dict[int, str]:
+        pool = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"]
+        return {i + 1: pool[i] for i in range(count)}
+
+    def _colors(self, count: int) -> dict[int, str]:
+        palette = ["\U0001f7e5", "\U0001f7e6", "\U0001f7e9",
+                   "\U0001f7e8", "\U0001f7ea", "\U0001f7e7"]
+        return {i + 1: palette[i] for i in range(count)}
+
+    def test_returns_code_block(self):
+        """Result is a ``` ... ``` wrapped string."""
+        chart = build_standings_chart(
+            self._standings([100.0, 80.0, 60.0]),
+            self._names(3), self._colors(3),
+        )
+        assert chart.startswith("```")
+        assert chart.rstrip().endswith("```")
+
+    def test_leader_gets_full_bar_last_gets_empty(self):
+        chart = build_standings_chart(
+            self._standings([100.0, 80.0, 60.0, 40.0, 20.0]),
+            self._names(5), self._colors(5),
+            bar_width=10,
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Leader (id=1, Alpha) = 100 = all 10 filled
+        assert "\u2588" * 10 in lines[0]
+        # Last (id=5, Echo) = 20 = 0 filled, all empty
+        assert "\u2591" * 10 in lines[-1]
+        assert "\u2588" not in lines[-1]
+
+    def test_midpack_bar_proportional_to_gap(self):
+        """Bar length = round((cum - last) / spread * width)."""
+        # cums: 100, 85, 70, 50, 30 → spread 70
+        # relatives: 1.0, 0.786, 0.571, 0.286, 0.0
+        # filled @ width=10: 10, 8, 6, 3, 0
+        chart = build_standings_chart(
+            self._standings([100.0, 85.0, 70.0, 50.0, 30.0]),
+            self._names(5), self._colors(5),
+            bar_width=10,
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Count █ in each line
+        filled_counts = [line.count("\u2588") for line in lines]
+        assert filled_counts == [10, 8, 6, 3, 0]
+
+    def test_all_tied_gives_everyone_full_bar(self):
+        """Edge case: spread=0 shouldn't divide-by-zero or make a mess."""
+        chart = build_standings_chart(
+            self._standings([50.0, 50.0, 50.0]),
+            self._names(3), self._colors(3),
+            bar_width=10,
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Everyone gets a full bar
+        for line in lines:
+            assert line.count("\u2588") == 10
+
+    def test_includes_color_emoji_before_name(self):
+        chart = build_standings_chart(
+            self._standings([100.0, 50.0]),
+            self._names(2), self._colors(2),
+        )
+        lines = chart.strip("`\n").split("\n")
+        # "🟥 Alpha ..." — emoji precedes name
+        assert lines[0].startswith("\U0001f7e5 Alpha")
+        assert lines[1].startswith("\U0001f7e6 Bravo")
+
+    def test_names_padded_for_alignment(self):
+        """Short and long names in the same chart should align by column."""
+        names = {1: "Boneshaker", 2: "Zip"}
+        chart = build_standings_chart(
+            self._standings([100.0, 50.0]),
+            names, self._colors(2),
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Both name columns should be padded to "Boneshaker" (10 chars).
+        # The bar starts at the same column in both lines.
+        bar_pos_0 = lines[0].find("\u2588")
+        bar_pos_1 = lines[1].find("\u2591")
+        assert bar_pos_0 == bar_pos_1
+
+    def test_empty_standings_returns_empty_string(self):
+        chart = build_standings_chart({}, {}, {})
+        assert chart == ""
+
+    def test_missing_color_falls_back_gracefully(self):
+        """If color_map is missing an id, the row still renders (no emoji)."""
+        chart = build_standings_chart(
+            self._standings([100.0, 50.0]),
+            self._names(2),
+            {1: "\U0001f7e5"},  # only first racer has a color
+        )
+        lines = chart.strip("`\n").split("\n")
+        assert "Alpha" in lines[0]
+        assert "Bravo" in lines[1]
+        # Second line should NOT start with a color emoji
+        assert not lines[1].startswith("\U0001f7e5")
+
+    def test_custom_bar_width(self):
+        """The bar_width param controls how many cells render."""
+        chart = build_standings_chart(
+            self._standings([100.0, 0.0]),
+            self._names(2), self._colors(2),
+            bar_width=20,
+        )
+        lines = chart.strip("`\n").split("\n")
+        assert lines[0].count("\u2588") == 20
+        assert lines[1].count("\u2591") == 20

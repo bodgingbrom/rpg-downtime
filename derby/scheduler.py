@@ -428,6 +428,10 @@ class DerbyScheduler:
                 "brewing_channel": ("TEXT", "NULL"),
                 "fishing_channel": ("TEXT", "NULL"),
                 "dungeon_channel": ("TEXT", "NULL"),
+                # NULL = "inherit global default" (matches the rest of this
+                # table's override-semantics pattern). Default is True in
+                # config.Settings.live_standings_chart.
+                "live_standings_chart": ("BOOLEAN", "NULL"),
                 # Fishing (Lazy Lures)
                 "fishing_bait_costs": ("TEXT", "NULL"),
                 "fishing_cast_multiplier": ("REAL", "NULL"),
@@ -803,11 +807,24 @@ class DerbyScheduler:
             log = await commentary.generate_commentary(result)
             if log is None:
                 log = commentary.build_template_commentary(result)
+
+            # Pre-compute per-segment standings charts when enabled.
+            charts: list[str] | None = None
+            if self._resolve("live_standings_chart", gs) and result.segments:
+                charts = [
+                    commentary.build_standings_chart(
+                        seg.standings, result.racer_names, color_map,
+                    )
+                    for seg in result.segments
+                ]
+                charts.append(charts[-1])  # winner paragraph reuses final
+
             await self._stream_commentary(
                 race.id, guild_id, log,
                 delay=self._resolve("commentary_delay", gs),
                 guild_settings=gs,
                 channel_override=channel_override,
+                charts=charts,
             )
             await self._post_results(
                 guild_id, result.placements, result.racer_names,
@@ -1654,10 +1671,25 @@ class DerbyScheduler:
         log = await commentary.generate_commentary(result)
         if log is None:
             log = commentary.build_template_commentary(result)
+
+        # Pre-compute per-segment standings charts when enabled. One chart
+        # per segment plus a final chart for the winner paragraph (same as
+        # the last segment's standings).
+        charts: list[str] | None = None
+        if self._resolve("live_standings_chart", gs) and result.segments:
+            charts = [
+                commentary.build_standings_chart(
+                    seg.standings, result.racer_names, color_map,
+                )
+                for seg in result.segments
+            ]
+            charts.append(charts[-1])  # winner paragraph shares final standings
+
         await self._stream_commentary(
             race_id, guild_id, log,
             delay=self._resolve("commentary_delay", gs),
             guild_settings=gs,
+            charts=charts,
         )
         await self._post_results(guild_id, result.placements, names)
         await self._announce_bet_results(
@@ -1974,6 +2006,7 @@ class DerbyScheduler:
         self, race_id: int, guild_id: int, log: list[str], delay: float = 6.0,
         guild_settings: models.GuildSettings | None = None,
         channel_override: "discord.abc.Messageable | None" = None,
+        charts: list[str] | None = None,
     ) -> None:
         if channel_override is not None:
             channel = channel_override
@@ -2021,6 +2054,19 @@ class DerbyScheduler:
                 description="\n\n".join(current_lines),
                 color=0xF1C40F if is_last else 0x2ECC71,
             )
+
+            # Live standings bar chart — attached as an embed field (separate
+            # from description, so rollover math above doesn't need to juggle
+            # chart size). Clamp to the last-known chart if the paragraph
+            # stream is longer than the chart list (template fallback can
+            # produce multiple paragraphs per segment).
+            if charts:
+                chart_idx = min(i, len(charts) - 1)
+                embed.add_field(
+                    name="Current Standings",
+                    value=charts[chart_idx],
+                    inline=False,
+                )
 
             try:
                 if current_message is None:

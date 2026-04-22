@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     daily_min: int = 15
     daily_max: int = 30
     tournament_enabled: bool = True
+    # Render a live per-segment standings bar chart alongside race commentary.
+    # Guilds can disable via /derby settings set live_standings_chart false.
+    live_standings_chart: bool = True
 
     # Brewing / Potion Panic
     bottle_fee: int = 10
