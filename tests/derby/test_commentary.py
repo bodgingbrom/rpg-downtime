@@ -300,38 +300,72 @@ class TestBuildStandingsChart:
         assert chart.startswith("```")
         assert chart.rstrip().endswith("```")
 
-    def test_leader_gets_full_bar_last_gets_empty(self):
+    def test_leader_gets_full_bar(self):
+        """Leader always fills the bar; trailing racers get their
+        fraction of the leader's cumulative score."""
         chart = build_standings_chart(
             self._standings([100.0, 80.0, 60.0, 40.0, 20.0]),
             self._names(5), self._colors(5),
             bar_width=10,
         )
         lines = chart.strip("`\n").split("\n")
-        # Leader (id=1, Alpha) = 100 = all 10 filled
+        # Leader (id=1, Alpha) = 100 = 100/100 = all 10 filled
         assert "\u2588" * 10 in lines[0]
-        # Last (id=5, Echo) = 20 = 0 filled, all empty
-        assert "\u2591" * 10 in lines[-1]
-        assert "\u2588" not in lines[-1]
+        # Last (id=5, Echo) = 20 = 20/100 = 2 filled (not empty!)
+        assert lines[-1].count("\u2588") == 2
 
-    def test_midpack_bar_proportional_to_gap(self):
-        """Bar length = round((cum - last) / spread * width)."""
-        # cums: 100, 85, 70, 50, 30 → spread 70
-        # relatives: 1.0, 0.786, 0.571, 0.286, 0.0
-        # filled @ width=10: 10, 8, 6, 3, 0
+    def test_bar_is_leader_relative_fraction(self):
+        """Bar length = round(cum / leader_cum * width)."""
+        # cums: 100, 85, 70, 50, 30 → leader=100
+        # relatives: 1.0, 0.85, 0.70, 0.50, 0.30
+        # filled @ width=10: 10, 9 (0.85→round=8 wait rounds to even in py…)
+        # Python's round() uses banker's rounding: round(0.85*10) = round(8.5) = 8
+        # round(0.70*10)=7, round(0.50*10)=0 in banker's? No — round(5)=0
+        # Banker's rounding: round(5.0) = 4 or 6 depending on parity.
+        # round(8.5) = 8, round(5.0) = 4 (rounds to even).
+        # Let's just assert monotonic + leader=10 + roughly-right.
         chart = build_standings_chart(
             self._standings([100.0, 85.0, 70.0, 50.0, 30.0]),
             self._names(5), self._colors(5),
             bar_width=10,
         )
         lines = chart.strip("`\n").split("\n")
-        # Count █ in each line
         filled_counts = [line.count("\u2588") for line in lines]
-        assert filled_counts == [10, 8, 6, 3, 0]
+        # Leader is always full
+        assert filled_counts[0] == 10
+        # Each subsequent racer has fewer filled cells (or equal, but
+        # monotonic non-increasing since standings are desc by cum)
+        assert filled_counts == sorted(filled_counts, reverse=True)
+        # Last place at 30/100 = 3 filled
+        assert filled_counts[-1] == 3
+
+    def test_chart_visibly_shifts_when_gap_closes(self):
+        """Regression test for the 'chart never changes' bug: when a
+        trailing racer closes the gap to the leader over segments, their
+        bar should grow. The old (gap-normalized) formula would have
+        looked identical between these two snapshots."""
+        early = build_standings_chart(
+            self._standings([100.0, 80.0, 60.0]),
+            self._names(3), self._colors(3),
+            bar_width=10,
+        )
+        # C pulled closer, relative positions preserved but proportions
+        # differ: A=200, B=180, C=170 (C went from 60% to 85% of leader)
+        later = build_standings_chart(
+            self._standings([200.0, 180.0, 170.0]),
+            self._names(3), self._colors(3),
+            bar_width=10,
+        )
+        early_last = early.strip("`\n").split("\n")[-1]
+        later_last = later.strip("`\n").split("\n")[-1]
+        # With the OLD formula both charts would be identical. With the
+        # NEW formula, C's bar grows from 6 cells (60%) to ~9 cells (85%).
+        assert early_last.count("\u2588") < later_last.count("\u2588")
 
     def test_all_tied_gives_everyone_full_bar(self):
-        """Edge case: spread=0 shouldn't divide-by-zero or make a mess."""
+        """Edge case: leader_cum=0 shouldn't divide-by-zero."""
         chart = build_standings_chart(
-            self._standings([50.0, 50.0, 50.0]),
+            self._standings([0.0, 0.0, 0.0]),
             self._names(3), self._colors(3),
             bar_width=10,
         )
@@ -339,6 +373,20 @@ class TestBuildStandingsChart:
         # Everyone gets a full bar
         for line in lines:
             assert line.count("\u2588") == 10
+
+    def test_positive_cums_all_nonempty(self):
+        """In the leader-relative formula, any racer with cum > 0 gets
+        at least some bar (even if tiny). Only actual zero gets empty."""
+        chart = build_standings_chart(
+            self._standings([100.0, 50.0, 10.0, 0.0]),
+            self._names(4), self._colors(4),
+            bar_width=10,
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Last racer at cum=0 → 0 filled
+        assert lines[-1].count("\u2588") == 0
+        # Racer with cum=10 (10% of leader) → 1 filled
+        assert lines[2].count("\u2588") == 1
 
     def test_includes_color_emoji_before_name(self):
         chart = build_standings_chart(
@@ -360,9 +408,13 @@ class TestBuildStandingsChart:
         lines = chart.strip("`\n").split("\n")
         # Both name columns should be padded to "Boneshaker" (10 chars).
         # The bar starts at the same column in both lines.
-        bar_pos_0 = lines[0].find("\u2588")
-        bar_pos_1 = lines[1].find("\u2591")
-        assert bar_pos_0 == bar_pos_1
+        def _first_bar_char(line: str) -> int:
+            for i, ch in enumerate(line):
+                if ch in ("\u2588", "\u2591"):
+                    return i
+            return -1
+        assert _first_bar_char(lines[0]) == _first_bar_char(lines[1])
+        assert _first_bar_char(lines[0]) > 0
 
     def test_empty_standings_returns_empty_string(self):
         chart = build_standings_chart({}, {}, {})

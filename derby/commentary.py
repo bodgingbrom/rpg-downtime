@@ -236,11 +236,14 @@ def build_standings_chart(
 ) -> str:
     """Render a live-standings bar chart for one segment's standings.
 
-    Each racer's bar length is normalized to the current **gap** between
-    leader and last place — not to absolute score — so dominant leads
-    look dominant and photo finishes look close. Returns a pre-formatted
-    multiline string wrapped in ``` fences, ready to drop into an embed
-    field value.
+    Each racer's bar length is the fraction of the leader's cumulative
+    score — leader always fills, others proportional. This makes the
+    chart visibly respond as racers close or widen gaps: when a
+    trailing racer catches up, their bar grows; when the leader pulls
+    further ahead, trailing bars shrink.
+
+    Returns a pre-formatted multiline string wrapped in ``` fences,
+    ready to drop into an embed field value.
 
     ``standings`` is the ``SegmentResult.standings`` tuple list:
     ``(racer_id, seg_score, cumulative)`` sorted desc by cumulative.
@@ -252,8 +255,6 @@ def build_standings_chart(
         return ""
 
     leader_cum = standings[0][2]
-    last_cum = standings[-1][2]
-    spread = leader_cum - last_cum
 
     # Pad name column to the longest name in this race for monospace alignment
     max_name_len = max(
@@ -263,11 +264,12 @@ def build_standings_chart(
 
     lines: list[str] = []
     for rid, _seg_score, cumulative in standings:
-        if spread > 0:
-            relative = (cumulative - last_cum) / spread
+        if leader_cum > 0:
+            relative = cumulative / leader_cum
         else:
-            # All racers tied (edge case, e.g. segment 0 rolls identical):
-            # show everyone at a full bar rather than everyone empty.
+            # Edge case: all racers at 0 cumulative (e.g. negative scores
+            # or opening before any segment). Show everyone at a full bar
+            # rather than dividing by zero.
             relative = 1.0
 
         filled = round(relative * bar_width)
