@@ -889,6 +889,68 @@ async def test_expire_pool_racers(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_expire_pool_racers_defers_racer_in_pending_race(tmp_path: Path) -> None:
+    """An expired pool racer that's already entered in an unfinished race
+    must NOT be deleted — otherwise the race starts with missing racers
+    and players see 'Racer <id>' placeholder names."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    past = datetime.utcnow() - timedelta(hours=1)
+
+    async with scheduler.sessionmaker() as session:
+        # Expired pool racer — eligible for deletion by time, but…
+        racer_in_race = await repo.create_racer(
+            session, name="InRace", owner_id=0, guild_id=GUILD_ID,
+            pool_expires_at=past,
+        )
+        # …they're entered in a pending race, so must survive this sweep.
+        pending_race = await repo.create_race(
+            session, guild_id=GUILD_ID, finished=False,
+        )
+        await repo.create_race_entries(
+            session, pending_race.id, [racer_in_race.id],
+        )
+        # Another expired pool racer not in any race — should still be deleted.
+        racer_free = await repo.create_racer(
+            session, name="FreeToDie", owner_id=0, guild_id=GUILD_ID,
+            pool_expires_at=past,
+        )
+
+    deleted = await scheduler._expire_pool_racers(GUILD_ID)
+    assert deleted == 1
+
+    async with scheduler.sessionmaker() as session:
+        # Reserved-by-race racer survives
+        assert await repo.get_racer(session, racer_in_race.id) is not None
+        # Non-reserved expired racer got deleted
+        assert await repo.get_racer(session, racer_free.id) is None
+
+    # After the race finishes, the next sweep should reap the deferred racer
+    async with scheduler.sessionmaker() as session:
+        await repo.update_race(session, pending_race.id, finished=True)
+
+    deleted_after = await scheduler._expire_pool_racers(GUILD_ID)
+    assert deleted_after == 1
+    async with scheduler.sessionmaker() as session:
+        assert await repo.get_racer(session, racer_in_race.id) is None
+
+
+@pytest.mark.asyncio
 async def test_replenish_replaces_expired(tmp_path: Path) -> None:
     """After expiry, replenish fills the gap back to min_pool_size."""
     db_path = tmp_path / "db.sqlite"

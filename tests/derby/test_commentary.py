@@ -218,3 +218,44 @@ class TestGenerateCommentary:
         assert out is None
 
         mod._client = None  # cleanup
+
+    @pytest.mark.asyncio
+    async def test_logs_warning_when_llm_hits_max_tokens(self, caplog):
+        """If the LLM stops because of max_tokens, log a warning so prod
+        can tell when the final paragraph is likely clipped."""
+        fake_response = MagicMock()
+        fake_response.content = [MagicMock(text="Good paragraph.\n\nAnother one.\n\nFinal, cut off mid-se")]
+        fake_response.stop_reason = "max_tokens"
+        fake_client = MagicMock()
+        fake_client.messages.create.return_value = fake_response
+
+        import derby.commentary as mod
+        mod._client = fake_client
+
+        with caplog.at_level("WARNING", logger="discord_bot"):
+            out = await generate_commentary(_make_result())
+            assert out is not None  # still returns what it got
+            assert any(
+                "max_tokens" in rec.message.lower() for rec in caplog.records
+            )
+        mod._client = None  # cleanup
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_llm_stops_naturally(self, caplog):
+        """Normal end_turn stop_reason should NOT trigger the warning."""
+        fake_response = MagicMock()
+        fake_response.content = [MagicMock(text="P1.\n\nP2.\n\nFinale!")]
+        fake_response.stop_reason = "end_turn"
+        fake_client = MagicMock()
+        fake_client.messages.create.return_value = fake_response
+
+        import derby.commentary as mod
+        mod._client = fake_client
+
+        with caplog.at_level("WARNING", logger="discord_bot"):
+            out = await generate_commentary(_make_result())
+            assert out is not None
+            assert not any(
+                "max_tokens" in rec.message.lower() for rec in caplog.records
+            )
+        mod._client = None  # cleanup

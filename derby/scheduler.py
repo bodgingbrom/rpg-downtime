@@ -1318,8 +1318,27 @@ class DerbyScheduler:
         return "\n".join(lines)
 
     async def _expire_pool_racers(self, guild_id: int) -> int:
-        """Delete unowned pool racers whose expiry time has passed."""
+        """Delete unowned pool racers whose expiry time has passed.
+
+        Skips any racer currently entered in a pending (unfinished) race —
+        otherwise the race starts with a shrunken field and bettors see
+        "Racer 528"-style placeholder names because the Racer row got
+        reaped between race creation and execution. Expired-but-in-race
+        racers will be cleaned up on the next sweep after their race
+        finishes.
+        """
         async with self.sessionmaker() as session:
+            # Racer IDs currently entered in any unfinished race in this guild
+            in_pending = await session.execute(
+                select(models.RaceEntry.racer_id)
+                .join(models.Race, models.RaceEntry.race_id == models.Race.id)
+                .where(
+                    models.Race.guild_id == guild_id,
+                    models.Race.finished.is_(False),
+                )
+            )
+            reserved_ids = {row[0] for row in in_pending.all()}
+
             result = await session.execute(
                 select(models.Racer).where(
                     models.Racer.guild_id == guild_id,
@@ -1327,14 +1346,16 @@ class DerbyScheduler:
                     models.Racer.pool_expires_at <= func.now(),
                 )
             )
-            expired = result.scalars().all()
+            candidates = result.scalars().all()
+            expired = [r for r in candidates if r.id not in reserved_ids]
+            deferred = len(candidates) - len(expired)
             for racer in expired:
                 await session.delete(racer)
-            if expired:
+            if expired or deferred:
                 await session.commit()
                 self.bot.logger.info(
-                    "Expired %d pool racers",
-                    len(expired),
+                    "Expired %d pool racers (deferred %d still in pending races)",
+                    len(expired), deferred,
                     extra={"guild_id": guild_id},
                 )
         return len(expired)
