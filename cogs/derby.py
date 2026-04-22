@@ -2198,7 +2198,7 @@ class Derby(commands.Cog, name="derby"):
         description="Run a test race with unowned racers only — no side effects (admin)",
     )
     @app_commands.describe(
-        count="Number of test races to run (1-20, default 1)",
+        count="Number of test races to run (1-30, default 1)",
         silent="If True, skip commentary/results embeds — fast for padding analytics",
         public="If True, post race output to the configured derby channel (users will see it)",
     )
@@ -2210,7 +2210,7 @@ class Derby(commands.Cog, name="derby"):
         public: bool = False,
     ) -> None:
         await context.defer(ephemeral=True)
-        count = max(1, min(20, count))
+        count = max(1, min(30, count))
         guild_id = context.guild.id if context.guild else 0
 
         if count > 1 and not silent:
@@ -2235,13 +2235,36 @@ class Derby(commands.Cog, name="derby"):
         else:
             channel_override = context.channel
 
+        # Build a shuffled map rotation for balanced coverage. With 15
+        # maps and count=30 each map gets hit exactly twice; for any
+        # smaller count each map is hit at most once. When count exceeds
+        # the number of maps we reshuffle for the next cycle so repeats
+        # don't clump.
+        all_maps = logic.load_all_maps()
+        map_rotation: list[logic.RaceMap | None] = []
+        if all_maps:
+            remaining = count
+            while remaining > 0:
+                cycle = list(all_maps)
+                random.shuffle(cycle)
+                take = min(remaining, len(cycle))
+                map_rotation.extend(cycle[:take])
+                remaining -= take
+        else:
+            # No maps available → fall back to legacy per-race pick_map
+            # (which will return None and trigger the no-map sim path)
+            map_rotation = [None] * count
+
         ran = 0
         skipped = 0
-        for _ in range(count):
+        map_usage: dict[str, int] = {}
+        for i in range(count):
+            chosen_map = map_rotation[i] if i < len(map_rotation) else None
             try:
                 race_id, _placements = await self.bot.scheduler.run_test_race(
                     guild_id, silent=silent,
                     channel_override=channel_override,
+                    race_map=chosen_map,
                 )
             except Exception:
                 self.bot.logger.exception("Test race failed")
@@ -2251,16 +2274,26 @@ class Derby(commands.Cog, name="derby"):
                 skipped += 1
             else:
                 ran += 1
+                if chosen_map:
+                    map_usage[chosen_map.name] = (
+                        map_usage.get(chosen_map.name, 0) + 1
+                    )
 
         summary_lines = [f"Ran **{ran}/{count}** test races."]
         if skipped:
             summary_lines.append(
-                f"\u26a0\ufe0f Skipped {skipped} — not enough eligible unowned racers."
+                f"\u26a0\ufe0f Skipped {skipped} \u2014 not enough eligible unowned racers."
             )
         if silent and ran:
             summary_lines.append(
                 "*(Silent mode: no commentary posted. Proc logs persisted.)*"
             )
+        if map_usage:
+            # Show per-map counts so the admin can verify balanced coverage.
+            usage_lines = ", ".join(
+                f"{name} \u00d7{n}" for name, n in sorted(map_usage.items())
+            )
+            summary_lines.append(f"\n**Maps used:** {usage_lines}")
         embed = discord.Embed(
             title="Test Races Complete",
             description="\n".join(summary_lines),

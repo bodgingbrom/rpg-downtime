@@ -681,6 +681,7 @@ class DerbyScheduler:
         guild_id: int,
         silent: bool = False,
         channel_override: "discord.abc.Messageable | None" = None,
+        race_map: "logic.RaceMap | None" = None,
     ) -> tuple[int | None, list[int]]:
         """Run a one-off test race using only unowned racers.
 
@@ -693,6 +694,10 @@ class DerbyScheduler:
         are posted there instead of the configured derby channel — lets
         admins run test races in a private channel without spamming
         players.
+
+        When ``race_map`` is supplied, that specific map is used instead
+        of a random pick — enables shuffled map rotation from the admin
+        command for balanced coverage across test runs.
 
         Does NOT apply any race-completion side effects: no bet
         resolution, no injuries, no retirements, no mood drift, no
@@ -728,7 +733,10 @@ class DerbyScheduler:
         if participants is None:
             return None, []
 
-        race_map = logic.pick_map()
+        # Use the caller-provided map if given (for balanced rotation),
+        # otherwise random-pick as before.
+        if race_map is None:
+            race_map = logic.pick_map()
         async with self.sessionmaker() as session:
             race = await repo.create_race(
                 session,
