@@ -37,7 +37,11 @@ def _get_client():
 
 
 MODEL = os.getenv("COMMENTARY_MODEL", "claude-haiku-4-5")
-MAX_TOKENS = 1024
+# ~800 words (the system-prompt target) is ~1050 tokens, so 1024 left
+# zero headroom — verbose races with ability procs hit max_tokens
+# mid-winner-announcement and the final paragraph came back clipped.
+# 2048 gives ~1500-word headroom, plenty for any realistic race.
+MAX_TOKENS = 2048
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +155,21 @@ async def generate_commentary(result: RaceResult) -> list[str] | None:
             messages=[{"role": "user", "content": user_prompt}],
         )
         raw_text = response.content[0].text
+        stop_reason = getattr(response, "stop_reason", None)
+
+        # Detect LLM-side truncation — the final paragraph (winner
+        # announcement) is almost certainly incomplete if stop_reason
+        # is "max_tokens". Loud warning so we see it in prod logs and
+        # can bump MAX_TOKENS again if needed.
+        if stop_reason == "max_tokens":
+            logger.warning(
+                "LLM commentary hit max_tokens — final paragraph likely clipped",
+                extra={
+                    "segments": len(result.segments),
+                    "max_tokens": MAX_TOKENS,
+                    "model": MODEL,
+                },
+            )
 
         # Split into paragraphs — each becomes a commentary message
         paragraphs = [p.strip() for p in raw_text.split("\n\n") if p.strip()]
@@ -164,6 +183,7 @@ async def generate_commentary(result: RaceResult) -> list[str] | None:
             extra={
                 "segments": len(result.segments),
                 "paragraphs": len(paragraphs),
+                "stop_reason": stop_reason,
                 "model": MODEL,
             },
         )
