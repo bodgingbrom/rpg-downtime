@@ -1322,14 +1322,31 @@ def simulate_race(
                     sig_key, quirk_key, names.get(rid, f"Racer {rid}"), ctx, rng,
                 )
                 for proc in procs:
-                    # Apply effect
+                    # Apply the effect and note whether it actually
+                    # changed racer state. Some effects are no-ops in
+                    # the current context (e.g. segment_ramp with value
+                    # 0 at mid-race phase for Hot Start / Slow Starter,
+                    # or stumble_save firing when the racer isn't
+                    # actually stumbling). A no-op proc shouldn't
+                    # surface in commentary (pointless narration) OR
+                    # analytics (inflates proc rate with non-events) OR
+                    # burn a once_per_race charge.
                     kind = proc.effect.get("kind")
+                    effect_applied = False
                     if kind in ("score_bonus", "segment_ramp"):
-                        seg_scores[rid] = _abilities_mod.apply_score_effect(
+                        new_score = _abilities_mod.apply_score_effect(
                             proc.effect, seg_scores[rid], ctx.segment_phase,
                         )
+                        if new_score != seg_scores[rid]:
+                            seg_scores[rid] = new_score
+                            effect_applied = True
                     elif kind == "stumble_save" and noise_rolls[rid] < 0.65:
                         noise_rolls[rid] = 0.75  # clamp: no longer a stumble
+                        effect_applied = True
+
+                    if not effect_applied:
+                        continue
+
                     # Track proc
                     if proc.ability.trigger.get("once_per_race"):
                         once_per_race_fired[rid].add(proc.ability.key)
