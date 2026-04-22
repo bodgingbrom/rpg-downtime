@@ -829,6 +829,7 @@ class DerbyScheduler:
             await self._post_results(
                 guild_id, result.placements, result.racer_names,
                 channel_override=channel_override,
+                final_chart=charts[-1] if charts else None,
             )
 
         return race.id, result.placements
@@ -1691,7 +1692,10 @@ class DerbyScheduler:
             guild_settings=gs,
             charts=charts,
         )
-        await self._post_results(guild_id, result.placements, names)
+        await self._post_results(
+            guild_id, result.placements, names,
+            final_chart=charts[-1] if charts else None,
+        )
         await self._announce_bet_results(
             guild_id, bet_results, names
         )
@@ -1720,6 +1724,7 @@ class DerbyScheduler:
         placements: list[int],
         names: dict[int, str] | None = None,
         channel_override: "discord.abc.Messageable | None" = None,
+        final_chart: str | None = None,
     ) -> None:
         if channel_override is not None:
             channel = channel_override
@@ -1765,6 +1770,16 @@ class DerbyScheduler:
             value=f"**{winner_name}**",
             inline=False,
         )
+
+        # Final standings bar chart — lives here now instead of on the
+        # last commentary edit, so the end-of-race info is consolidated
+        # into a single message rather than duplicated across two.
+        if final_chart:
+            embed.add_field(
+                name="Final Standings",
+                value=final_chart,
+                inline=False,
+            )
 
         # NPC trainer reactions
         npc_reactions = await self._get_npc_reactions(placements)
@@ -2074,20 +2089,24 @@ class DerbyScheduler:
             # from description, so rollover math above doesn't need to juggle
             # chart size). Clamp to the last-known chart if the paragraph
             # stream is longer than the chart list (template fallback can
-            # produce multiple paragraphs per segment). On the final beat
-            # the title flips to "Final Standings" to punctuate the result.
+            # produce multiple paragraphs per segment).
             #
             # Shift chart indexing by 1: paragraph 0 narrates the opening
             # (starting gun), so we don't want a chart yet — it would show
             # segment-0's end-state alongside "they're off!" and feel like
             # the race is already decided. Paragraph 1 narrates segment 1,
             # so it gets charts[0] (the end-of-segment-0 standings), etc.
-            attaching_chart = bool(charts) and i > 0
+            #
+            # The final paragraph (is_last) also skips the chart: the
+            # winner narration lives here, but the Final Standings chart
+            # is rendered in the subsequent "Race Complete!" embed so
+            # end-of-race info is consolidated into a single final
+            # message rather than duplicated across two.
+            attaching_chart = bool(charts) and i > 0 and not is_last
             if attaching_chart:
                 chart_idx = min(i - 1, len(charts) - 1)
-                field_name = "Final Standings" if is_last else "Current Standings"
                 embed.add_field(
-                    name=field_name,
+                    name="Current Standings",
                     value=charts[chart_idx],
                     inline=False,
                 )

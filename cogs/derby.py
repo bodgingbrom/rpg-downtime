@@ -2183,7 +2183,8 @@ class Derby(commands.Cog, name="derby"):
 
             # --- Post results ---
             await self.bot.scheduler._post_results(
-                context.guild.id, result.placements, names
+                context.guild.id, result.placements, names,
+                final_chart=charts[-1] if charts else None,
             )
 
             # --- Announce injuries ---

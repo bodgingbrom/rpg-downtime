@@ -622,7 +622,7 @@ async def test_race_force_start(tmp_path: Path) -> None:
     async def fake_stream(race_id, guild_id, log, **kwargs):
         streamed.append(log)
 
-    async def fake_post(guild_id, placements, names=None):
+    async def fake_post(guild_id, placements, names=None, **kwargs):
         posted.append(placements)
 
     async def noop(*args, **kwargs):
