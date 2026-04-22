@@ -32,12 +32,17 @@ class DummyMessage:
         elif content is not None:
             self.content = content
         self.channel.messages.append(self.content)
+        if embed is not None:
+            self.channel.sent_embeds.append(embed)
 
 
 class DummyChannel:
     def __init__(self, name: str = "general") -> None:
         self.name = name
         self.messages: list[str] = []
+        # Parallel list of the actual Embed objects for tests that need
+        # to inspect fields, colors, etc. (messages is description-only).
+        self.sent_embeds: list[discord.Embed] = []
 
     async def send(
         self, content: str | None = None, *, embed: discord.Embed | None = None,
@@ -49,6 +54,8 @@ class DummyChannel:
         elif content is not None:
             text = content
         self.messages.append(text)
+        if embed is not None:
+            self.sent_embeds.append(embed)
         return DummyMessage(self, text)
 
 
@@ -227,6 +234,149 @@ async def test_stream_commentary(tmp_path: Path) -> None:
         "E1\n\nE2",
         "E1\n\nE2\n\nE3",
     ]
+    # No charts passed → no "Current Standings" field on any embed (back-compat)
+    for embed in guild.system_channel.sent_embeds:
+        assert not any(f.name == "Current Standings" for f in embed.fields)
+
+
+@pytest.mark.asyncio
+async def test_stream_commentary_renders_standings_field_when_charts_passed(
+    tmp_path: Path,
+) -> None:
+    """When charts are provided, every embed update attaches a
+    'Current Standings' field with the correct per-event chart content."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=guild.id)
+
+    events = ["E1", "E2", "E3"]
+    charts = ["CHART_A", "CHART_B", "CHART_C"]
+    await scheduler._stream_commentary(
+        race.id, guild.id, events, delay=0, charts=charts,
+    )
+    embeds = guild.system_channel.sent_embeds
+    assert len(embeds) == 3
+    # Iter 0 (starting gun) has NO chart so the race feels like it's just
+    # beginning when the commentary starts.
+    assert len(embeds[0].fields) == 0
+    # Iter 1 shows charts[0] (end-of-segment-0 standings) with "Current"
+    assert embeds[1].fields[0].name == "Current Standings"
+    assert embeds[1].fields[0].value == charts[0]
+    # Iter 2 is the last — shows charts[1] with "Final Standings"
+    assert embeds[2].fields[0].name == "Final Standings"
+    assert embeds[2].fields[0].value == charts[1]
+
+
+@pytest.mark.asyncio
+async def test_stream_commentary_clamps_chart_index_when_log_longer(
+    tmp_path: Path,
+) -> None:
+    """If the log has more paragraphs than charts (template fallback
+    case), trailing paragraphs should re-use the last chart."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=guild.id)
+
+    events = ["E1", "E2", "E3", "E4", "E5"]
+    charts = ["CHART_A", "CHART_B"]  # fewer charts than events
+    await scheduler._stream_commentary(
+        race.id, guild.id, events, delay=0, charts=charts,
+    )
+    embeds = guild.system_channel.sent_embeds
+    # iter 0: no chart. iter 1: chart[0]. iter 2: chart[1]. iter 3: chart[1]
+    # (clamped). iter 4: chart[1] (clamped, last, Final Standings title).
+    assert len(embeds[0].fields) == 0
+    assert embeds[1].fields[0].value == "CHART_A"
+    assert embeds[2].fields[0].value == "CHART_B"
+    assert embeds[3].fields[0].value == "CHART_B"
+    assert embeds[4].fields[0].value == "CHART_B"
+    assert embeds[4].fields[0].name == "Final Standings"
+
+
+@pytest.mark.asyncio
+async def test_stream_commentary_strips_chart_from_old_msg_on_rollover(
+    tmp_path: Path,
+) -> None:
+    """When rollover triggers, the OUTGOING message gets re-edited with
+    NO standings field (stale chart removed). The new message carries
+    the fresh chart — so only one standings field is visible at a time
+    across the whole conversation."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+    async with scheduler.sessionmaker() as session:
+        race = await repo.create_race(session, guild_id=guild.id)
+
+    # Three long events — rollover between each pair (projected > 3800)
+    big = "A" * 2000
+    events = [big, big, big]
+    charts = ["CHART_A", "CHART_B", "CHART_C"]
+    await scheduler._stream_commentary(
+        race.id, guild.id, events, delay=0, charts=charts,
+    )
+
+    embeds = guild.system_channel.sent_embeds
+    # With chart-shift (no chart on iter 0) and rollover on every iter:
+    #   iter 0: send msg1, desc=e0, NO chart (i==0) → 0 fields
+    #   iter 1: projected > 3800 → rollover.
+    #           - msg1 has no chart so we SKIP the redundant strip-edit
+    #           - send msg2, desc=e1, chart=CHART_A (Current) → 1 field
+    #   iter 2: projected > 3800 → rollover.
+    #           - msg2 HAS a chart → edit msg2 to strip it (0 fields)
+    #           - send msg3, desc=e2, chart=CHART_B (Final) → 1 field
+    # So embeds captured: [msg1-send, msg2-send, msg2-strip-edit, msg3-send].
+    field_counts = [len(e.fields) for e in embeds]
+    # Two live messages with a chart (msg2 send, msg3 send)
+    assert field_counts.count(1) == 2
+    # Two without (iter-0 send, msg2 strip)
+    assert field_counts.count(0) == 2
+    # The last embed (msg3 send) should say "Final Standings"
+    final_fields = [f for f in embeds[-1].fields]
+    assert len(final_fields) == 1
+    assert final_fields[0].name == "Final Standings"
 
 
 @pytest.mark.asyncio

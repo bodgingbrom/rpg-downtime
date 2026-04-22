@@ -2159,10 +2159,26 @@ class Derby(commands.Cog, name="derby"):
         if log is None:
             log = commentary.build_template_commentary(result)
 
+        # Pre-compute per-segment standings charts when enabled.
+        charts: list[str] | None = None
+        if resolve_guild_setting(
+            gs, self.bot.settings, "live_standings_chart",
+        ) and result.segments:
+            color_map = abilities.assign_race_colors(
+                [r.id for r in participants]
+            )
+            charts = [
+                commentary.build_standings_chart(
+                    seg.standings, result.racer_names, color_map,
+                )
+                for seg in result.segments
+            ]
+            charts.append(charts[-1])  # winner paragraph reuses final
+
         # --- Stream commentary ---
         try:
             await self.bot.scheduler._stream_commentary(
-                race.id, context.guild.id, log
+                race.id, context.guild.id, log, charts=charts,
             )
 
             # --- Post results ---
@@ -2701,6 +2717,7 @@ class Derby(commands.Cog, name="derby"):
         "brewing_channel",
         "fishing_channel",
         "dungeon_channel",
+        "live_standings_chart",
     ]
 
     @derby_group.group(name="settings", description="Per-guild setting overrides")
@@ -2765,7 +2782,20 @@ class Derby(commands.Cog, name="derby"):
             # Parse value to the correct type
             try:
                 if key in ("channel_name", "placement_prizes", "stable_upgrade_costs", "racer_flavor", "racer_emoji"):
-                    parsed: str | int | float = value
+                    parsed: str | int | float | bool = value
+                elif key in ("live_standings_chart",):
+                    lowered = value.strip().lower()
+                    if lowered in ("true", "yes", "on", "1"):
+                        parsed = True
+                    elif lowered in ("false", "no", "off", "0"):
+                        parsed = False
+                    else:
+                        await context.send(
+                            f"Invalid value for `{key}`: expected "
+                            "true/false (or on/off, yes/no, 1/0).",
+                            ephemeral=True,
+                        )
+                        return
                 elif key in (
                     "commentary_delay",
                     "racer_sell_fraction",

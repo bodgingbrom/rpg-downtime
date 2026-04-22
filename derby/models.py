@@ -142,6 +142,9 @@ class GuildSettings(Base):
     daily_max: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     racer_emoji: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     max_trains_per_race: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Live per-segment standings bar chart rendered alongside commentary.
+    # Nullable → use global default; explicit False turns it off per-guild.
+    live_standings_chart: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
 
     # Fishing
     fishing_bait_costs: Mapped[str | None] = mapped_column(String, nullable=True, default=None)

@@ -428,6 +428,10 @@ class DerbyScheduler:
                 "brewing_channel": ("TEXT", "NULL"),
                 "fishing_channel": ("TEXT", "NULL"),
                 "dungeon_channel": ("TEXT", "NULL"),
+                # NULL = "inherit global default" (matches the rest of this
+                # table's override-semantics pattern). Default is True in
+                # config.Settings.live_standings_chart.
+                "live_standings_chart": ("BOOLEAN", "NULL"),
                 # Fishing (Lazy Lures)
                 "fishing_bait_costs": ("TEXT", "NULL"),
                 "fishing_cast_multiplier": ("REAL", "NULL"),
@@ -803,11 +807,24 @@ class DerbyScheduler:
             log = await commentary.generate_commentary(result)
             if log is None:
                 log = commentary.build_template_commentary(result)
+
+            # Pre-compute per-segment standings charts when enabled.
+            charts: list[str] | None = None
+            if self._resolve("live_standings_chart", gs) and result.segments:
+                charts = [
+                    commentary.build_standings_chart(
+                        seg.standings, result.racer_names, color_map,
+                    )
+                    for seg in result.segments
+                ]
+                charts.append(charts[-1])  # winner paragraph reuses final
+
             await self._stream_commentary(
                 race.id, guild_id, log,
                 delay=self._resolve("commentary_delay", gs),
                 guild_settings=gs,
                 channel_override=channel_override,
+                charts=charts,
             )
             await self._post_results(
                 guild_id, result.placements, result.racer_names,
@@ -1654,10 +1671,25 @@ class DerbyScheduler:
         log = await commentary.generate_commentary(result)
         if log is None:
             log = commentary.build_template_commentary(result)
+
+        # Pre-compute per-segment standings charts when enabled. One chart
+        # per segment plus a final chart for the winner paragraph (same as
+        # the last segment's standings).
+        charts: list[str] | None = None
+        if self._resolve("live_standings_chart", gs) and result.segments:
+            charts = [
+                commentary.build_standings_chart(
+                    seg.standings, result.racer_names, color_map,
+                )
+                for seg in result.segments
+            ]
+            charts.append(charts[-1])  # winner paragraph shares final standings
+
         await self._stream_commentary(
             race_id, guild_id, log,
             delay=self._resolve("commentary_delay", gs),
             guild_settings=gs,
+            charts=charts,
         )
         await self._post_results(guild_id, result.placements, names)
         await self._announce_bet_results(
@@ -1974,6 +2006,7 @@ class DerbyScheduler:
         self, race_id: int, guild_id: int, log: list[str], delay: float = 6.0,
         guild_settings: models.GuildSettings | None = None,
         channel_override: "discord.abc.Messageable | None" = None,
+        charts: list[str] | None = None,
     ) -> None:
         if channel_override is not None:
             channel = channel_override
@@ -1995,6 +2028,10 @@ class DerbyScheduler:
 
         current_message: discord.Message | None = None
         current_lines: list[str] = []
+        # Track whether current_message currently has a standings field
+        # attached, so on rollover we only issue a strip-edit when it
+        # actually has one to remove (iter 0 has no chart by design).
+        current_has_chart = False
 
         for i, event in enumerate(log):
             is_last = i == len(log) - 1
@@ -2008,12 +2045,23 @@ class DerbyScheduler:
             # +2 accounts for the "\n\n" separator joined between events.
             projected = "\n\n".join(current_lines + [event])
             if current_lines and len(projected) > MAX_DESC_CHARS:
-                # Flush: leave the current message as-is (mid-race, so it
-                # stays green — it represents an early portion of the
-                # race and the reader still has context). Start a fresh
-                # message for this event + anything that follows.
+                # Flush: leave the current message's commentary as-is,
+                # but strip the standings field off it — the new message
+                # will carry the fresh chart, and two messages showing
+                # standings side-by-side is visually redundant (the old
+                # one's chart is stale anyway).
+                if current_message is not None and current_has_chart:
+                    try:
+                        stripped = discord.Embed(
+                            description="\n\n".join(current_lines),
+                            color=0x2ECC71,
+                        )
+                        await current_message.edit(embed=stripped)
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass  # Non-fatal: stale chart stays on old msg
                 current_message = None
                 current_lines = [event]
+                current_has_chart = False
             else:
                 current_lines.append(event)
 
@@ -2022,6 +2070,28 @@ class DerbyScheduler:
                 color=0xF1C40F if is_last else 0x2ECC71,
             )
 
+            # Live standings bar chart — attached as an embed field (separate
+            # from description, so rollover math above doesn't need to juggle
+            # chart size). Clamp to the last-known chart if the paragraph
+            # stream is longer than the chart list (template fallback can
+            # produce multiple paragraphs per segment). On the final beat
+            # the title flips to "Final Standings" to punctuate the result.
+            #
+            # Shift chart indexing by 1: paragraph 0 narrates the opening
+            # (starting gun), so we don't want a chart yet — it would show
+            # segment-0's end-state alongside "they're off!" and feel like
+            # the race is already decided. Paragraph 1 narrates segment 1,
+            # so it gets charts[0] (the end-of-segment-0 standings), etc.
+            attaching_chart = bool(charts) and i > 0
+            if attaching_chart:
+                chart_idx = min(i - 1, len(charts) - 1)
+                field_name = "Final Standings" if is_last else "Current Standings"
+                embed.add_field(
+                    name=field_name,
+                    value=charts[chart_idx],
+                    inline=False,
+                )
+
             try:
                 if current_message is None:
                     current_message = await channel.send(embed=embed)
@@ -2029,6 +2099,8 @@ class DerbyScheduler:
                     await current_message.edit(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
                 return
+
+            current_has_chart = attaching_chart
 
             if not is_last:
                 await asyncio.sleep(delay)

@@ -217,3 +217,69 @@ def build_template_commentary(result: RaceResult) -> list[str]:
         )
         log.append(f"Standings: {standing_lines}")
     return log
+
+
+# ---------------------------------------------------------------------------
+# Live standings bar chart (rendered alongside commentary)
+# ---------------------------------------------------------------------------
+
+
+_BAR_FILLED = "\u2588"  # █
+_BAR_EMPTY = "\u2591"   # ░
+
+
+def build_standings_chart(
+    standings: list[tuple[int, float, float]],
+    racer_names: dict[int, str],
+    color_map: dict[int, str],
+    bar_width: int = 20,
+) -> str:
+    """Render a live-standings bar chart for one segment's standings.
+
+    Each racer's bar length is the fraction of the leader's cumulative
+    score — leader always fills, others proportional. This makes the
+    chart visibly respond as racers close or widen gaps: when a
+    trailing racer catches up, their bar grows; when the leader pulls
+    further ahead, trailing bars shrink.
+
+    Returns a pre-formatted multiline string wrapped in ``` fences,
+    ready to drop into an embed field value.
+
+    ``standings`` is the ``SegmentResult.standings`` tuple list:
+    ``(racer_id, seg_score, cumulative)`` sorted desc by cumulative.
+    ``color_map`` maps racer_id → color emoji (from
+    ``abilities.assign_race_colors``). ``bar_width`` is the number of
+    cells in the bar (default 20 — each cell = 5% of leader, so racers
+    with similar scores still render with visibly different bar lengths).
+    """
+    if not standings:
+        return ""
+
+    leader_cum = standings[0][2]
+
+    # Pad name column to the longest name in this race for monospace alignment
+    max_name_len = max(
+        len(racer_names.get(rid, f"Racer {rid}"))
+        for rid, _, _ in standings
+    )
+
+    lines: list[str] = []
+    for rid, _seg_score, cumulative in standings:
+        if leader_cum > 0:
+            relative = cumulative / leader_cum
+        else:
+            # Edge case: all racers at 0 cumulative (e.g. negative scores
+            # or opening before any segment). Show everyone at a full bar
+            # rather than dividing by zero.
+            relative = 1.0
+
+        filled = round(relative * bar_width)
+        filled = max(0, min(bar_width, filled))
+        bar = _BAR_FILLED * filled + _BAR_EMPTY * (bar_width - filled)
+
+        color = color_map.get(rid, "")
+        name = racer_names.get(rid, f"Racer {rid}").ljust(max_name_len)
+        prefix = f"{color} " if color else ""
+        lines.append(f"{prefix}{name}  {bar}")
+
+    return "```\n" + "\n".join(lines) + "\n```"

@@ -9,6 +9,7 @@ import pytest
 from derby.commentary import (
     SYSTEM_PROMPT,
     _build_prompt,
+    build_standings_chart,
     build_template_commentary,
     generate_commentary,
 )
@@ -259,3 +260,186 @@ class TestGenerateCommentary:
                 "max_tokens" in rec.message.lower() for rec in caplog.records
             )
         mod._client = None  # cleanup
+
+
+# ---------------------------------------------------------------------------
+# Live standings bar chart
+# ---------------------------------------------------------------------------
+
+
+class TestBuildStandingsChart:
+    """Unit tests for the live per-segment bar chart helper."""
+
+    def _standings(self, cums: list[float]) -> list[tuple[int, float, float]]:
+        """Build a standings list from a list of cumulative scores.
+
+        The racer_id is just the index, seg_score is unused (set to 0).
+        Returned already sorted desc by cumulative, as simulate_race
+        produces.
+        """
+        return [
+            (i + 1, 0.0, c)
+            for i, c in enumerate(cums)
+        ]
+
+    def _names(self, count: int) -> dict[int, str]:
+        pool = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"]
+        return {i + 1: pool[i] for i in range(count)}
+
+    def _colors(self, count: int) -> dict[int, str]:
+        palette = ["\U0001f7e5", "\U0001f7e6", "\U0001f7e9",
+                   "\U0001f7e8", "\U0001f7ea", "\U0001f7e7"]
+        return {i + 1: palette[i] for i in range(count)}
+
+    def test_returns_code_block(self):
+        """Result is a ``` ... ``` wrapped string."""
+        chart = build_standings_chart(
+            self._standings([100.0, 80.0, 60.0]),
+            self._names(3), self._colors(3),
+        )
+        assert chart.startswith("```")
+        assert chart.rstrip().endswith("```")
+
+    def test_leader_gets_full_bar(self):
+        """Leader always fills the bar; trailing racers get their
+        fraction of the leader's cumulative score."""
+        chart = build_standings_chart(
+            self._standings([100.0, 80.0, 60.0, 40.0, 20.0]),
+            self._names(5), self._colors(5),
+            bar_width=10,
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Leader (id=1, Alpha) = 100 = 100/100 = all 10 filled
+        assert "\u2588" * 10 in lines[0]
+        # Last (id=5, Echo) = 20 = 20/100 = 2 filled (not empty!)
+        assert lines[-1].count("\u2588") == 2
+
+    def test_bar_is_leader_relative_fraction(self):
+        """Bar length = round(cum / leader_cum * width)."""
+        # cums: 100, 85, 70, 50, 30 → leader=100
+        # relatives: 1.0, 0.85, 0.70, 0.50, 0.30
+        # filled @ width=10: 10, 9 (0.85→round=8 wait rounds to even in py…)
+        # Python's round() uses banker's rounding: round(0.85*10) = round(8.5) = 8
+        # round(0.70*10)=7, round(0.50*10)=0 in banker's? No — round(5)=0
+        # Banker's rounding: round(5.0) = 4 or 6 depending on parity.
+        # round(8.5) = 8, round(5.0) = 4 (rounds to even).
+        # Let's just assert monotonic + leader=10 + roughly-right.
+        chart = build_standings_chart(
+            self._standings([100.0, 85.0, 70.0, 50.0, 30.0]),
+            self._names(5), self._colors(5),
+            bar_width=10,
+        )
+        lines = chart.strip("`\n").split("\n")
+        filled_counts = [line.count("\u2588") for line in lines]
+        # Leader is always full
+        assert filled_counts[0] == 10
+        # Each subsequent racer has fewer filled cells (or equal, but
+        # monotonic non-increasing since standings are desc by cum)
+        assert filled_counts == sorted(filled_counts, reverse=True)
+        # Last place at 30/100 = 3 filled
+        assert filled_counts[-1] == 3
+
+    def test_chart_visibly_shifts_when_gap_closes(self):
+        """Regression test for the 'chart never changes' bug: when a
+        trailing racer closes the gap to the leader over segments, their
+        bar should grow. The old (gap-normalized) formula would have
+        looked identical between these two snapshots."""
+        early = build_standings_chart(
+            self._standings([100.0, 80.0, 60.0]),
+            self._names(3), self._colors(3),
+            bar_width=10,
+        )
+        # C pulled closer, relative positions preserved but proportions
+        # differ: A=200, B=180, C=170 (C went from 60% to 85% of leader)
+        later = build_standings_chart(
+            self._standings([200.0, 180.0, 170.0]),
+            self._names(3), self._colors(3),
+            bar_width=10,
+        )
+        early_last = early.strip("`\n").split("\n")[-1]
+        later_last = later.strip("`\n").split("\n")[-1]
+        # With the OLD formula both charts would be identical. With the
+        # NEW formula, C's bar grows from 6 cells (60%) to ~9 cells (85%).
+        assert early_last.count("\u2588") < later_last.count("\u2588")
+
+    def test_all_tied_gives_everyone_full_bar(self):
+        """Edge case: leader_cum=0 shouldn't divide-by-zero."""
+        chart = build_standings_chart(
+            self._standings([0.0, 0.0, 0.0]),
+            self._names(3), self._colors(3),
+            bar_width=10,
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Everyone gets a full bar
+        for line in lines:
+            assert line.count("\u2588") == 10
+
+    def test_positive_cums_all_nonempty(self):
+        """In the leader-relative formula, any racer with cum > 0 gets
+        at least some bar (even if tiny). Only actual zero gets empty."""
+        chart = build_standings_chart(
+            self._standings([100.0, 50.0, 10.0, 0.0]),
+            self._names(4), self._colors(4),
+            bar_width=10,
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Last racer at cum=0 → 0 filled
+        assert lines[-1].count("\u2588") == 0
+        # Racer with cum=10 (10% of leader) → 1 filled
+        assert lines[2].count("\u2588") == 1
+
+    def test_includes_color_emoji_before_name(self):
+        chart = build_standings_chart(
+            self._standings([100.0, 50.0]),
+            self._names(2), self._colors(2),
+        )
+        lines = chart.strip("`\n").split("\n")
+        # "🟥 Alpha ..." — emoji precedes name
+        assert lines[0].startswith("\U0001f7e5 Alpha")
+        assert lines[1].startswith("\U0001f7e6 Bravo")
+
+    def test_names_padded_for_alignment(self):
+        """Short and long names in the same chart should align by column."""
+        names = {1: "Boneshaker", 2: "Zip"}
+        chart = build_standings_chart(
+            self._standings([100.0, 50.0]),
+            names, self._colors(2),
+        )
+        lines = chart.strip("`\n").split("\n")
+        # Both name columns should be padded to "Boneshaker" (10 chars).
+        # The bar starts at the same column in both lines.
+        def _first_bar_char(line: str) -> int:
+            for i, ch in enumerate(line):
+                if ch in ("\u2588", "\u2591"):
+                    return i
+            return -1
+        assert _first_bar_char(lines[0]) == _first_bar_char(lines[1])
+        assert _first_bar_char(lines[0]) > 0
+
+    def test_empty_standings_returns_empty_string(self):
+        chart = build_standings_chart({}, {}, {})
+        assert chart == ""
+
+    def test_missing_color_falls_back_gracefully(self):
+        """If color_map is missing an id, the row still renders (no emoji)."""
+        chart = build_standings_chart(
+            self._standings([100.0, 50.0]),
+            self._names(2),
+            {1: "\U0001f7e5"},  # only first racer has a color
+        )
+        lines = chart.strip("`\n").split("\n")
+        assert "Alpha" in lines[0]
+        assert "Bravo" in lines[1]
+        # Second line should NOT start with a color emoji
+        assert not lines[1].startswith("\U0001f7e5")
+
+    def test_custom_bar_width(self):
+        """The bar_width param controls how many cells render."""
+        chart = build_standings_chart(
+            self._standings([100.0, 0.0]),
+            self._names(2), self._colors(2),
+            bar_width=20,
+        )
+        lines = chart.strip("`\n").split("\n")
+        assert lines[0].count("\u2588") == 20
+        assert lines[1].count("\u2591") == 20
