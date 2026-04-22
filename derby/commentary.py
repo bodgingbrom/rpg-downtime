@@ -232,7 +232,7 @@ def build_standings_chart(
     standings: list[tuple[int, float, float]],
     racer_names: dict[int, str],
     color_map: dict[int, str],
-    bar_width: int = 10,
+    bar_width: int = 20,
 ) -> str:
     """Render a live-standings bar chart for one segment's standings.
 
@@ -249,7 +249,8 @@ def build_standings_chart(
     ``(racer_id, seg_score, cumulative)`` sorted desc by cumulative.
     ``color_map`` maps racer_id → color emoji (from
     ``abilities.assign_race_colors``). ``bar_width`` is the number of
-    cells in the bar (default 10).
+    cells in the bar (default 20 — each cell = 5% of leader, so racers
+    with similar scores still render with visibly different bar lengths).
     """
     if not standings:
         return ""
