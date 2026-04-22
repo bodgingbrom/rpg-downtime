@@ -269,21 +269,17 @@ async def test_stream_commentary_renders_standings_field_when_charts_passed(
     await scheduler._stream_commentary(
         race.id, guild.id, events, delay=0, charts=charts,
     )
-    # Every embed edit/send should carry a standings field with the chart
-    # string at index min(i, len(charts)-1). The last one uses the
-    # "Final Standings" title; all earlier ones use "Current Standings".
     embeds = guild.system_channel.sent_embeds
     assert len(embeds) == 3
-    for i, embed in enumerate(embeds):
-        expected_name = "Final Standings" if i == len(embeds) - 1 else "Current Standings"
-        field = next(
-            (f for f in embed.fields if f.name == expected_name), None,
-        )
-        assert field is not None, (
-            f"Embed {i} missing standings field with name {expected_name!r}; "
-            f"fields: {[(f.name, f.value) for f in embed.fields]}"
-        )
-        assert field.value == charts[i]
+    # Iter 0 (starting gun) has NO chart so the race feels like it's just
+    # beginning when the commentary starts.
+    assert len(embeds[0].fields) == 0
+    # Iter 1 shows charts[0] (end-of-segment-0 standings) with "Current"
+    assert embeds[1].fields[0].name == "Current Standings"
+    assert embeds[1].fields[0].value == charts[0]
+    # Iter 2 is the last — shows charts[1] with "Final Standings"
+    assert embeds[2].fields[0].name == "Final Standings"
+    assert embeds[2].fields[0].value == charts[1]
 
 
 @pytest.mark.asyncio
@@ -317,12 +313,14 @@ async def test_stream_commentary_clamps_chart_index_when_log_longer(
         race.id, guild.id, events, delay=0, charts=charts,
     )
     embeds = guild.system_channel.sent_embeds
-    field_values = [
-        next(f.value for f in e.fields)  # whichever standings field name
-        for e in embeds
-    ]
-    # Events 0, 1 get their own chart; events 2-4 all show CHART_B (last one)
-    assert field_values == ["CHART_A", "CHART_B", "CHART_B", "CHART_B", "CHART_B"]
+    # iter 0: no chart. iter 1: chart[0]. iter 2: chart[1]. iter 3: chart[1]
+    # (clamped). iter 4: chart[1] (clamped, last, Final Standings title).
+    assert len(embeds[0].fields) == 0
+    assert embeds[1].fields[0].value == "CHART_A"
+    assert embeds[2].fields[0].value == "CHART_B"
+    assert embeds[3].fields[0].value == "CHART_B"
+    assert embeds[4].fields[0].value == "CHART_B"
+    assert embeds[4].fields[0].name == "Final Standings"
 
 
 @pytest.mark.asyncio
@@ -352,7 +350,7 @@ async def test_stream_commentary_strips_chart_from_old_msg_on_rollover(
     async with scheduler.sessionmaker() as session:
         race = await repo.create_race(session, guild_id=guild.id)
 
-    # Three long events — rollover between e1 and e2 (projected > 3800)
+    # Three long events — rollover between each pair (projected > 3800)
     big = "A" * 2000
     events = [big, big, big]
     charts = ["CHART_A", "CHART_B", "CHART_C"]
@@ -361,26 +359,24 @@ async def test_stream_commentary_strips_chart_from_old_msg_on_rollover(
     )
 
     embeds = guild.system_channel.sent_embeds
-    # Expected sequence of embed edits/sends:
-    # 1. Send msg 1 with [e0] + CHART_A
-    # 2. Rollover before e1 would be handled at TOP of iter 1 — but e0+e1 fits
-    #    actually with big=2000, e0+2+e1 = 4002 which > 3800, so rollover.
-    # With big=2000:
-    #   iter 0: send msg1, desc=e0 (2000), field=CHART_A
-    #   iter 1: projected = 2000+2+2000 = 4002 > 3800 → rollover.
-    #           - edit msg1 to strip field (desc=e0, no field)
-    #           - send msg2 with desc=e1, field=CHART_B
-    #   iter 2: projected = 2000+2+2000 = 4002 > 3800 → rollover again.
-    #           - edit msg2 to strip field
-    #           - send msg3 with desc=e2, field=CHART_C (Final Standings)
-    # So we expect 5 embeds captured: send,edit-strip,send,edit-strip,send.
-    #
-    # Key assertion: the edits-with-no-field (indexes 1, 3) must have
-    # zero fields, and each "live" embed (0, 2, 4) must have exactly one.
+    # With chart-shift (no chart on iter 0) and rollover on every iter:
+    #   iter 0: send msg1, desc=e0, NO chart (i==0) → 0 fields
+    #   iter 1: projected > 3800 → rollover.
+    #           - msg1 has no chart so we SKIP the redundant strip-edit
+    #           - send msg2, desc=e1, chart=CHART_A (Current) → 1 field
+    #   iter 2: projected > 3800 → rollover.
+    #           - msg2 HAS a chart → edit msg2 to strip it (0 fields)
+    #           - send msg3, desc=e2, chart=CHART_B (Final) → 1 field
+    # So embeds captured: [msg1-send, msg2-send, msg2-strip-edit, msg3-send].
     field_counts = [len(e.fields) for e in embeds]
-    # At least 3 sends and 2 strips interleaved
-    assert field_counts.count(1) >= 3  # three "live" messages with charts
-    assert field_counts.count(0) >= 2  # two "stripped" edits during rollover
+    # Two live messages with a chart (msg2 send, msg3 send)
+    assert field_counts.count(1) == 2
+    # Two without (iter-0 send, msg2 strip)
+    assert field_counts.count(0) == 2
+    # The last embed (msg3 send) should say "Final Standings"
+    final_fields = [f for f in embeds[-1].fields]
+    assert len(final_fields) == 1
+    assert final_fields[0].name == "Final Standings"
 
 
 @pytest.mark.asyncio

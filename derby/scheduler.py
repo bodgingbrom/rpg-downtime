@@ -2028,6 +2028,10 @@ class DerbyScheduler:
 
         current_message: discord.Message | None = None
         current_lines: list[str] = []
+        # Track whether current_message currently has a standings field
+        # attached, so on rollover we only issue a strip-edit when it
+        # actually has one to remove (iter 0 has no chart by design).
+        current_has_chart = False
 
         for i, event in enumerate(log):
             is_last = i == len(log) - 1
@@ -2046,7 +2050,7 @@ class DerbyScheduler:
                 # will carry the fresh chart, and two messages showing
                 # standings side-by-side is visually redundant (the old
                 # one's chart is stale anyway).
-                if current_message is not None and charts:
+                if current_message is not None and current_has_chart:
                     try:
                         stripped = discord.Embed(
                             description="\n\n".join(current_lines),
@@ -2057,6 +2061,7 @@ class DerbyScheduler:
                         pass  # Non-fatal: stale chart stays on old msg
                 current_message = None
                 current_lines = [event]
+                current_has_chart = False
             else:
                 current_lines.append(event)
 
@@ -2071,8 +2076,15 @@ class DerbyScheduler:
             # stream is longer than the chart list (template fallback can
             # produce multiple paragraphs per segment). On the final beat
             # the title flips to "Final Standings" to punctuate the result.
-            if charts:
-                chart_idx = min(i, len(charts) - 1)
+            #
+            # Shift chart indexing by 1: paragraph 0 narrates the opening
+            # (starting gun), so we don't want a chart yet — it would show
+            # segment-0's end-state alongside "they're off!" and feel like
+            # the race is already decided. Paragraph 1 narrates segment 1,
+            # so it gets charts[0] (the end-of-segment-0 standings), etc.
+            attaching_chart = bool(charts) and i > 0
+            if attaching_chart:
+                chart_idx = min(i - 1, len(charts) - 1)
                 field_name = "Final Standings" if is_last else "Current Standings"
                 embed.add_field(
                     name=field_name,
@@ -2087,6 +2099,8 @@ class DerbyScheduler:
                     await current_message.edit(embed=embed)
             except (discord.Forbidden, discord.HTTPException):
                 return
+
+            current_has_chart = attaching_chart
 
             if not is_last:
                 await asyncio.sleep(delay)
