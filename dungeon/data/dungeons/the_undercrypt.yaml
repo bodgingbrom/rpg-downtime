@@ -24,8 +24,6 @@ floors:
         ai: {attack: 80, heavy: 20}
         loot:
           - {item_id: worm, chance: 25, type: cross_game_bait}
-          - {item_id: Wraith Moss, chance: 10, type: cross_game_ingredient, name: Wraith Moss}
-          - {item_id: Gloomcap, chance: 8, type: cross_game_ingredient, name: Gloomcap}
       - id: bone_rat
         name: Bone Rat
         description: "A skeletal rat held together by spite and dark magic."
@@ -38,7 +36,7 @@ floors:
         ai: {attack: 90, heavy: 10}
         loot:
           - {item_id: worm, chance: 30, type: cross_game_bait}
-          - {item_id: Echo Bone, chance: 5, type: cross_game_ingredient, name: Echo Bone}
+          - {item_id: Echo Bone, chance: 7, type: cross_game_ingredient, name: Echo Bone}
       - id: restless_skeleton
         name: Restless Skeleton
         description: "Bones clatter as it raises a rusted sword. It has no eyes, but it sees you."
@@ -52,8 +50,6 @@ floors:
         loot:
           - {item_id: health_potion, chance: 15}
           - {item_id: worm, chance: 20, type: cross_game_bait}
-          - {item_id: Brimstone Dust, chance: 8, type: cross_game_ingredient, name: Brimstone Dust}
-          - {item_id: Iron Root, chance: 8, type: cross_game_ingredient, name: Iron Root}
     traps:
       - id: collapsing_sarcophagus
         name: Collapsing Sarcophagus
@@ -84,8 +80,7 @@ floors:
         - {item_id: health_potion, chance: 100}
         - {item_id: worm, chance: 30, type: cross_game_bait}
         - {item_id: insect, chance: 20, type: cross_game_bait}
-        - {item_id: Wraith Moss, chance: 20, type: cross_game_ingredient, name: Wraith Moss}
-        - {item_id: Ghostlight Oil, chance: 12, type: cross_game_ingredient, name: Ghostlight Oil}
+        - {item_id: Ghostlight Oil, chance: 15, type: cross_game_ingredient, name: Ghostlight Oil}
         - {item_id: handaxe_plus1, chance: 8, type: gear}
         - {item_id: leather_armor_plus1, chance: 8, type: gear}
 
@@ -111,8 +106,7 @@ floors:
         loot:
           - {item_id: worm, chance: 22, type: cross_game_bait}
           - {item_id: insect, chance: 10, type: cross_game_bait}
-          - {item_id: Gloomcap, chance: 10, type: cross_game_ingredient, name: Gloomcap}
-          - {item_id: Duskfen Mud, chance: 5, type: cross_game_ingredient, name: Duskfen Mud}
+          - {item_id: Duskfen Mud, chance: 7, type: cross_game_ingredient, name: Duskfen Mud}
       - id: phantom
         name: Phantom
         description: "A translucent figure drifts through the wall, its face frozen in a silent scream."
@@ -125,8 +119,8 @@ floors:
         ai: {attack: 55, heavy: 35, defend: 10}
         loot:
           - {item_id: insect, chance: 12, type: cross_game_bait}
-          - {item_id: Ghostlight Oil, chance: 8, type: cross_game_ingredient, name: Ghostlight Oil}
-          - {item_id: Voidbloom, chance: 4, type: cross_game_ingredient, name: Voidbloom}
+          - {item_id: Ghostlight Oil, chance: 11, type: cross_game_ingredient, name: Ghostlight Oil}
+          - {item_id: Voidbloom, chance: 6, type: cross_game_ingredient, name: Voidbloom}
       - id: skeletal_archer
         name: Skeletal Archer
         description: "Perched atop a pile of bones, it nocks an arrow with mechanical precision."
@@ -140,8 +134,8 @@ floors:
         loot:
           - {item_id: worm, chance: 20, type: cross_game_bait}
           - {item_id: insect, chance: 12, type: cross_game_bait}
-          - {item_id: Echo Bone, chance: 8, type: cross_game_ingredient, name: Echo Bone}
-          - {item_id: Nullite Powder, chance: 4, type: cross_game_ingredient, name: Nullite Powder}
+          - {item_id: Echo Bone, chance: 11, type: cross_game_ingredient, name: Echo Bone}
+          - {item_id: Nullite Powder, chance: 6, type: cross_game_ingredient, name: Nullite Powder}
       - id: bone_horror
         name: Bone Horror
         description: "A towering mass of fused skeletons, dozens of arms clawing in every direction."
@@ -155,8 +149,7 @@ floors:
         loot:
           - {item_id: health_potion, chance: 20}
           - {item_id: worm, chance: 20, type: cross_game_bait}
-          - {item_id: Iron Root, chance: 10, type: cross_game_ingredient, name: Iron Root}
-          - {item_id: Singing Quartz, chance: 5, type: cross_game_ingredient, name: Singing Quartz}
+          - {item_id: Singing Quartz, chance: 7, type: cross_game_ingredient, name: Singing Quartz}
     traps:
       - id: bone_spike_pit
         name: Bone Spike Pit
@@ -194,9 +187,9 @@ floors:
         - {item_id: chain_shirt, chance: 100, type: gear}
         - {item_id: insect, chance: 30, type: cross_game_bait}
         - {item_id: shiny_lure, chance: 10, type: cross_game_bait}
-        - {item_id: Ghostlight Oil, chance: 20, type: cross_game_ingredient, name: Ghostlight Oil}
-        - {item_id: Voidbloom, chance: 12, type: cross_game_ingredient, name: Voidbloom}
-        - {item_id: "Hollow King's Sigh", chance: 8, type: cross_game_ingredient, name: "Hollow King's Sigh"}
+        - {item_id: Ghostlight Oil, chance: 23, type: cross_game_ingredient, name: Ghostlight Oil}
+        - {item_id: Voidbloom, chance: 15, type: cross_game_ingredient, name: Voidbloom}
+        - {item_id: "Hollow King's Sigh", chance: 11, type: cross_game_ingredient, name: "Hollow King's Sigh"}
         - {item_id: longsword_plus1, chance: 10, type: gear}
         - {item_id: chain_shirt_plus1, chance: 10, type: gear}
 
@@ -223,8 +216,7 @@ floors:
           - {item_id: health_potion, chance: 20}
           - {item_id: insect, chance: 15, type: cross_game_bait}
           - {item_id: shiny_lure, chance: 5, type: cross_game_bait}
-          - {item_id: Brimstone Dust, chance: 10, type: cross_game_ingredient, name: Brimstone Dust}
-          - {item_id: Flickerstone, chance: 5, type: cross_game_ingredient, name: Flickerstone}
+          - {item_id: Flickerstone, chance: 7, type: cross_game_ingredient, name: Flickerstone}
       - id: banshee
         name: Banshee
         description: "A wailing spirit whose shriek can stop your heart."
@@ -239,8 +231,8 @@ floors:
           - {item_id: smoke_bomb, chance: 10}
           - {item_id: insect, chance: 15, type: cross_game_bait}
           - {item_id: shiny_lure, chance: 8, type: cross_game_bait}
-          - {item_id: Ghostlight Oil, chance: 10, type: cross_game_ingredient, name: Ghostlight Oil}
-          - {item_id: Starite Shard, chance: 4, type: cross_game_ingredient, name: Starite Shard}
+          - {item_id: Ghostlight Oil, chance: 13, type: cross_game_ingredient, name: Ghostlight Oil}
+          - {item_id: Starite Shard, chance: 6, type: cross_game_ingredient, name: Starite Shard}
       - id: grave_golem
         name: Grave Golem
         description: "A hulking construct of tombstone and mortar, cemetery earth cascading from its joints."
@@ -253,9 +245,8 @@ floors:
         ai: {attack: 40, heavy: 20, defend: 40}
         loot:
           - {item_id: worm, chance: 25, type: cross_game_bait}
-          - {item_id: Iron Root, chance: 12, type: cross_game_ingredient, name: Iron Root}
-          - {item_id: Echo Bone, chance: 8, type: cross_game_ingredient, name: Echo Bone}
-          - {item_id: Tremor Grub, chance: 4, type: cross_game_ingredient, name: Tremor Grub}
+          - {item_id: Echo Bone, chance: 11, type: cross_game_ingredient, name: Echo Bone}
+          - {item_id: Tremor Grub, chance: 6, type: cross_game_ingredient, name: Tremor Grub}
     traps:
       - id: necrotic_glyph
         name: Necrotic Glyph
@@ -287,10 +278,10 @@ floors:
         - {item_id: greater_health_potion, chance: 100}
         - {item_id: insect, chance: 40, type: cross_game_bait}
         - {item_id: shiny_lure, chance: 20, type: cross_game_bait}
-        - {item_id: Ghostlight Oil, chance: 25, type: cross_game_ingredient, name: Ghostlight Oil}
-        - {item_id: "Hollow King's Sigh", chance: 20, type: cross_game_ingredient, name: "Hollow King's Sigh"}
-        - {item_id: Scorchcap Spore, chance: 15, type: cross_game_ingredient, name: Scorchcap Spore}
-        - {item_id: "Wyrm's Tear", chance: 10, type: cross_game_ingredient, name: "Wyrm's Tear"}
+        - {item_id: Ghostlight Oil, chance: 28, type: cross_game_ingredient, name: Ghostlight Oil}
+        - {item_id: "Hollow King's Sigh", chance: 23, type: cross_game_ingredient, name: "Hollow King's Sigh"}
+        - {item_id: Scorchcap Spore, chance: 18, type: cross_game_ingredient, name: Scorchcap Spore}
+        - {item_id: "Wyrm's Tear", chance: 13, type: cross_game_ingredient, name: "Wyrm's Tear"}
         - {item_id: war_hammer_plus1, chance: 12, type: gear}
         - {item_id: scale_mail_plus1, chance: 12, type: gear}
         - {item_id: war_hammer_plus2, chance: 4, type: gear}

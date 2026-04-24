@@ -38,8 +38,6 @@ floors:
           - {item_id: health_potion, chance: 15}
           - {item_id: worm, chance: 20, type: cross_game_bait}
           - {item_id: insect, chance: 10, type: cross_game_bait}
-          - {item_id: Ember Salt, chance: 8, type: cross_game_ingredient, name: Ember Salt}
-          - {item_id: Brimstone Dust, chance: 8, type: cross_game_ingredient, name: Brimstone Dust}
       - id: giant_spider
         name: Giant Spider
         description: "Eight legs, eight eyes, and dripping fangs."
@@ -52,8 +50,6 @@ floors:
         ai: {attack: 70, heavy: 30}
         loot:
           - {item_id: worm, chance: 20, type: cross_game_bait}
-          - {item_id: Wraith Moss, chance: 10, type: cross_game_ingredient, name: Wraith Moss}
-          - {item_id: Gloomcap, chance: 8, type: cross_game_ingredient, name: Gloomcap}
     traps:
       - id: pit_trap
         name: Pit Trap
@@ -84,8 +80,6 @@ floors:
         - {item_id: shortsword, chance: 100, type: gear}
         - {item_id: worm, chance: 35, type: cross_game_bait}
         - {item_id: insect, chance: 25, type: cross_game_bait}
-        - {item_id: Ember Salt, chance: 20, type: cross_game_ingredient, name: Ember Salt}
-        - {item_id: Iron Root, chance: 15, type: cross_game_ingredient, name: Iron Root}
         - {item_id: shortsword_plus1, chance: 8, type: gear}
         - {item_id: leather_armor_plus1, chance: 8, type: gear}
 
@@ -111,8 +105,7 @@ floors:
         loot:
           - {item_id: worm, chance: 22, type: cross_game_bait}
           - {item_id: insect, chance: 12, type: cross_game_bait}
-          - {item_id: Moonpetal, chance: 8, type: cross_game_ingredient, name: Moonpetal}
-          - {item_id: Singing Quartz, chance: 4, type: cross_game_ingredient, name: Singing Quartz}
+          - {item_id: Singing Quartz, chance: 6, type: cross_game_ingredient, name: Singing Quartz}
       - id: goblin_shaman
         name: Goblin Shaman
         description: "A hunched goblin muttering curses, eyes glowing faintly."
@@ -126,9 +119,8 @@ floors:
         loot:
           - {item_id: health_potion, chance: 20}
           - {item_id: insect, chance: 15, type: cross_game_bait}
-          - {item_id: Gloomcap, chance: 10, type: cross_game_ingredient, name: Gloomcap}
-          - {item_id: Ghostlight Oil, chance: 5, type: cross_game_ingredient, name: Ghostlight Oil}
-          - {item_id: Voidbloom, chance: 4, type: cross_game_ingredient, name: Voidbloom}
+          - {item_id: Ghostlight Oil, chance: 7, type: cross_game_ingredient, name: Ghostlight Oil}
+          - {item_id: Voidbloom, chance: 6, type: cross_game_ingredient, name: Voidbloom}
       - id: cave_leech
         name: Cave Leech
         description: "A bloated, slimy worm that drops from the ceiling."
@@ -141,7 +133,6 @@ floors:
         ai: {attack: 90, heavy: 10}
         loot:
           - {item_id: worm, chance: 30, type: cross_game_bait}
-          - {item_id: Wraith Moss, chance: 8, type: cross_game_ingredient, name: Wraith Moss}
       - id: wolf
         name: Dire Wolf
         description: "A massive wolf with matted fur and bared fangs."
@@ -154,8 +145,7 @@ floors:
         ai: {attack: 60, heavy: 30, defend: 10}
         loot:
           - {item_id: worm, chance: 20, type: cross_game_bait}
-          - {item_id: Iron Root, chance: 8, type: cross_game_ingredient, name: Iron Root}
-          - {item_id: Ashenworm Silk, chance: 4, type: cross_game_ingredient, name: Ashenworm Silk}
+          - {item_id: Ashenworm Silk, chance: 6, type: cross_game_ingredient, name: Ashenworm Silk}
     traps:
       - id: collapsing_floor
         name: Collapsing Floor
@@ -193,8 +183,7 @@ floors:
         - {item_id: greater_health_potion, chance: 50}
         - {item_id: worm, chance: 35, type: cross_game_bait}
         - {item_id: insect, chance: 30, type: cross_game_bait}
-        - {item_id: Brimstone Dust, chance: 20, type: cross_game_ingredient, name: Brimstone Dust}
-        - {item_id: Singing Quartz, chance: 12, type: cross_game_ingredient, name: Singing Quartz}
+        - {item_id: Singing Quartz, chance: 15, type: cross_game_ingredient, name: Singing Quartz}
         - {item_id: longsword_plus1, chance: 10, type: gear}
         - {item_id: chain_shirt_plus1, chance: 10, type: gear}
 
@@ -221,8 +210,7 @@ floors:
           - {item_id: health_potion, chance: 25}
           - {item_id: insect, chance: 15, type: cross_game_bait}
           - {item_id: shiny_lure, chance: 5, type: cross_game_bait}
-          - {item_id: Ember Salt, chance: 10, type: cross_game_ingredient, name: Ember Salt}
-          - {item_id: Flickerstone, chance: 5, type: cross_game_ingredient, name: Flickerstone}
+          - {item_id: Flickerstone, chance: 7, type: cross_game_ingredient, name: Flickerstone}
       - id: ogre
         name: Ogre
         description: "Enormous and dim-witted, but each swing could be your last."
@@ -235,9 +223,8 @@ floors:
         ai: {attack: 60, heavy: 30, defend: 10}
         loot:
           - {item_id: worm, chance: 25, type: cross_game_bait}
-          - {item_id: Iron Root, chance: 10, type: cross_game_ingredient, name: Iron Root}
-          - {item_id: Tremor Grub, chance: 4, type: cross_game_ingredient, name: Tremor Grub}
-          - {item_id: Echo Bone, chance: 3, type: cross_game_ingredient, name: Echo Bone}
+          - {item_id: Tremor Grub, chance: 6, type: cross_game_ingredient, name: Tremor Grub}
+          - {item_id: Echo Bone, chance: 5, type: cross_game_ingredient, name: Echo Bone}
       - id: goblin_assassin
         name: Goblin Assassin
         description: "You barely see the glint of the blade before it strikes."
@@ -252,8 +239,7 @@ floors:
           - {item_id: smoke_bomb, chance: 15}
           - {item_id: insect, chance: 15, type: cross_game_bait}
           - {item_id: shiny_lure, chance: 8, type: cross_game_bait}
-          - {item_id: Gloomcap, chance: 10, type: cross_game_ingredient, name: Gloomcap}
-          - {item_id: Nullite Powder, chance: 4, type: cross_game_ingredient, name: Nullite Powder}
+          - {item_id: Nullite Powder, chance: 6, type: cross_game_ingredient, name: Nullite Powder}
     traps:
       - id: blade_trap
         name: Blade Trap
@@ -285,9 +271,8 @@ floors:
         - {item_id: greater_health_potion, chance: 100}
         - {item_id: insect, chance: 40, type: cross_game_bait}
         - {item_id: shiny_lure, chance: 20, type: cross_game_bait}
-        - {item_id: Wraith Moss, chance: 25, type: cross_game_ingredient, name: Wraith Moss}
-        - {item_id: Scorchcap Spore, chance: 15, type: cross_game_ingredient, name: Scorchcap Spore}
-        - {item_id: "Wyrm's Tear", chance: 10, type: cross_game_ingredient, name: "Wyrm's Tear"}
+        - {item_id: Scorchcap Spore, chance: 18, type: cross_game_ingredient, name: Scorchcap Spore}
+        - {item_id: "Wyrm's Tear", chance: 13, type: cross_game_ingredient, name: "Wyrm's Tear"}
         - {item_id: battle_axe_plus1, chance: 12, type: gear}
         - {item_id: scale_mail_plus1, chance: 12, type: gear}
         - {item_id: longsword_plus2, chance: 4, type: gear}
