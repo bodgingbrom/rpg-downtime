@@ -553,9 +553,13 @@ class Brewing(commands.Cog, name="brewing"):
                 await session.commit()
 
                 total_lost = brew_session.bottle_cost + brew_session.ingredient_cost_total
+                brewer_name = context.author.display_name
                 embed = discord.Embed(
                     title="\U0001f4a5 CATASTROPHIC FAILURE",
-                    description=brew_logic.get_explosion_text(),
+                    description=(
+                        f"**{brewer_name}**'s cauldron erupts!\n\n"
+                        + brew_logic.get_explosion_text()
+                    ),
                     color=brew_logic.COLOR_EXPLODED,
                 )
                 embed.add_field(
@@ -569,7 +573,16 @@ class Brewing(commands.Cog, name="brewing"):
                     value=", ".join(ingredient_names),
                     inline=False,
                 )
-                await context.send(embed=embed)
+                # Public announcement to the channel so the whole server sees
+                try:
+                    await context.channel.send(embed=embed)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+                # Ephemeral ack to close out the interaction
+                await context.send(
+                    "\U0001f4a5 Your cauldron exploded! See the channel for details.",
+                    ephemeral=True,
+                )
                 return
 
             await session.commit()
