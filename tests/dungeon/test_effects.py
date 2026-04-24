@@ -75,6 +75,53 @@ def test_should_trigger_on_spawn_only_turn_1():
     assert fx.should_trigger(ability, turn=2, monster_hp=10, monster_max_hp=10, state=state) is False
 
 
+def test_phase_max_gates_ability_to_baseline():
+    """phase_max: 0 means the ability only fires when state['phase'] == 0."""
+    ability = {"type": "summon_add", "trigger": "on_turn", "every": 2, "phase_max": 0}
+    state = _blank_state()
+
+    # Phase 0: fires normally.
+    state["phase"] = 0
+    assert fx.should_trigger(ability, turn=2, monster_hp=50, monster_max_hp=50, state=state) is True
+
+    # Phase 1: blocked.
+    state["phase"] = 1
+    assert fx.should_trigger(ability, turn=2, monster_hp=50, monster_max_hp=50, state=state) is False
+
+    # Phase 2: blocked.
+    state["phase"] = 2
+    assert fx.should_trigger(ability, turn=2, monster_hp=50, monster_max_hp=50, state=state) is False
+
+
+def test_phase_min_gates_ability_to_late_phases():
+    """phase_min: 2 means the ability only fires when state['phase'] >= 2."""
+    ability = {"type": "existential_strike", "trigger": "on_turn", "every": 1, "phase_min": 2}
+    state = _blank_state()
+
+    # Phase 0 and 1 blocked.
+    state["phase"] = 0
+    assert fx.should_trigger(ability, turn=1, monster_hp=10, monster_max_hp=50, state=state) is False
+    state["phase"] = 1
+    assert fx.should_trigger(ability, turn=1, monster_hp=10, monster_max_hp=50, state=state) is False
+
+    # Phase 2: fires.
+    state["phase"] = 2
+    assert fx.should_trigger(ability, turn=1, monster_hp=10, monster_max_hp=50, state=state) is True
+
+
+def test_phase_gate_combines_min_and_max():
+    """Both phase_min and phase_max → window constraint."""
+    ability = {"type": "narrate", "trigger": "on_turn", "every": 1,
+               "phase_min": 1, "phase_max": 1}
+    state = _blank_state()
+    state["phase"] = 0
+    assert fx.should_trigger(ability, turn=1, monster_hp=10, monster_max_hp=50, state=state) is False
+    state["phase"] = 1
+    assert fx.should_trigger(ability, turn=1, monster_hp=10, monster_max_hp=50, state=state) is True
+    state["phase"] = 2
+    assert fx.should_trigger(ability, turn=1, monster_hp=10, monster_max_hp=50, state=state) is False
+
+
 def test_should_trigger_on_hp_below_fires_once():
     ability = {"type": "redraw_strike", "trigger": "on_hp_below_pct", "pct": 50}
     state = _blank_state()
@@ -165,6 +212,45 @@ def test_summon_add_respects_max_active():
     # No new pending spawn — already at max.
     assert all(not a.get("pending_spawn") for a in state["adds"])
     assert len(state["adds"]) == 1
+
+
+def test_summon_add_uses_add_pool_when_provided():
+    """add_pool picks randomly. Seeded RNG gives a deterministic answer."""
+    state = _blank_state()
+    ctx = _ctx(state=state, seed=0)
+    fx.dispatch(ctx, {
+        "type": "summon_add",
+        "add_pool": ["hound", "wraith", "specter"],
+        "max_active": 1,
+    })
+    picked = state["adds"][0]["def_id"]
+    assert picked in {"hound", "wraith", "specter"}
+
+
+def test_summon_add_pool_covers_all_entries_with_varied_seeds():
+    """Over many seeds, every entry in the pool should get picked at least once."""
+    picks = set()
+    pool = ["hound", "wraith", "specter"]
+    for seed in range(30):
+        state = _blank_state()
+        ctx = _ctx(state=state, seed=seed)
+        fx.dispatch(ctx, {
+            "type": "summon_add", "add_pool": pool, "max_active": 1,
+        })
+        picks.add(state["adds"][0]["def_id"])
+    assert picks == set(pool)
+
+
+def test_summon_add_pool_takes_priority_over_single_id():
+    """If both add_pool and add_id are set, add_pool wins."""
+    state = _blank_state()
+    fx.dispatch(_ctx(state=state, seed=0), {
+        "type": "summon_add",
+        "add_pool": ["from_pool"],
+        "add_id": "from_id",
+        "max_active": 1,
+    })
+    assert state["adds"][0]["def_id"] == "from_pool"
 
 
 def test_defense_bonus_self_has_duration():

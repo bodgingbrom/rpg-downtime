@@ -187,7 +187,7 @@ Each of these fields is independently optional — existing monsters need no cha
 | `player_next_attack_advantage` | — | Single-use: player's next attack rolls twice keeps higher. |
 | `player_hit_chance_reduction` | `amount` (0–1), `turns` | Probabilistic full-miss chance on monster attacks (inverted — fog-style). |
 | `bleed` | `damage`, `turns` | Damage-over-time on the player. |
-| `summon_add` | `add_id`, `max_active`, `untargetable_self` | Spawn an add; target swaps to the add; primary optionally untargetable. |
+| `summon_add` | `add_id` OR `add_pool` (list), `max_active`, `untargetable_self` | Spawn an add; target swaps to the add; primary optionally untargetable. When `add_pool` is set, picks one id at random. |
 | `existential_strike` | `damage_dice`, `damage_bonus`, `text` | Mark the monster's NEXT action as a high-damage special strike. |
 | `redraw_strike` | `damage_dice`, `damage_bonus`, `defense_ignore`, `text` | Like existential_strike, with partial armor-bypass. |
 
@@ -200,6 +200,20 @@ Each of these fields is independently optional — existing monsters need no cha
 | `on_hp_below_pct` | First time HP drops below `pct`, then never again |
 | `on_hit` | After the monster lands damage on the player |
 | `on_taken_hit` | After the monster takes damage (not yet wired — reserved) |
+
+### Phase-gated abilities
+
+Any ability can be restricted to certain phases via `phase_min` / `phase_max`. Phase 0 is baseline (no threshold crossed); phase 1 is after the first `hp_below_pct` is crossed, etc. Examples:
+
+```yaml
+# Only fires in baseline / phase 0 (stops once HP drops below first threshold)
+- {type: summon_add, phase_max: 0, every: 2, add_pool: [wolf_sketch, ghost_doodle]}
+
+# Only fires once a phase has begun (starts after first threshold)
+- {type: existential_strike, phase_min: 2, every: 1, damage_dice: "2d10"}
+```
+
+Use this to make summoner bosses stop summoning in later phases, or to arm late-phase-only ultimate attacks.
 
 ### Modifier Stacking Rules (from resolver)
 
