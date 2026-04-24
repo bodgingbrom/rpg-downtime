@@ -118,12 +118,23 @@ def test_cartographers_folly_alaric_has_all_signature_pieces():
     phases = alaric.get("phases") or []
     assert any(p.get("hp_below_pct") == 66 for p in phases)
     assert any(p.get("hp_below_pct") == 33 for p in phases)
-    # Summoner ability present and references a REAL monster.
+    # Summoner ability present with phase gate and pool of multiple adds.
     abilities = alaric.get("abilities") or []
     summons = [a for a in abilities if a.get("type") == "summon_add"]
     assert summons, "Alaric missing summon_add ability"
-    add_id = summons[0]["add_id"]
-    # Verify the summoned add is defined in the dungeon so _find_monster_def works.
+    summon = summons[0]
+    # BUG FIX: summon must be phase-gated to baseline only (stops in phase 2+).
+    assert summon.get("phase_max") == 0, (
+        "Alaric's summon_add must have phase_max: 0 or he summons forever "
+        "(the bug that shipped in the original PR)."
+    )
+    # BUG FIX: summon must pick from a pool of at least 2 monsters, not just hounds.
+    pool = summon.get("add_pool")
+    assert isinstance(pool, list) and len(pool) >= 2, (
+        "Alaric's summon_add must have an add_pool with at least 2 options"
+    )
+
+    # Verify every summon target is defined somewhere in the dungeon.
     all_monster_ids: set[str] = set()
     for f in d["floors"]:
         for m in f.get("monsters", []) or []:
@@ -131,11 +142,24 @@ def test_cartographers_folly_alaric_has_all_signature_pieces():
         b = f.get("boss") or {}
         if b.get("id"):
             all_monster_ids.add(b["id"])
-    assert add_id in all_monster_ids, f"summon references undefined monster '{add_id}'"
+    for add_id in pool:
+        assert add_id in all_monster_ids, (
+            f"summon references undefined monster '{add_id}'"
+        )
     # Signature death line.
     assert alaric.get("on_death_narration"), "Alaric missing on_death_narration"
     assert "signature" in alaric["on_death_narration"].lower() \
         or "A. Venn" in alaric["on_death_narration"]
+
+
+def test_cartographers_folly_has_inkwash_wraith_as_floor3_monster():
+    """The inkwash_wraith was missing from the original commit — verify it's
+    present as a standalone floor-3 monster so Alaric's summon_add can find
+    it and so it can appear in regular combat rooms too."""
+    d = dungeon_logic.load_dungeons()["the_cartographers_folly"]
+    monster_ids = {m["id"] for m in d["floors"][2].get("monsters", [])}
+    assert "inkwash_wraith" in monster_ids
+    assert "scribbled_hound" in monster_ids
 
 
 def test_cartographers_folly_has_no_free_tier_ingredients():

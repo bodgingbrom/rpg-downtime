@@ -347,10 +347,10 @@ floors:
           - {item_id: Duskfen Mud, chance: 8, type: cross_game_ingredient, name: Duskfen Mud}
           - {item_id: Scorchcap Spore, chance: 7, type: cross_game_ingredient, name: Scorchcap Spore}
 
-      # Alaric's summoned add. Included as a regular floor-3 monster so it
-      # can also appear in normal combat rooms AND be looked up by Alaric's
-      # summon_add ability at runtime. Weak on purpose — meant to be a
-      # speed bump while Alaric's quill does the scary work.
+      # Alaric's summoned adds — included as regular floor-3 monsters so
+      # they can also appear in normal combat rooms AND be looked up by
+      # Alaric's summon_add ability at runtime. Weak on purpose — meant
+      # to be a speed bump, not a wall.
       - id: scribbled_hound
         name: Scribbled Hound
         description: "A dog drawn in hurried ink strokes. Its outline flickers. Its teeth are very, very permanent."
@@ -364,6 +364,22 @@ floors:
         loot:
           - {item_id: worm, chance: 25, type: cross_game_bait}
           - {item_id: Ashenworm Silk, chance: 7, type: cross_game_ingredient, name: Ashenworm Silk}
+
+      - id: inkwash_wraith
+        name: Inkwash Wraith
+        description: "A pale, thin-limbed figure the color of wet ink. Its eyes are two dropped punctuation marks. It drifts, rather than walks."
+        hp: 12
+        defense: 0
+        attack_dice: "1d8"
+        attack_bonus: 2
+        xp: 12
+        gold: [4, 9]
+        # More fragile than the hound, hits harder — different tactical threat.
+        ai: {attack: 70, heavy: 30}
+        loot:
+          - {item_id: insect, chance: 20, type: cross_game_bait}
+          - {item_id: Ghostlight Oil, chance: 10, type: cross_game_ingredient, name: Ghostlight Oil}
+          - {item_id: Marshglow Lichen, chance: 6, type: cross_game_ingredient, name: Marshglow Lichen}
 
       - id: survey_error
         name: Survey Error
@@ -444,18 +460,20 @@ floors:
               damage_bonus: 3
               text: "_The quill moves. You feel yourself being flattened — simplified, labeled. Your outline is being **traced**._"
       abilities:
-        # Phase 1 only — summon an add every 2 turns. When phase 2 begins,
-        # this ability keeps being evaluated, but the phase override to
-        # AI (bias defend) and the fact that untargetable_self + existing
-        # adds keep things honest. Max 1 active — won't spam.
+        # Phase 1 ONLY (phase_max: 0 = baseline phase only). Summon one add
+        # every 2 turns, picked randomly from the sketchbook. When HP drops
+        # below 66% we're in phase 1 (internal index), which gate-blocks
+        # this ability so Alaric stops summoning — transitioning the fight
+        # to the wall phase.
         - type: summon_add
           trigger: on_turn
           every: 2
-          add_id: scribbled_hound
+          phase_max: 0
+          add_pool: [scribbled_hound, inkwash_wraith]
           max_active: 1
           untargetable_self: true
-        # Phase 2 only: defense buff (the wall) — fires once when phase 2 triggers
-        # via on_hp_below_pct, so it doesn't re-apply.
+        # Phase 2 only: defense buff (the wall) — fires once when HP drops
+        # below 66% via on_hp_below_pct. Permanent (remaining -1).
         - type: defense_bonus_self
           trigger: on_hp_below_pct
           pct: 66

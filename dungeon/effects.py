@@ -165,7 +165,21 @@ def should_trigger(
     monster_max_hp: int,
     state: dict[str, Any],
 ) -> bool:
-    """Return True if ``ability`` should fire on the given turn/HP."""
+    """Return True if ``ability`` should fire on the given turn/HP.
+
+    Abilities can optionally be gated by phase via ``phase_min`` /
+    ``phase_max`` fields. Phase 0 is baseline (before any HP threshold
+    crossed); phase 1 is after the first threshold, etc. ``phase_max: 0``
+    restricts the ability to baseline only (useful for summoner phase-1
+    abilities that shouldn't fire in the boss's later phases).
+    """
+    # Phase gate — applies to every trigger type.
+    current_phase = int(state.get("phase", 0)) if state else 0
+    if "phase_min" in ability and current_phase < int(ability["phase_min"]):
+        return False
+    if "phase_max" in ability and current_phase > int(ability["phase_max"]):
+        return False
+
     trigger = ability.get("trigger", "on_turn")
     if trigger == "on_spawn":
         return turn == 1
@@ -344,13 +358,22 @@ def _handler_bleed(ctx: EncounterCtx, params: dict[str, Any]) -> None:
 def _handler_summon_add(ctx: EncounterCtx, params: dict[str, Any]) -> None:
     """Spawn an add if we're under max_active. The combat loop handles
     target-swap logic based on state['active'] and state['adds'].
+
+    The summon target is picked from (in priority order):
+    1. ``add_pool`` — list of monster ids; one is chosen at random.
+    2. ``add_id`` / ``monster_id`` — a single monster id.
     """
     adds = ctx.state.setdefault("adds", [])
     active = [a for a in adds if a.get("hp", 0) > 0]
     max_active = int(params.get("max_active", 1))
     if len(active) >= max_active:
         return
-    add_id = params.get("add_id") or params.get("monster_id")
+
+    pool = params.get("add_pool") or []
+    if pool:
+        add_id = ctx.rng.choice(pool)
+    else:
+        add_id = params.get("add_id") or params.get("monster_id")
     if not add_id:
         return
     # The caller must look up add_id in the dungeon's monsters and populate
@@ -486,6 +509,18 @@ def validate_abilities(abilities: Any, *, path: str = "") -> list[str]:
         trigger = a.get("trigger", "on_turn")
         if trigger not in KNOWN_TRIGGERS:
             errors.append(f"{path}abilities[{i}].trigger '{trigger}' not in KNOWN_TRIGGERS")
+        # Phase gate fields must be ints if present.
+        for pk in ("phase_min", "phase_max"):
+            if pk in a and not isinstance(a[pk], int):
+                errors.append(f"{path}abilities[{i}].{pk} must be an int")
+        # summon_add: add_pool must be a list of strings if present.
+        if atype == "summon_add":
+            pool_ids = a.get("add_pool")
+            if pool_ids is not None:
+                if not isinstance(pool_ids, list) or not all(isinstance(s, str) for s in pool_ids):
+                    errors.append(
+                        f"{path}abilities[{i}].add_pool must be a list of strings"
+                    )
         # Recurse into random_effect_pool.pool
         if atype == "random_effect_pool":
             pool = a.get("pool") or []
