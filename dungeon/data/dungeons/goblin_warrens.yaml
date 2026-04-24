@@ -2,6 +2,26 @@ id: goblin_warrens
 name: The Goblin Warrens
 description: "A network of damp tunnels beneath the hills, crawling with goblins and worse."
 
+background:
+  tone: "Classic dungeon crawl. Dirty, dangerous, a little mean. Low fantasy."
+  pitch: "Damp tunnels beneath the hills. Goblins have made a home here, and they're not alone."
+  lore: |
+    For three seasons the farmsteads above the hills have lost livestock,
+    then dogs, then — a month ago — two travelers who went to look for
+    the dogs. The townsfolk point to the old tin-mine cut abandoned in
+    their grandfather's day. Something has moved in. Something has dug
+    deeper. The hills, they say, remember what was down there before the
+    tin miners.
+
+    The goblins are the least of the Warrens.
+  dm_hooks:
+    - "Low ceilings, guttering torches stolen from the farmsteads"
+    - "Crude tallies scratched on the walls counting something the goblins have taken"
+    - "Deeper down, the stone gets older than any of them"
+  style_notes: |
+    Keep it grounded. The threat is dirty and immediate. Goblins are
+    opportunistic little bastards, not cackling theatrical villains.
+
 floors:
   - floor: 1
     theme: musty_tunnels

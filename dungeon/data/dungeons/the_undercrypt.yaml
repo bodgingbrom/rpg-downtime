@@ -2,6 +2,29 @@ id: the_undercrypt
 name: The Undercrypt
 description: "A forgotten burial complex beneath the old cathedral. The dead do not rest easily here."
 
+background:
+  tone: "Gothic horror, funereal quiet. Restraint over jump-scare. The dead are patient."
+  pitch: "Beneath the old cathedral, a burial complex the clergy stopped consecrating generations ago. Something is still in charge down there."
+  lore: |
+    The cathedral above was built three hundred years ago on ground the
+    priests assured everyone was already sanctified. It was a lie. The
+    cathedral's foundations are the roof of something older — a burial
+    complex begun by a cult the clergy later drove from the city but
+    never properly destroyed. The tombs went deeper than the clergy knew.
+    The cult's last king is still down there, holding court.
+
+    The dead do not rest easily in the Undercrypt. They wait for
+    something. They wait, perhaps, for you.
+  dm_hooks:
+    - "Tomb markers in a language that predates the cathedral by a millennium"
+    - "Candles that relight themselves after you walk past"
+    - "Flagstones warm where no heat source explains it"
+    - "A faint whisper of prayer in a tongue the priests never taught"
+  style_notes: |
+    Quiet menace. Undead are not slobbering zombies here — they are
+    formal, ritualistic, still observing protocols from a faith that
+    forgot itself. Avoid slapstick. Lean into patience and dread.
+
 floors:
   - floor: 1
     theme: crumbling_tombs

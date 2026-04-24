@@ -21,12 +21,52 @@ dungeon/data/dungeons/
 ```yaml
 id: goblin_warrens                # Unique identifier (should match filename)
 name: The Goblin Warrens          # Display name shown in embeds
-description: "A network of..."    # Flavor text for the dungeon selection screen
+description: "A network of..."    # Short flavor for backward compat (picker fallback)
+
+background:                       # Optional — tone + LLM narration hook (see below)
+  tone: "..."
+  pitch: "..."
+  lore: |
+    ...
+  dm_hooks: [...]
+  style_notes: "..."
 
 floors:                           # Array of floor definitions (at least 1)
   - floor: 1
     ...
 ```
+
+### Writing Backgrounds
+
+The `background` block is new in PR2. It has two audiences:
+
+1. **Human authors.** Writing `tone` and `style_notes` forces you to
+   commit to a voice before you start drafting monsters and traps.
+   Reading back your own `lore` later tells you whether a new monster
+   concept fits.
+2. **LLM narration (future).** Tone, lore, and dm_hooks will be fed
+   into LLM prompts for combat narration, room descriptions, and
+   optional DMing. The fields are consumed by prompt assemblers, not by
+   game logic — so adding them now doesn't change gameplay, it just
+   sets up the hook for later.
+
+Fields:
+
+| Field | Purpose |
+|-------|---------|
+| `tone` | One-sentence voice anchor. The single most useful field. |
+| `pitch` | Elevator pitch shown on the dungeon picker + delve intro. Falls back to the top-level `description` if absent. |
+| `lore` | Long-form prose establishing who / what / why. Multi-paragraph is fine. |
+| `dm_hooks` | List of recurring motifs. When an LLM renders a scene, it can weave these in. |
+| `style_notes` | Hard constraints — things the voice should NOT do. |
+
+Per-floor `background` is also supported for distinct-feeling floors
+(example: Cartographer's Folly where each floor is a different layer of
+mapmaking abstraction). Optional — skip it when floors blend together.
+
+**Reference example:** `the_cartographers_folly.yaml` uses the full
+schema including per-floor backgrounds. Use it as the template when
+authoring a new dungeon that wants the voice to stay consistent.
 
 ---
 
