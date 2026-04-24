@@ -95,7 +95,101 @@ Used in both the `monsters` array and the `boss` field.
     - {item_id: worm, chance: 20, type: cross_game_bait}
     - {item_id: Flickerstone, chance: 7, type: cross_game_ingredient, name: Flickerstone}
     - {item_id: shortsword_plus1, chance: 8, type: gear}
+
+  # ---- Optional extensions (all independently optional) ----
+  description_pool:                # Random flavor per spawn (falls back to `description`)
+    - "A sneering goblin with a rusted cleaver."
+    - "A small goblin wearing a crown of chicken bones."
+  variants:                        # Picks one at spawn — overrides merged into the monster
+    - {key: green, name_suffix: "(Green)", defense_delta: +1, attack_bonus_delta: -1}
+    - {key: red,   name_suffix: "(Red)",   hp_delta: +4,      attack_bonus_delta: +1}
+  phases:                          # HP-threshold cycling phases (boss-style)
+    - hp_below_pct: 66
+      attack_dice: "1d6"
+      ai: {attack: 70, heavy: 30}
+      on_enter: {type: narrate, text: "The goblin bares its teeth..."}
+    - hp_below_pct: 33
+      attack_dice: "1d8"
+      abilities_add:               # Extend base abilities for this phase
+        - {type: existential_strike, damage_dice: "2d10", trigger: on_turn, every: 1}
+  abilities:                       # Reusable effect atoms (see table below)
+    - {type: dice_step_self, step_schedule: [{turn: 3, step: 1}, {turn: 5, step: 2}]}
+    - {type: random_effect_pool, every: 2, pool: [
+        {type: player_next_attack_invert},
+        {type: player_hit_chance_reduction, amount: 0.3, turns: 1},
+      ]}
+    - {type: summon_add, every: 3, add_id: scribbled_hound, max_active: 1, untargetable_self: true}
+  on_death_narration: |            # Custom boss-kill text (signature moments)
+    The goblin's cleaver clatters to the floor. Silence.
 ```
+
+### Optional Monster Fields (extension schema)
+
+Each of these fields is independently optional — existing monsters need no changes.
+
+- **`description_pool`**: list of strings. One is picked at spawn, stored in combat state so re-renders are consistent. Falls back to `description` if empty/missing.
+- **`variants`**: list of dicts, each with a `key` and any of `hp_delta`, `defense_delta`, `attack_bonus_delta`, `name_suffix`, `attack_dice` (replace), plus pass-through keys (`on_hit_effect`, etc.). Exactly one variant is randomly chosen at spawn.
+- **`phases`**: list of dicts ordered highest-threshold-first. Each has `hp_below_pct`, optional `on_enter` (narrate), and any of `attack_dice`, `attack_bonus`, `defense`, `ai`, `abilities_add`. Phase transitions take effect **at the start of the next turn**, not mid-resolution.
+- **`abilities`**: list of effect specs. See ability table below.
+- **`on_death_narration`**: string shown instead of the default "… is defeated!" line. Good for signature boss moments.
+
+### Ability Types (registered in `dungeon/effects.py`)
+
+| Type | Params | Purpose |
+|------|--------|---------|
+| `narrate` | `text` | Append a flavor line to the turn's narrative. |
+| `random_effect_pool` | `every`, `pool` (list of ability dicts) | Every N turns, dispatch one random entry from the pool. |
+| `dice_step_self` | `step_schedule` (list of `{turn, step}`) | Bump monster's attack dice one or more ladder steps by turn. |
+| `flat_damage_bonus_self` | `amount`, `_source_id` | Permanent flat damage bonus to monster attacks for this encounter. |
+| `defense_bonus_self` | `amount`, `turns` | Temporary defense boost. |
+| `self_heal` | `amount` | Heal the monster. |
+| `player_next_attack_invert` | — | Single-use: player's next attack rolls twice keeps lower. |
+| `player_next_attack_advantage` | — | Single-use: player's next attack rolls twice keeps higher. |
+| `player_hit_chance_reduction` | `amount` (0–1), `turns` | Probabilistic full-miss chance on monster attacks (inverted — fog-style). |
+| `bleed` | `damage`, `turns` | Damage-over-time on the player. |
+| `summon_add` | `add_id`, `max_active`, `untargetable_self` | Spawn an add; target swaps to the add; primary optionally untargetable. |
+| `existential_strike` | `damage_dice`, `damage_bonus`, `text` | Mark the monster's NEXT action as a high-damage special strike. |
+| `redraw_strike` | `damage_dice`, `damage_bonus`, `defense_ignore`, `text` | Like existential_strike, with partial armor-bypass. |
+
+### Triggers
+
+| Trigger | When |
+|---------|------|
+| `on_spawn` | Once, on turn 1 |
+| `on_turn` (default) | Every `every` turns (default `every: 1`) |
+| `on_hp_below_pct` | First time HP drops below `pct`, then never again |
+| `on_hit` | After the monster lands damage on the player |
+| `on_taken_hit` | After the monster takes damage (not yet wired — reserved) |
+
+### Modifier Stacking Rules (from resolver)
+
+When multiple sources contribute a modifier (race + gear + abilities + status effects), they compose per these rules:
+
+| Kind | Rule |
+|---|---|
+| Flat numeric bonuses (`damage_bonus`, `attack_bonus`) | Sum |
+| Multipliers (`hp_multiplier`, `xp_multiplier`) | Multiply (identity 1.0) |
+| Dice size steps | Sum step counts, clamp to ladder `1d4 → 1d6 → 1d8 → 1d10 → 1d12` |
+| Booleans (`damage_advantage`) | OR |
+| Caps (lower better, e.g. `crit_threshold`) | Min |
+
+Because of this, a future magic weapon contributing `{type: dice_step_self, step: 1}` to the player will use the **same** code path as the Scale Bar boss's turn-7 escalation. One system, both sides.
+
+### Turn Resolution Order
+
+The combat loop enforces a strict order (documented atop `_handle_combat_action` in `cogs/dungeon.py`):
+
+1. Increment combat_state turn counter.
+2. Re-evaluate phase from primary HP (start of turn only).
+3. Fire monster `on_turn` abilities — may write into `player_effects`.
+   Handle pending summon target-swap at this point.
+4. Apply bleed ticks; resolve player action using composed modifiers.
+5. Resolve monster action (normal AI OR pending special attack).
+   Fire `on_hit` abilities if the monster landed a hit.
+6. Decrement effect durations; remove consumed single-use flags.
+7. Check death / phase-change outcomes. If an **add** died, swap back
+   to primary and keep combat going. If **primary** died, run the
+   normal kill flow (XP, loot, bestiary).
 
 ### Stat Guidelines by Floor Depth
 

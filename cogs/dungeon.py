@@ -13,6 +13,8 @@ from discord.ext.commands import Context
 
 from dungeon import logic as dungeon_logic
 from dungeon import repositories as dungeon_repo
+from dungeon import effects as dungeon_effects
+from dungeon import resolver as dungeon_resolver
 from economy import repositories as wallet_repo
 from rpg import repositories as rpg_repo
 from rpg.logic import get_racial_modifier
@@ -99,9 +101,34 @@ def build_combat_start_embed(
     return embed
 
 
+def _format_player_effects(combat_state: dict[str, Any] | None) -> str:
+    """Return a one-line summary of active player-affecting effects, or ''."""
+    if not combat_state:
+        return ""
+    effs = combat_state.get("player_effects") or []
+    if not effs:
+        return ""
+    parts: list[str] = []
+    for e in effs:
+        t = e.get("type")
+        if t == "advantage_next_attack":
+            parts.append("\u2728 Next attack: advantage")
+        elif t == "invert_next_attack":
+            parts.append("\U0001f501 Next attack: inverted")
+        elif t == "hit_chance_reduction":
+            pct = int(float(e.get("amount", 0)) * 100)
+            parts.append(f"\U0001f32b -{pct}% hit chance")
+        elif t == "bleed":
+            dmg = int(e.get("damage", 0))
+            remaining = int(e.get("remaining", 0))
+            parts.append(f"\U0001fa78 Bleed {dmg}/turn ({remaining}t)")
+    return "  \u2022  ".join(parts)
+
+
 def build_combat_embed(
     run, player, monster_data: dict[str, Any],
     narrative: list[str], dungeon_data: dict[str, Any],
+    combat_state: dict[str, Any] | None = None,
 ) -> discord.Embed:
     """Build the embed for an ongoing combat round."""
     is_boss = run.state == "boss"
@@ -115,6 +142,9 @@ def build_combat_embed(
         value=f"HP {run.monster_hp}/{run.monster_max_hp} {_hp_bar(run.monster_hp, run.monster_max_hp)}",
         inline=True,
     )
+    effects_line = _format_player_effects(combat_state)
+    if effects_line:
+        embed.add_field(name="Effects", value=effects_line, inline=False)
     embed.set_footer(text=_status_line(run, player))
     return embed
 
@@ -327,10 +357,15 @@ def _build_resume_embed(run, player, dungeon_data):
 
     if state in ("combat", "boss"):
         monster_name = run.monster_id or "???"
-        # Try to get actual monster name from room data
+        # Try to get actual monster name from room data (apply variant if present).
         if run.room_index < len(rooms):
             room_data = rooms[run.room_index]
             monster_data = room_data.get("monster", {})
+            try:
+                cs = json.loads(run.combat_state_json or "{}")
+            except (json.JSONDecodeError, TypeError):
+                cs = {}
+            monster_data = dungeon_logic.apply_variant(monster_data, cs.get("variant"))
             monster_name = monster_data.get("name", monster_name)
         prefix = "**BOSS:** " if state == "boss" else ""
         embed.color = EMBED_COLOR_BOSS if state == "boss" else EMBED_COLOR_COMBAT
@@ -1127,18 +1162,29 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
         room_type = room_data["type"]
 
         if room_type in ("combat", "boss"):
-            # Enter combat state
-            monster = room_data["monster"]
-            state = "boss" if room_type == "boss" else "combat"
-            run.state = state
-            run.monster_id = monster["id"]
-            run.monster_hp = monster["hp"]
-            run.monster_max_hp = monster["hp"]
+            # Enter combat state. Initialize combat_state_json with picked
+            # variant / description / empty effect buckets, and apply variant
+            # HP overrides before setting run.monster_*.
+            base_monster = room_data["monster"]
+            rng = random.Random()
+            combat_state = dungeon_effects.initial_combat_state(base_monster, rng)
+            combat_state["primary_monster_id"] = base_monster["id"]
+            effective_monster = dungeon_logic.apply_variant(
+                base_monster, combat_state.get("variant")
+            )
+            if "description" in combat_state:
+                effective_monster["description"] = combat_state["description"]
+            state_name = "boss" if room_type == "boss" else "combat"
+            run.state = state_name
+            run.monster_id = base_monster["id"]
+            run.monster_hp = effective_monster["hp"]
+            run.monster_max_hp = effective_monster["hp"]
             run.is_defending = False
+            run.combat_state_json = json.dumps(combat_state)
             await session.commit()
             await session.refresh(run)
 
-            embed = build_combat_start_embed(run, player, monster, dungeon_data)
+            embed = build_combat_start_embed(run, player, effective_monster, dungeon_data)
             view = CombatView(run_id, user_id, sessionmaker)
             await interaction.response.edit_message(embed=embed, view=view)
 
@@ -1206,8 +1252,102 @@ async def _handle_enter_room(interaction, run_id, user_id, sessionmaker):
             await interaction.response.edit_message(embed=embed, view=view)
 
 
+def _find_monster_def(dungeon_data: dict[str, Any], def_id: str) -> dict[str, Any] | None:
+    """Look up a monster definition by id across all floors of a dungeon."""
+    if not def_id:
+        return None
+    for floor in dungeon_data.get("floors", []) or []:
+        for m in floor.get("monsters", []) or []:
+            if m.get("id") == def_id:
+                return m
+        boss = floor.get("boss") or {}
+        if boss.get("id") == def_id:
+            return boss
+    return None
+
+
+def _spawn_pending_adds(
+    combat_state: dict[str, Any],
+    dungeon_data: dict[str, Any],
+    run,
+    narrative: list[str],
+) -> None:
+    """Materialize any pending-spawn adds from the combat state.
+
+    If any add is flagged ``pending_spawn``, populate its hp/max_hp from
+    the monster definition, snapshot the primary into ``state.primary``,
+    and swap run.monster_* to the add's stats. Only one add becomes the
+    active target at a time — others (if any) queue.
+    """
+    adds = combat_state.get("adds") or []
+    pending = [a for a in adds if a.get("pending_spawn")]
+    if not pending:
+        return
+    for add in pending:
+        add_def = _find_monster_def(dungeon_data, add.get("def_id"))
+        if add_def is None:
+            add["hp"] = 0
+            add["max_hp"] = 0
+            add["pending_spawn"] = False
+            continue
+        add["hp"] = int(add_def.get("hp", 1))
+        add["max_hp"] = int(add_def.get("hp", 1))
+        add["pending_spawn"] = False
+        # Assign a unique id
+        existing_ids = [a.get("id") for a in adds if a.get("id")]
+        idx = 0
+        while f"add_{idx}" in existing_ids:
+            idx += 1
+        add["id"] = f"add_{idx}"
+
+    # If no add is currently active, activate the first live one.
+    if combat_state.get("active", "primary") == "primary":
+        live = [a for a in adds if a.get("hp", 0) > 0]
+        if live:
+            new_active = live[0]
+            # Snapshot the primary
+            combat_state["primary"] = {
+                "hp": run.monster_hp,
+                "max_hp": run.monster_max_hp,
+                "monster_id": run.monster_id,
+            }
+            run.monster_id = new_active.get("def_id")
+            run.monster_hp = int(new_active.get("hp"))
+            run.monster_max_hp = int(new_active.get("max_hp"))
+            combat_state["active"] = new_active["id"]
+            narrative.append(
+                f"_A **{new_active.get('def_id', 'creature')}** rises from the page to intercept you!_"
+            )
+
+
+def _swap_back_to_primary(combat_state: dict[str, Any], run) -> None:
+    """Restore the primary monster as the active target after an add dies."""
+    primary = combat_state.get("primary") or {}
+    run.monster_id = primary.get("monster_id") or combat_state.get("primary_monster_id")
+    run.monster_hp = int(primary.get("hp", 1))
+    run.monster_max_hp = int(primary.get("max_hp", 1))
+    combat_state["active"] = "primary"
+    combat_state.pop("primary", None)
+    combat_state["untargetable_primary"] = False
+
+
 async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, action: str):
-    """Process a combat action (attack, defend, flee)."""
+    """Process a combat action (attack, defend, flee).
+
+    Turn resolution contract (attack/defend only; flee short-circuits):
+
+      1. Increment combat_state.turn.
+      2. Re-evaluate phase from primary-monster HP (at start of turn only).
+      3. Fire monster on_turn abilities — may write into player_effects.
+         Handle pending summon target-swap at this point.
+      4. Apply bleed ticks; resolve player action using composed modifiers.
+      5. Resolve monster action (normal AI OR pending special attack).
+         Fire on_hit abilities if the monster landed a hit.
+      6. Decrement effect durations; remove consumed single-use flags.
+      7. Check death / phase-change outcomes. If an ADD died, swap back
+         to primary and keep combat going. If PRIMARY died, run the
+         normal kill flow (XP, loot, bestiary).
+    """
     async with sessionmaker() as session:
         ctx = await _load_run_context(session, run_id)
         if ctx is None:
@@ -1221,8 +1361,24 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
 
         rooms = json.loads(run.rooms_json)
         room_data = rooms[run.room_index]
-        monster = room_data["monster"]
+        base_monster = room_data["monster"]
         narrative: list[str] = []
+
+        # Load / initialize combat state. Legacy runs from before this
+        # column existed will have "{}" or an empty string.
+        try:
+            combat_state = json.loads(run.combat_state_json or "{}")
+        except (json.JSONDecodeError, TypeError):
+            combat_state = {}
+        if not combat_state:
+            init_rng = random.Random()
+            combat_state = dungeon_effects.initial_combat_state(base_monster, init_rng)
+            combat_state["primary_monster_id"] = base_monster["id"]
+
+        # Effective monster for display / base stats (variant + description).
+        base_with_variant = dungeon_logic.apply_variant(base_monster, combat_state.get("variant"))
+        if "description" in combat_state:
+            base_with_variant["description"] = combat_state["description"]
 
         if action == "flee":
             fled = dungeon_logic.check_flee(
@@ -1236,22 +1392,31 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
                 run.monster_id = None
                 run.monster_hp = 0
                 run.monster_max_hp = 0
+                run.combat_state_json = "{}"
                 await session.commit()
                 await session.refresh(run)
 
-                embed = build_combat_embed(run, player, monster, narrative, dungeon_data)
+                embed = build_combat_embed(run, player, base_with_variant, narrative, dungeon_data)
                 view = PostRoomView(run_id, user_id, sessionmaker)
                 await interaction.response.edit_message(embed=embed, view=view)
                 return
             else:
                 narrative.append("You try to flee but can't escape!")
-                # Monster gets a free hit
+                # Monster gets a free hit — use currently-active entity stats.
+                active_def = base_with_variant
+                active_id = combat_state.get("active", "primary")
+                if active_id != "primary":
+                    for a in combat_state.get("adds") or []:
+                        if a.get("id") == active_id:
+                            add_def = _find_monster_def(dungeon_data, a.get("def_id")) or active_def
+                            active_def = add_def
+                            break
                 mon_dmg, _ = dungeon_logic.calc_monster_damage(
-                    monster["attack_dice"], monster.get("attack_bonus", 0),
+                    active_def["attack_dice"], active_def.get("attack_bonus", 0),
                     dungeon_logic.get_armor_defense(player.armor_id), False,
                 )
                 run.current_hp = max(run.current_hp - mon_dmg, 0)
-                narrative.append(f"The {monster['name']} strikes you for **{mon_dmg}** damage!")
+                narrative.append(f"The {active_def['name']} strikes you for **{mon_dmg}** damage!")
 
                 if run.current_hp <= 0:
                     await session.commit()
@@ -1260,18 +1425,102 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
                     return
 
                 run.is_defending = False
+                run.combat_state_json = json.dumps(combat_state)
                 await session.commit()
                 await session.refresh(run)
 
-                embed = build_combat_embed(run, player, monster, narrative, dungeon_data)
+                embed = build_combat_embed(run, player, base_with_variant, narrative, dungeon_data)
                 view = CombatView(run_id, user_id, sessionmaker)
                 await interaction.response.edit_message(embed=embed, view=view)
                 return
 
-        # Simultaneous resolution for attack/defend
+        # =============================================================
+        # Attack / defend resolution — follow the 7-step contract above.
+        # =============================================================
+
         is_defending = action == "defend"
 
-        # Player attack (only if attacking, not defending)
+        # --- Step 1: increment turn counter ---
+        combat_state["turn"] = int(combat_state.get("turn", 0)) + 1
+        turn = combat_state["turn"]
+
+        # --- Step 2: re-evaluate phase from PRIMARY HP (ignoring adds) ---
+        if combat_state.get("active", "primary") == "primary":
+            primary_hp = run.monster_hp
+            primary_max = run.monster_max_hp
+        else:
+            snap = combat_state.get("primary") or {}
+            primary_hp = int(snap.get("hp", run.monster_hp))
+            primary_max = int(snap.get("max_hp", run.monster_max_hp))
+        phases = base_monster.get("phases")
+        new_phase = dungeon_logic.compute_phase(primary_hp, primary_max, phases)
+        old_phase = int(combat_state.get("phase", 0))
+        if new_phase != old_phase:
+            combat_state["phase"] = new_phase
+            phase_def = dungeon_logic.get_phase_def(base_monster, new_phase)
+            if phase_def:
+                on_enter = phase_def.get("on_enter") or {}
+                if on_enter.get("text"):
+                    narrative.append(on_enter["text"])
+
+        # Compute the effective primary (variant + phase overrides).
+        effective_primary = dungeon_logic.merge_phase_overrides(base_with_variant, new_phase)
+
+        # Determine current active target (primary vs add).
+        active_id = combat_state.get("active", "primary")
+        active_def = effective_primary
+        if active_id != "primary":
+            for a in combat_state.get("adds") or []:
+                if a.get("id") == active_id:
+                    found = _find_monster_def(dungeon_data, a.get("def_id"))
+                    if found is not None:
+                        active_def = found
+                    break
+
+        # --- Step 3: fire monster on_turn abilities ---
+        # Abilities come from the effective primary (not adds — adds stay simple).
+        abilities = list(effective_primary.get("abilities") or [])
+        fx_ctx = dungeon_effects.EncounterCtx(
+            state=combat_state,
+            monster_def=active_def,
+            monster_hp=run.monster_hp,
+            monster_max_hp=run.monster_max_hp,
+            turn=turn,
+            phase=new_phase,
+            rng=random.Random(),
+            narrative=narrative,
+        )
+        for ability in abilities:
+            if dungeon_effects.should_trigger(
+                ability,
+                turn=turn,
+                monster_hp=primary_hp,
+                monster_max_hp=primary_max,
+                state=combat_state,
+            ):
+                dungeon_effects.dispatch(fx_ctx, ability)
+                if ability.get("trigger") == "on_hp_below_pct":
+                    dungeon_effects.mark_hp_trigger_fired(ability, combat_state)
+
+        # Materialize any adds that were just summoned this turn.
+        _spawn_pending_adds(combat_state, dungeon_data, run, narrative)
+
+        # Re-resolve the active target after possible summon swap.
+        active_id = combat_state.get("active", "primary")
+        if active_id != "primary":
+            for a in combat_state.get("adds") or []:
+                if a.get("id") == active_id:
+                    found = _find_monster_def(dungeon_data, a.get("def_id"))
+                    if found is not None:
+                        active_def = found
+                    break
+
+        # --- Step 4: bleed tick, then resolve player action ---
+        bleed_dmg = dungeon_resolver.resolve_bleed_damage(combat_state)
+        if bleed_dmg > 0:
+            run.current_hp = max(run.current_hp - bleed_dmg, 0)
+            narrative.append(f"_Bleed deals **{bleed_dmg}** damage._")
+
         player_dmg = 0
         was_crit = False
         if action == "attack":
@@ -1286,92 +1535,193 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
             weapon_dice = dungeon_logic.get_weapon_dice(player.weapon_id)
             weapon_bonus = dungeon_logic.get_weapon_bonus(player.weapon_id)
             str_mod = dungeon_logic.get_modifier(player.strength)
-            # Compose damage modifiers from race (+ future gear/buff sources)
-            has_bloodrage = get_racial_modifier(race, "dungeon.bloodrage", False)
-            bloodrage_active = (
-                has_bloodrage and run.max_hp > 0 and run.current_hp <= run.max_hp // 2
+            p_mods = dungeon_resolver.resolve_player_attack_mods(
+                race=race,
+                run_current_hp=run.current_hp,
+                run_max_hp=run.max_hp,
+                state=combat_state,
             )
-            player_dmg, _ = dungeon_logic.calc_player_damage(
-                weapon_dice, str_mod, weapon_bonus, monster.get("defense", 0), was_crit,
-                damage_advantage=bloodrage_active,
-                bonus_penalty=get_racial_modifier(race, "dungeon.weapon_bonus_penalty", 0),
-            )
+            effective_dice = dungeon_resolver.bump_dice(weapon_dice, p_mods.weapon_dice_step)
+            # Monster defense includes any active-effect bonus (e.g. Alaric's wall
+            # applies only to the primary; adds don't inherit it).
+            target_defense = int(active_def.get("defense", 0))
+            if active_id == "primary":
+                target_defense += dungeon_resolver.resolve_monster_defense_bonus(combat_state)
+
+            # Disadvantage overrides advantage: roll twice keep lower.
+            if p_mods.damage_disadvantage:
+                dmg_a, _ = dungeon_logic.calc_player_damage(
+                    effective_dice, str_mod, weapon_bonus, target_defense, was_crit,
+                    bonus_penalty=p_mods.bonus_penalty,
+                    damage_bonus=p_mods.damage_bonus,
+                )
+                dmg_b, _ = dungeon_logic.calc_player_damage(
+                    effective_dice, str_mod, weapon_bonus, target_defense, was_crit,
+                    bonus_penalty=p_mods.bonus_penalty,
+                    damage_bonus=p_mods.damage_bonus,
+                )
+                player_dmg = min(dmg_a, dmg_b)
+            else:
+                player_dmg, _ = dungeon_logic.calc_player_damage(
+                    effective_dice, str_mod, weapon_bonus, target_defense, was_crit,
+                    damage_advantage=p_mods.damage_advantage,
+                    bonus_penalty=p_mods.bonus_penalty,
+                    damage_bonus=p_mods.damage_bonus,
+                )
+            # Single-use flag cleanup. Durations tick at end of turn but the
+            # advantage/invert flags specifically are "until consumed" — remove
+            # now so they don't linger.
+            dungeon_effects.consume_player_flag(combat_state, "advantage_next_attack")
+            dungeon_effects.consume_player_flag(combat_state, "invert_next_attack")
+
             crit_text = " **CRITICAL HIT!**" if was_crit else ""
-            narrative.append(f"You strike the {monster['name']} for **{player_dmg}** damage!{crit_text}")
+            narrative.append(f"You strike the {active_def['name']} for **{player_dmg}** damage!{crit_text}")
         else:
             narrative.append("You raise your guard and brace for impact.")
 
-        # Monster action
-        ai_weights = monster.get("ai", {"attack": 70, "heavy": 30})
-        mon_action = dungeon_logic.select_monster_action(ai_weights)
-
+        # --- Step 5: monster action ---
         mon_dmg = 0
-        if mon_action == "attack":
-            mon_dmg, _ = dungeon_logic.calc_monster_damage(
-                monster["attack_dice"], monster.get("attack_bonus", 0),
-                dungeon_logic.get_armor_defense(player.armor_id), is_defending,
-            )
-            narrative.append(f"The {monster['name']} attacks you for **{mon_dmg}** damage!")
-        elif mon_action == "heavy":
-            heavy_dmg, _ = dungeon_logic.calc_monster_damage(
-                monster["attack_dice"], monster.get("attack_bonus", 0),
-                dungeon_logic.get_armor_defense(player.armor_id), is_defending,
-            )
-            heavy_dmg = int(heavy_dmg * 1.5)
-            mon_dmg = heavy_dmg
-            narrative.append(f"The {monster['name']} unleashes a heavy attack for **{mon_dmg}** damage!")
-        elif mon_action == "defend":
-            narrative.append(f"The {monster['name']} braces defensively.")
-            # Monster defending reduces player damage this round
-            player_dmg = max(player_dmg // 2, 1) if player_dmg > 0 else 0
-            if action == "attack":
-                narrative[-2] = f"You strike the {monster['name']} for **{player_dmg}** damage! (blocked)"
+        special = combat_state.pop("_pending_special_attack", None)
+        player_armor = dungeon_logic.get_armor_defense(player.armor_id)
+        p_def = dungeon_resolver.resolve_player_defense_mods(combat_state)
+        m_atk_mods = dungeon_resolver.resolve_monster_attack_mods(state=combat_state)
 
-        # Apply damage simultaneously
+        if special is not None:
+            kind = special.get("kind", "special")
+            atk_dice = special.get("damage_dice", "2d6")
+            extra_bonus = int(special.get("damage_bonus", 0))
+            defense_ignore = int(special.get("defense_ignore", 0))
+            effective_armor = max(0, player_armor - defense_ignore)
+            raw_dmg, _ = dungeon_logic.calc_monster_damage(
+                atk_dice, extra_bonus, effective_armor, is_defending,
+            )
+            mon_dmg = max(1, raw_dmg + m_atk_mods.flat_damage_bonus)
+            if p_def.hit_chance_multiplier < 1.0 and random.random() > p_def.hit_chance_multiplier:
+                mon_dmg = 0
+                narrative.append(f"The {active_def['name']}'s attack unravels in the fog.")
+            else:
+                fallback_text = {
+                    "existential_strike": f"The {active_def['name']} lifts its quill — you feel yourself being flattened, simplified, labeled. **{mon_dmg}** damage!",
+                    "redraw_strike": f"The {active_def['name']} redraws the room around you for **{mon_dmg}** damage!",
+                }.get(kind, f"A devastating strike lands for **{mon_dmg}** damage!")
+                text = special.get("text") or fallback_text
+                narrative.append(text)
+        else:
+            ai_weights = active_def.get("ai") or {"attack": 70, "heavy": 30}
+            mon_action = dungeon_logic.select_monster_action(ai_weights)
+            if mon_action in ("attack", "heavy"):
+                base_atk_dice = active_def.get("attack_dice", "1d4")
+                effective_atk_dice = dungeon_resolver.bump_dice(
+                    base_atk_dice, m_atk_mods.attack_dice_step
+                )
+                raw_dmg, _ = dungeon_logic.calc_monster_damage(
+                    effective_atk_dice, active_def.get("attack_bonus", 0),
+                    player_armor, is_defending,
+                )
+                if mon_action == "heavy":
+                    raw_dmg = int(raw_dmg * 1.5)
+                mon_dmg = max(1, raw_dmg + m_atk_mods.flat_damage_bonus)
+                if p_def.hit_chance_multiplier < 1.0 and random.random() > p_def.hit_chance_multiplier:
+                    mon_dmg = 0
+                    narrative.append(f"The {active_def['name']}'s attack dissipates in the fog.")
+                else:
+                    if mon_action == "heavy":
+                        narrative.append(f"The {active_def['name']} unleashes a heavy attack for **{mon_dmg}** damage!")
+                    else:
+                        narrative.append(f"The {active_def['name']} attacks you for **{mon_dmg}** damage!")
+                # Fire on_hit abilities when the monster lands damage.
+                if mon_dmg > 0:
+                    for ability in abilities:
+                        if ability.get("trigger") == "on_hit":
+                            dungeon_effects.dispatch(fx_ctx, ability)
+            elif mon_action == "defend":
+                narrative.append(f"The {active_def['name']} braces defensively.")
+                if player_dmg > 0:
+                    player_dmg = max(player_dmg // 2, 1)
+                    # Rewrite the prior "You strike..." line to show the block.
+                    if narrative and narrative[-2].startswith("You strike"):
+                        narrative[-2] = (
+                            f"You strike the {active_def['name']} for **{player_dmg}** damage! (blocked)"
+                        )
+
+        # Apply damage simultaneously.
         run.monster_hp = max(run.monster_hp - player_dmg, 0)
         run.current_hp = max(run.current_hp - mon_dmg, 0)
         run.is_defending = is_defending
 
-        # Stoneblood: Dwarf survives killing blow once per run
-        if run.current_hp <= 0 and not run.stoneblood_used and get_racial_modifier(race, "dungeon.stoneblood", False):
+        # Any pending self-heal from an effect atom (variant on_turn_effect, etc.).
+        pending_heal = int(combat_state.pop("_pending_self_heal", 0))
+        if pending_heal > 0:
+            run.monster_hp = min(run.monster_hp + pending_heal, run.monster_max_hp)
+
+        # Stoneblood
+        if (
+            run.current_hp <= 0
+            and not run.stoneblood_used
+            and get_racial_modifier(race, "dungeon.stoneblood", False)
+        ):
             run.current_hp = 1
             run.stoneblood_used = True
-            narrative.append("**Stoneblood!** You refuse to fall — sheer dwarven stubbornness keeps you on your feet at 1 HP!")
+            narrative.append(
+                "**Stoneblood!** You refuse to fall — sheer dwarven stubbornness keeps you on your feet at 1 HP!"
+            )
 
-        # Check outcomes
+        # --- Step 6: tick effect durations ---
+        dungeon_effects.tick_effects(combat_state)
+
+        # --- Step 7: outcomes ---
         monster_dead = run.monster_hp <= 0
         player_dead = run.current_hp <= 0
 
+        # If the ACTIVE entity is an add and it just died, swap back to primary
+        # and continue combat. Adds don't award XP / loot.
+        if monster_dead and combat_state.get("active", "primary") != "primary":
+            # Mark add as dead in state
+            for a in combat_state.get("adds") or []:
+                if a.get("id") == combat_state.get("active"):
+                    a["hp"] = 0
+                    break
+            narrative.append(f"_The {active_def['name']} is banished back to the parchment._")
+            _swap_back_to_primary(combat_state, run)
+            # Primary is alive — combat continues.
+            monster_dead = False
+
+        # Persist combat state before committing / branching.
+        run.combat_state_json = json.dumps(combat_state)
+
         if monster_dead and player_dead:
-            # Both die simultaneously — player dies
-            narrative.append(f"\nThe {monster['name']} falls... but so do you.")
+            narrative.append(f"\nThe {active_def['name']} falls... but so do you.")
             await session.commit()
             await session.refresh(run)
             await _process_death(session, run, player, dungeon_data, interaction, narrative)
             return
 
         if player_dead:
-            narrative.append(f"\nThe {monster['name']} strikes you down!")
+            narrative.append(f"\nThe {active_def['name']} strikes you down!")
             await session.commit()
             await session.refresh(run)
             await _process_death(session, run, player, dungeon_data, interaction, narrative)
             return
 
         if monster_dead:
-            narrative.append(f"\nThe **{monster['name']}** is defeated!")
-            # Award XP, gold, loot
-            xp_gained = monster.get("xp", 0)
-            gold_range = monster.get("gold", [0, 0])
+            # Primary died — normal kill flow. Reward based on the BASE monster
+            # definition (so variant display doesn't affect XP/loot).
+            on_death = base_monster.get("on_death_narration")
+            if on_death:
+                narrative.append(f"\n{on_death}")
+            else:
+                narrative.append(f"\nThe **{base_with_variant['name']}** is defeated!")
+            xp_gained = base_monster.get("xp", 0)
+            gold_range = base_monster.get("gold", [0, 0])
             gold_gained = dungeon_logic.roll_monster_gold(gold_range)
             loot_drops = dungeon_logic.roll_loot_drops(
-                monster.get("loot", []),
+                base_monster.get("loot", []),
                 loot_chance_bonus=get_racial_modifier(race, "dungeon.loot_chance_bonus", 0),
             )
 
             run.run_xp += xp_gained
             run.run_gold += gold_gained
 
-            # Split loot: regular items go to found_items, cross-game instant
             found_items = json.loads(run.found_items_json)
             cross_game_drops: list[dict[str, Any]] = []
             regular_drops: list[dict[str, Any]] = []
@@ -1397,7 +1747,6 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
                             )
                             cross_game_drops.append(drop)
                 else:
-                    # Check for duplicate gear — convert to gold immediately
                     if drop.get("type") == "gear":
                         gear_def = dungeon_logic.get_gear_by_id(drop["item_id"])
                         equipped_ids = {
@@ -1424,21 +1773,19 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
 
             run.found_items_json = json.dumps(found_items)
 
-            # Bestiary tracking
             now = datetime.now(timezone.utc)
             await dungeon_repo.upsert_bestiary_entry(
-                session, run.user_id, run.guild_id, monster["id"], now,
+                session, run.user_id, run.guild_id, base_monster["id"], now,
             )
 
-            # Update player kill count
             player.total_kills += 1
 
-            # Check if this was the boss
             is_boss = run.state == "boss"
             run.monster_id = None
             run.monster_hp = 0
             run.monster_max_hp = 0
             run.room_index += 1
+            run.combat_state_json = "{}"  # Clear for next encounter.
 
             if is_boss:
                 run.state = "floor_complete"
@@ -1462,11 +1809,17 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
                 await interaction.response.edit_message(embed=embed, view=view)
             return
 
-        # Combat continues
+        # Combat continues.
         await session.commit()
         await session.refresh(run)
 
-        embed = build_combat_embed(run, player, monster, narrative, dungeon_data)
+        # Build the display monster — use active_def for the current target
+        # (may be an add), with its display name reflecting variant/phase.
+        display_monster = active_def if combat_state.get("active", "primary") != "primary" else effective_primary
+        embed = build_combat_embed(
+            run, player, display_monster, narrative, dungeon_data,
+            combat_state=combat_state,
+        )
         view = CombatView(run_id, user_id, sessionmaker)
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -1577,23 +1930,37 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
             race = profile.race
             rooms = json.loads(run.rooms_json)
             room_data = rooms[run.room_index]
-            monster = room_data["monster"]
+            base_monster = room_data["monster"]
+            try:
+                combat_state_local = json.loads(run.combat_state_json or "{}")
+            except (json.JSONDecodeError, TypeError):
+                combat_state_local = {}
+            # Use the variant/phase-adjusted monster for display + damage.
+            monster = dungeon_logic.apply_variant(base_monster, combat_state_local.get("variant"))
+            phase_idx = int(combat_state_local.get("phase", 0))
+            monster = dungeon_logic.merge_phase_overrides(monster, phase_idx)
+            m_atk_mods = dungeon_resolver.resolve_monster_attack_mods(state=combat_state_local)
 
             ai_weights = monster.get("ai", {"attack": 70, "heavy": 30})
             mon_action = dungeon_logic.select_monster_action(ai_weights)
             mon_dmg = 0
             if mon_action == "attack":
-                mon_dmg, _ = dungeon_logic.calc_monster_damage(
-                    monster["attack_dice"], monster.get("attack_bonus", 0),
+                base_dice = monster.get("attack_dice", "1d4")
+                eff_dice = dungeon_resolver.bump_dice(base_dice, m_atk_mods.attack_dice_step)
+                raw_dmg, _ = dungeon_logic.calc_monster_damage(
+                    eff_dice, monster.get("attack_bonus", 0),
                     dungeon_logic.get_armor_defense(player.armor_id), False,
                 )
+                mon_dmg = max(1, raw_dmg + m_atk_mods.flat_damage_bonus)
                 narrative.append(f"The {monster['name']} attacks you for **{mon_dmg}** damage!")
             elif mon_action == "heavy":
+                base_dice = monster.get("attack_dice", "1d4")
+                eff_dice = dungeon_resolver.bump_dice(base_dice, m_atk_mods.attack_dice_step)
                 heavy_dmg, _ = dungeon_logic.calc_monster_damage(
-                    monster["attack_dice"], monster.get("attack_bonus", 0),
+                    eff_dice, monster.get("attack_bonus", 0),
                     dungeon_logic.get_armor_defense(player.armor_id), False,
                 )
-                mon_dmg = int(heavy_dmg * 1.5)
+                mon_dmg = max(1, int(heavy_dmg * 1.5) + m_atk_mods.flat_damage_bonus)
                 narrative.append(f"The {monster['name']} unleashes a heavy attack for **{mon_dmg}** damage!")
             elif mon_action == "defend":
                 narrative.append(f"The {monster['name']} braces defensively.")
@@ -1629,11 +1996,26 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
             embed.set_footer(text=_status_line(run, player))
             view = PostRoomView(run_id, user_id, sessionmaker)
         else:
-            # Healed mid-combat, rebuild combat embed
+            # Healed mid-combat, rebuild combat embed (variant/effects-aware).
             rooms = json.loads(run.rooms_json)
             room_data = rooms[run.room_index]
-            monster = room_data["monster"]
-            embed = build_combat_embed(run, player, monster, narrative, dungeon_data)
+            base_monster = room_data["monster"]
+            try:
+                combat_state_for_embed = json.loads(run.combat_state_json or "{}")
+            except (json.JSONDecodeError, TypeError):
+                combat_state_for_embed = {}
+            display_monster = dungeon_logic.apply_variant(
+                base_monster, combat_state_for_embed.get("variant")
+            )
+            if "description" in combat_state_for_embed:
+                display_monster["description"] = combat_state_for_embed["description"]
+            display_monster = dungeon_logic.merge_phase_overrides(
+                display_monster, int(combat_state_for_embed.get("phase", 0))
+            )
+            embed = build_combat_embed(
+                run, player, display_monster, narrative, dungeon_data,
+                combat_state=combat_state_for_embed,
+            )
             view = CombatView(run_id, user_id, sessionmaker)
 
         # Edit the original dungeon message

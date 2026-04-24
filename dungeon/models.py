@@ -58,6 +58,10 @@ class DungeonRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     stoneblood_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Per-encounter combat state blob — turn counter, phase index, picked variant,
+    # picked description, active effects, summon adds, etc. See dungeon/effects.py
+    # for the shape. Default "{}" means "not in an encounter" or legacy pre-column row.
+    combat_state_json: Mapped[str] = mapped_column(String, default="{}")
 
 
 class BestiaryEntry(Base):
