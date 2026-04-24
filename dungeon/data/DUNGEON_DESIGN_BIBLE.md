@@ -93,7 +93,7 @@ Used in both the `monsters` array and the `boss` field.
   loot:                            # Loot table (each entry rolled independently)
     - {item_id: health_potion, chance: 15}
     - {item_id: worm, chance: 20, type: cross_game_bait}
-    - {item_id: Ember Salt, chance: 8, type: cross_game_ingredient, name: Ember Salt}
+    - {item_id: Flickerstone, chance: 7, type: cross_game_ingredient, name: Flickerstone}
     - {item_id: shortsword_plus1, chance: 8, type: gear}
 ```
 
@@ -164,7 +164,7 @@ loot:
     chance: 15                     # Percent chance (1-100) per kill
     # Optional fields:
     type: gear                     # One of: gear, cross_game_bait, cross_game_ingredient
-    name: Ember Salt               # Display name (required for cross_game_ingredient)
+    name: Flickerstone             # Display name (required for cross_game_ingredient)
 ```
 
 ### Loot Types
@@ -174,7 +174,7 @@ loot:
 | *(omitted)* | Consumable item from `items.yaml` | **Lost** | `health_potion`, `smoke_bomb` |
 | `gear` | Equipment from `gear.yaml` | **Lost** | `shortsword_plus1`, `leather_armor_plus1` |
 | `cross_game_bait` | Fishing bait, awarded instantly | **Kept** | `worm`, `insect`, `shiny_lure` |
-| `cross_game_ingredient` | Brewing ingredient, awarded instantly | **Kept** | `Ember Salt`, `Wraith Moss` |
+| `cross_game_ingredient` | Brewing ingredient, awarded instantly | **Kept** | `Flickerstone`, `Ghostlight Oil` |
 
 Cross-game drops are awarded the moment they drop (not stored in the run's found items), so they survive death. This is intentional — the player earned the kill.
 
@@ -190,7 +190,7 @@ Cross-game drops are awarded the moment they drop (not stored in the run's found
 
 **Brewing Ingredients** (`type: cross_game_ingredient`, must include `name` field):
 
-*Free tier (common drops, 8-10% on regular monsters):*
+*Free tier — **DO NOT drop from dungeons.** Players can forage these freely via brewing, so dungeon drops are worthless. Listed only for tag reference:*
 | item_id / name | Tags |
 |----------------|------|
 | `Ember Salt` | Thermal / Volatile |
@@ -200,7 +200,7 @@ Cross-game drops are awarded the moment they drop (not stored in the run's found
 | `Gloomcap` | Abyssal / Mutagenic |
 | `Brimstone Dust` | Thermal / Corrosive |
 
-*Uncommon tier (rare drops, 3-5% on deeper floors):*
+*Uncommon tier (regular drops, 5-8% on deeper floors):*
 | item_id / name | Tags |
 |----------------|------|
 | `Singing Quartz` | Resonant / Calcified |
@@ -285,8 +285,8 @@ From `items.yaml` (no `type` field needed):
 - Consumables at 15-25% (one type per monster, maybe two)
 - Common bait at 20-25% (worm)
 - Uncommon bait at 10-15% on deeper floors (insect)
-- Free-tier ingredients at 8-10% (pick 2-3 thematic ones)
-- Uncommon ingredients at 3-5% on floor 2+ (pick 1-2)
+- Uncommon ingredients at 5-8% on floor 1, 6-11% on floor 2+ (pick 1-2 thematic)
+- **Never** drop free-tier ingredients — players forage those for free, so dungeon drops are worthless
 - **No gear drops** from regular monsters
 
 **Bosses** should drop:
@@ -296,7 +296,7 @@ From `items.yaml` (no `type` field needed):
 - +1 enchanted gear at 8-12% (any boss)
 - +2 enchanted gear at 4-5% (floor 3+ bosses only)
 - +3 gear is NOT in any loot table yet (reserved for future content)
-- Rare-tier ingredients at 10-15% (final boss only)
+- Rare-tier ingredients at 13-18% (final boss only)
 
 ---
 
@@ -360,7 +360,7 @@ floors:
         ai: {attack: 80, heavy: 20}
         loot:
           - {item_id: worm, chance: 25, type: cross_game_bait}
-          - {item_id: Ember Salt, chance: 8, type: cross_game_ingredient, name: Ember Salt}
+          - {item_id: Flickerstone, chance: 6, type: cross_game_ingredient, name: Flickerstone}
     traps:
       - id: example_pit
         name: Pit Trap
