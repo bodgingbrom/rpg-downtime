@@ -2303,9 +2303,15 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
             elif len(dungeons) == 1:
                 dungeon_key = next(iter(dungeons))
             else:
-                # Multiple dungeons available — ask the player to pick
+                # Multiple dungeons available — ask the player to pick.
+                # Prefer the new background.pitch if authored; fall back to
+                # the top-level description for older dungeons.
+                def _pitch(d: dict[str, Any]) -> str:
+                    bg = d.get("background") or {}
+                    return bg.get("pitch") or d.get("description", "")
+
                 listing = "\n".join(
-                    f"• **{d.get('name', k)}** — `/dungeon delve {k}`\n  *{d.get('description', '')}*"
+                    f"• **{d.get('name', k)}** — `/dungeon delve {k}`\n  *{_pitch(d)}*"
                     for k, d in dungeons.items()
                 )
                 await context.send(
@@ -2348,10 +2354,12 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
             )
 
             # Post intro embed inside the thread
+            intro_bg = dungeon_data.get("background") or {}
+            intro_flavor = intro_bg.get("pitch") or dungeon_data.get("description", "")
             embed = discord.Embed(
                 title=f"Entering {dungeon_data['name']}...",
                 description=(
-                    f"*{dungeon_data.get('description', '')}*\n\n"
+                    f"*{intro_flavor}*\n\n"
                     f"You steel yourself and step into the darkness.\n"
                     f"There's no telling what lies ahead."
                 ),
