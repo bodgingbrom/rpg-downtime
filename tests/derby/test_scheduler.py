@@ -828,6 +828,46 @@ async def test_replenish_pool(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_replenish_pool_sets_abilities_on_new_racers(tmp_path: Path) -> None:
+    """Regression: _replenish_pool must roll abilities for each new racer.
+    Previously pool racers were created without abilities, and the next
+    bot restart would silently back-fill them, spamming the log with
+    "Back-filling abilities for N racers" every boot."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=5,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    created = await scheduler._replenish_pool(GUILD_ID)
+    assert created == 5
+
+    async with scheduler.sessionmaker() as session:
+        racers = (await session.execute(select(Racer))).scalars().all()
+    assert len(racers) == 5
+    # Every newly-created pool racer must have both ability slots set.
+    for r in racers:
+        assert r.signature_ability, (
+            f"Pool racer {r.name!r} missing signature_ability — would "
+            "trigger a back-fill on next restart"
+        )
+        assert r.quirk_ability, (
+            f"Pool racer {r.name!r} missing quirk_ability"
+        )
+
+
+@pytest.mark.asyncio
 async def test_replenish_pool_disabled(tmp_path: Path) -> None:
     """When min_pool_size=0, no racers are created."""
     db_path = tmp_path / "db.sqlite"

@@ -1420,12 +1420,27 @@ class DerbyScheduler:
             )
             taken = {row[0] for row in result.all()}
 
+        from . import abilities as _abilities_roll_pool
+
         created = 0
         for _ in range(to_create):
             kwargs = logic.generate_pool_racer(guild_id, taken)
             taken.add(kwargs["name"])
             async with self.sessionmaker() as session:
-                await repo.create_racer(session, **kwargs)
+                racer = await repo.create_racer(session, **kwargs)
+                # Roll abilities now so the racer spawns fully
+                # configured — without this, the back-fill on the next
+                # bot restart silently re-populates them, which was
+                # showing up as "Back-filling abilities for N racers"
+                # after every reboot.
+                sig_key, quirk_key = _abilities_roll_pool.roll_abilities(racer)
+                updates: dict = {}
+                if sig_key:
+                    updates["signature_ability"] = sig_key
+                if quirk_key:
+                    updates["quirk_ability"] = quirk_key
+                if updates:
+                    await repo.update_racer(session, racer.id, **updates)
             created += 1
 
         if created:
@@ -2667,10 +2682,23 @@ class DerbyScheduler:
             needed -= 1
 
         # Generate new pool racers if we still need more
+        from . import abilities as _abilities_roll_tour
         while needed > 0:
             kwargs = logic.generate_pool_racer_for_rank(rank, guild_id, taken_names)
             taken_names.add(kwargs["name"])
             new_racer = await repo.create_racer(session, **kwargs)
+            # Roll abilities so the new racer isn't a "legacy NULL"
+            # that the back-fill has to catch on next restart.
+            sig_key, quirk_key = _abilities_roll_tour.roll_abilities(new_racer)
+            t_updates: dict = {}
+            if sig_key:
+                t_updates["signature_ability"] = sig_key
+            if quirk_key:
+                t_updates["quirk_ability"] = quirk_key
+            if t_updates:
+                await repo.update_racer(session, new_racer.id, **t_updates)
+                # Refresh so downstream code sees the abilities
+                await session.refresh(new_racer)
             await repo.create_tournament_entry(
                 session,
                 tournament_id=tournament_id,
