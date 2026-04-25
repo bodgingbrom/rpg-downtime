@@ -24,6 +24,17 @@ from .models import (
     TournamentEntry,
 )
 
+# Cross-game repo functions live in core/. Re-exported here so that
+# existing ``from derby import repositories as repo; repo.get_guild_settings``
+# imports keep working.
+from core.repositories import (  # noqa: E402, F401
+    create_guild_settings,
+    delete_guild_settings,
+    get_guild_settings,
+    log_command,
+    update_guild_settings,
+)
+
 ModelT = TypeVar(
     "ModelT", Racer, Race, Bet, CourseSegment, GuildSettings, Tournament, TournamentEntry
 )
@@ -332,26 +343,6 @@ async def delete_course_segment(session: AsyncSession, segment_id: int) -> None:
 
 
 # GuildSettings
-async def create_guild_settings(session: AsyncSession, **kwargs) -> GuildSettings:
-    return await _create(session, GuildSettings, **kwargs)
-
-
-async def get_guild_settings(
-    session: AsyncSession, guild_id: int
-) -> GuildSettings | None:
-    return await _get(session, GuildSettings, guild_id)
-
-
-async def update_guild_settings(
-    session: AsyncSession, guild_id: int, **kwargs
-) -> GuildSettings | None:
-    return await _update(session, GuildSettings, guild_id, **kwargs)
-
-
-async def delete_guild_settings(session: AsyncSession, guild_id: int) -> None:
-    await _delete(session, GuildSettings, guild_id)
-
-
 # History
 async def get_race_history(
     session: AsyncSession, guild_id: int, limit: int
@@ -647,29 +638,6 @@ async def consume_racer_buffs(
     await session.commit()
 
 
-# ---------------------------------------------------------------------------
-# Command logging / analytics
-# ---------------------------------------------------------------------------
-
-
-async def log_command(
-    session: AsyncSession,
-    *,
-    guild_id: int,
-    user_id: int,
-    command: str,
-    cog: str = "unknown",
-) -> CommandLog:
-    """Insert a command log entry."""
-    entry = CommandLog(
-        guild_id=guild_id,
-        user_id=user_id,
-        command=command,
-        cog=cog,
-    )
-    session.add(entry)
-    await session.commit()
-    return entry
 
 
 async def get_command_usage(

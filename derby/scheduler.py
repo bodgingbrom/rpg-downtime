@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from config import resolve_guild_setting
 from db_base import Base
+import core.models  # noqa: F401 — register cross-game tables on Base
 import brewing.models  # noqa: F401 — register brewing tables on Base
 import dungeon.models  # noqa: F401 — register dungeon tables on Base
 import fishing.models  # noqa: F401 — register fishing tables on Base
