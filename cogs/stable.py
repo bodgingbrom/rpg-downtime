@@ -43,7 +43,7 @@ async def _fetch_manage_data(sessionmaker, racer_id, user_id, guild_id, bot_sett
         racer = await repo.get_racer(session, racer_id)
         if racer is None:
             return None
-        gs = await repo.get_guild_settings(session, guild_id)
+        gs = await self.bot.scheduler.guild_settings.get(guild_id)
         wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
         if wallet is None:
             default_bal = resolve_guild_setting(gs, bot_settings, "default_wallet")
@@ -266,7 +266,7 @@ class StableSellConfirmView(discord.ui.View):
 
             wallet = await wallet_repo.get_wallet(session, self.user_id, self.guild_id)
             if wallet is None:
-                gs = await repo.get_guild_settings(session, self.guild_id)
+                gs = await self.bot.scheduler.guild_settings.get(self.guild_id)
                 default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
                 wallet = await wallet_repo.create_wallet(
                     session, user_id=self.user_id, guild_id=self.guild_id, balance=default_bal,
@@ -340,7 +340,7 @@ class StableTrainView(discord.ui.View):
                 await interaction.response.send_message("This racer is retired.", ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, self.guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(self.guild_id)
             max_trains = resolve_guild_setting(gs, self.bot.settings, "max_trains_per_race")
             if (racer.trains_since_race or 0) >= max_trains:
                 await interaction.response.send_message(
@@ -533,7 +533,7 @@ class StableManageView(discord.ui.View):
                 await interaction.response.send_message(error, ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, self.guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(self.guild_id)
             cost = resolve_guild_setting(gs, self.bot.settings, "rest_cost")
 
             wallet = await wallet_repo.get_wallet(session, self.user_id, self.guild_id)
@@ -589,7 +589,7 @@ class StableManageView(discord.ui.View):
                 await interaction.response.send_message(error, ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, self.guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(self.guild_id)
             cost = resolve_guild_setting(gs, self.bot.settings, "feed_cost")
 
             wallet = await wallet_repo.get_wallet(session, self.user_id, self.guild_id)
@@ -653,7 +653,7 @@ class StableManageView(discord.ui.View):
                 )
                 return
 
-            gs = await repo.get_guild_settings(session, self.guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(self.guild_id)
             base = resolve_guild_setting(gs, self.bot.settings, "racer_buy_base")
             mult = resolve_guild_setting(gs, self.bot.settings, "racer_buy_multiplier")
             frac = resolve_guild_setting(gs, self.bot.settings, "racer_sell_fraction")
@@ -732,7 +732,7 @@ class Stable(commands.Cog, name="stable"):
             racers = await repo.get_stable_racers(
                 session, context.author.id, guild_id
             )
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
         if not racers:
             await context.send(
                 "You don't own any racers yet! Use `/stable browse` to see "
@@ -804,7 +804,7 @@ class Stable(commands.Cog, name="stable"):
         user_id = context.author.id
 
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             all_racers = await repo.get_stable_racers(session, user_id, guild_id)
             if not all_racers:
                 await context.send(
@@ -813,7 +813,7 @@ class Stable(commands.Cog, name="stable"):
                 )
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             min_train = self._resolve("min_training_to_race", gs)
 
             active = [r for r in all_racers if not r.retired]
@@ -941,7 +941,7 @@ class Stable(commands.Cog, name="stable"):
                 await context.send("Racer not found.", ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
 
             # Look up lineage names
             sire_name = "Unknown"
@@ -1143,7 +1143,7 @@ class Stable(commands.Cog, name="stable"):
                 await context.send("You can only show off racers you own.", ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
 
             # Look up lineage names
             sire_name = "Unknown"
@@ -1289,7 +1289,7 @@ class Stable(commands.Cog, name="stable"):
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             if upcoming:
                 # Get participants directly from the race — avoids
                 # pool_expires_at filtering that would miss valid entrants.
@@ -1376,7 +1376,7 @@ class Stable(commands.Cog, name="stable"):
                 await context.send("That racer is already owned!", ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             base = self._resolve("racer_buy_base", gs)
             mult = self._resolve("racer_buy_multiplier", gs)
             fem_mult = self._resolve("female_buy_multiplier", gs)
@@ -1479,7 +1479,7 @@ class Stable(commands.Cog, name="stable"):
                 )
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             base = self._resolve("racer_buy_base", gs)
             mult = self._resolve("racer_buy_multiplier", gs)
             frac = self._resolve("racer_sell_fraction", gs)
@@ -1595,7 +1595,7 @@ class Stable(commands.Cog, name="stable"):
                 await context.send("This racer is retired.", ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             max_trains = self._resolve("max_trains_per_race", gs)
             if (racer_obj.trains_since_race or 0) >= max_trains:
                 await context.send(
@@ -1751,7 +1751,7 @@ class Stable(commands.Cog, name="stable"):
                 await context.send(error, ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             cost = self._resolve("rest_cost", gs)
 
             wallet = await wallet_repo.get_wallet(
@@ -1819,7 +1819,7 @@ class Stable(commands.Cog, name="stable"):
                 await context.send(error, ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             cost = self._resolve("feed_cost", gs)
 
             wallet = await wallet_repo.get_wallet(
@@ -1869,7 +1869,7 @@ class Stable(commands.Cog, name="stable"):
         guild_id = context.guild.id if context.guild else 0
 
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             base_slots = self._resolve("max_racers_per_owner", gs)
             cost_string = self._resolve("stable_upgrade_costs", gs)
             upgrade_costs = logic.parse_stable_upgrade_costs(cost_string)
@@ -1972,7 +1972,7 @@ class Stable(commands.Cog, name="stable"):
                 await context.send("Female racer not found.", ephemeral=True)
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             cooldown = self._resolve("breeding_cooldown", gs)
             min_races = self._resolve("min_races_to_breed", gs)
             max_foals = self._resolve("max_foals_per_female", gs)

@@ -2754,7 +2754,7 @@ async def test_stable_browse_rank_filter(tmp_path: Path) -> None:
         commentary_delay=0,
         min_pool_size=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, guild_settings=GuildSettingsResolver(sessionmaker, bot.settings))
     cog = stable_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2791,7 +2791,7 @@ async def test_stable_browse_gender_filter(tmp_path: Path) -> None:
         commentary_delay=0,
         min_pool_size=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, guild_settings=GuildSettingsResolver(sessionmaker, bot.settings))
     cog = stable_cog.Stable(bot)
     ctx = DummyContext(bot)
 
@@ -2828,7 +2828,7 @@ async def test_stable_browse_no_filters(tmp_path: Path) -> None:
         commentary_delay=0,
         min_pool_size=0,
     )
-    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker)
+    bot.scheduler = types.SimpleNamespace(sessionmaker=sessionmaker, guild_settings=GuildSettingsResolver(sessionmaker, bot.settings))
     cog = stable_cog.Stable(bot)
     ctx = DummyContext(bot)
 
