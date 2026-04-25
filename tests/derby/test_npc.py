@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from config import Settings
+from core import repositories as core_repo
 from derby import repositories as repo
 from derby.models import NPC, Race, RaceEntry, Racer
 from derby.npc_quips import parse_quips, parse_used, pick_quip, should_regenerate
@@ -327,7 +328,7 @@ async def test_npc_retirement_replacement(tmp_path: Path) -> None:
 
     async with sched.sessionmaker() as session:
         # Create guild settings with flavor
-        await repo.create_guild_settings(
+        await core_repo.create_guild_settings(
             session, guild_id=GUILD_ID, racer_flavor="magical horses",
         )
         npc = await repo.create_npc(
@@ -377,7 +378,7 @@ async def test_ensure_guild_npcs_creates(tmp_path: Path) -> None:
     sched = await _make_scheduler(bot, tmp_path)
 
     async with sched.sessionmaker() as session:
-        await repo.create_guild_settings(
+        await core_repo.create_guild_settings(
             session, guild_id=GUILD_ID, racer_flavor="fire drakes",
         )
 
@@ -433,7 +434,7 @@ async def test_ensure_guild_npcs_skips_existing(tmp_path: Path) -> None:
     sched = await _make_scheduler(bot, tmp_path)
 
     async with sched.sessionmaker() as session:
-        await repo.create_guild_settings(
+        await core_repo.create_guild_settings(
             session, guild_id=GUILD_ID, racer_flavor="horses",
         )
         # Pre-create an NPC

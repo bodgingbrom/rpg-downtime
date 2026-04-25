@@ -15,6 +15,7 @@ from cogs import help as help_cog
 from cogs import stable as stable_cog
 from cogs import tournament as tournament_cog
 from config import Settings
+from core import repositories as core_repo
 from db_base import Base
 from derby import models
 from derby import repositories as repo
@@ -1090,7 +1091,7 @@ async def test_guild_settings_override_default_wallet(tmp_path: Path) -> None:
 
     # Set a per-guild override for default_wallet
     async with sessionmaker() as session:
-        await repo.create_guild_settings(
+        await core_repo.create_guild_settings(
             session, guild_id=GUILD_ID, default_wallet=500
         )
 
@@ -2358,7 +2359,7 @@ async def test_set_flavor(tmp_path):
 
     # Verify it was persisted
     async with sessionmaker() as session:
-        gs = await repo.get_guild_settings(session, GUILD_ID)
+        gs = await core_repo.get_guild_settings(session, GUILD_ID)
     assert gs is not None
     assert gs.racer_flavor == "cyberpunk racing lizards"
 
@@ -2423,7 +2424,7 @@ async def _make_view_env_with_flavor(tmp_path, flavor="cyberpunk lizards", **rac
     async with sessionmaker() as session:
         # Set flavor
         if flavor:
-            await repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor=flavor)
+            await core_repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor=flavor)
         defaults = dict(
             name="Thunderhoof", owner_id=ctx.author.id, guild_id=GUILD_ID,
             speed=20, cornering=15, stamina=10,
@@ -2517,7 +2518,7 @@ async def test_add_racer_generates_description(tmp_path):
     owner = types.SimpleNamespace(id=42, mention="@TestUser")
 
     async with sessionmaker() as session:
-        await repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="enchanted warhorses")
+        await core_repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="enchanted warhorses")
 
     with patch("cogs.derby.descriptions.generate_description", return_value="A golden stallion.") as mock_gen:
         await cog.add_racer.callback(cog, ctx, owner, "Goldie", False, 20, 15, 10, "Bold")
@@ -2580,7 +2581,7 @@ async def test_breed_generates_foal_description(tmp_path):
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
-        await repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="racing lizards")
+        await core_repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="racing lizards")
         sire = await repo.create_racer(
             session, name="Papa", owner_id=ctx.author.id, guild_id=GUILD_ID,
             gender="M", speed=20, cornering=15, stamina=10,
@@ -2628,7 +2629,7 @@ async def test_breed_no_parent_desc_no_foal_desc(tmp_path):
     ctx = DummyContext(bot)
 
     async with sessionmaker() as session:
-        await repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="racing lizards")
+        await core_repo.create_guild_settings(session, guild_id=GUILD_ID, racer_flavor="racing lizards")
         sire = await repo.create_racer(
             session, name="Papa", owner_id=ctx.author.id, guild_id=GUILD_ID,
             gender="M", speed=20, cornering=15, stamina=10,

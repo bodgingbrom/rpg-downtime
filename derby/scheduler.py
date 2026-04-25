@@ -13,6 +13,8 @@ from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config import resolve_guild_setting
+from core import repositories as core_repo
+from core.models import GuildSettings
 from db_base import Base
 import core.models  # noqa: F401 — register cross-game tables on Base
 import brewing.models  # noqa: F401 — register brewing tables on Base
@@ -76,21 +78,21 @@ class DerbyScheduler:
     def _resolve(
         self,
         key: str,
-        guild_settings: models.GuildSettings | None = None,
+        guild_settings: GuildSettings | None = None,
     ) -> Any:
         """Return a guild override for *key* if set, else the global default."""
         return resolve_guild_setting(guild_settings, self.bot.settings, key)
 
     async def _load_guild_settings(
         self, guild_id: int
-    ) -> models.GuildSettings | None:
+    ) -> GuildSettings | None:
         """Backwards-compat alias — delegates to the cached resolver."""
         return await self.guild_settings.get(guild_id)
 
     def _get_channel(
         self,
         guild: discord.Guild,
-        guild_settings: models.GuildSettings | None = None,
+        guild_settings: GuildSettings | None = None,
         channel_key: str = "derby_channel",
     ) -> discord.abc.Messageable | None:
         """Return the configured channel for the guild or a sensible default."""
@@ -632,6 +634,7 @@ class DerbyScheduler:
         racers: list[models.Racer],
         max_racers: int,
         window_size: int,
+        rng: random.Random | None = None,
     ) -> list[models.Racer] | None:
         """Pick a competitive field of racers within a stat-total window.
 
@@ -640,7 +643,14 @@ class DerbyScheduler:
 
         Tries three times with decreasing minimums (max_racers, 4, 2).
         Returns ``None`` if even 2 racers can't be found.
+
+        ``rng`` lets tests pin the field for reproducibility. Production
+        leaves it ``None`` and gets a fresh ``random.Random()`` per call —
+        same behavior as before, but no longer reads from the global
+        random state (which could be polluted by other tests).
         """
+        if rng is None:
+            rng = random.Random()
         totals = {r.id: r.speed + r.cornering + r.stamina for r in racers}
         min_total = min(totals.values())
         max_total = max(totals.values())
@@ -654,7 +664,7 @@ class DerbyScheduler:
             if max_total - min_total <= effective_window:
                 window_start = min_total
             else:
-                window_start = random.randint(
+                window_start = rng.randint(
                     min_total, max_total - effective_window
                 )
             window_end = window_start + effective_window
@@ -672,14 +682,14 @@ class DerbyScheduler:
             by_owner: dict[int, list[models.Racer]] = {}
             for r in owned:
                 by_owner.setdefault(r.owner_id, []).append(r)
-            owner_picks = [random.choice(rs) for rs in by_owner.values()]
+            owner_picks = [rng.choice(rs) for rs in by_owner.values()]
 
             # If owned alone exceed max, randomly trim (still 1 per owner)
             if len(owner_picks) > max_racers:
-                owner_picks = random.sample(owner_picks, max_racers)
+                owner_picks = rng.sample(owner_picks, max_racers)
 
             remaining_slots = max_racers - len(owner_picks)
-            pool_picks = random.sample(
+            pool_picks = rng.sample(
                 unowned, min(remaining_slots, len(unowned))
             )
 
@@ -1195,7 +1205,7 @@ class DerbyScheduler:
                     extra={"guild_id": guild.id},
                 )
 
-    async def _build_digest_embed(self, guild_id: int, guild_settings: models.GuildSettings | None = None) -> discord.Embed | None:
+    async def _build_digest_embed(self, guild_id: int, guild_settings: GuildSettings | None = None) -> discord.Embed | None:
         """Build the daily digest embed for a guild.
 
         Returns ``None`` if there's nothing to show (no players in guild).
@@ -1538,7 +1548,7 @@ class DerbyScheduler:
         race_id: int,
         guild_id: int,
         participants: list[models.Racer],
-    ) -> tuple[models.GuildSettings | None, Any]:
+    ) -> tuple[GuildSettings | None, Any]:
         """Announce the upcoming race, hold the bet window, then transition
         the race from "betting open" to "active" (autocomplete stops
         suggesting this race's racers once it goes active).
@@ -1608,7 +1618,7 @@ class DerbyScheduler:
         participants: list[models.Racer],
         result: Any,
         race_map: Any,
-        gs: models.GuildSettings | None,
+        gs: GuildSettings | None,
     ) -> dict[str, Any]:
         """Apply every DB-touching consequence of the race in a single
         transaction: race row, ability proc log, payouts, placement prizes,
@@ -1723,7 +1733,7 @@ class DerbyScheduler:
         participants: list[models.Racer],
         result: Any,
         color_map: dict[int, str],
-        gs: models.GuildSettings | None,
+        gs: GuildSettings | None,
     ) -> None:
         """Post the "Racers Getting Ready" lineup embed to the guild channel
         and pause briefly so commentary streaming feels natural.
@@ -1798,7 +1808,7 @@ class DerbyScheduler:
         result: Any,
         color_map: dict[int, str],
         outcomes: dict[str, Any],
-        gs: models.GuildSettings | None,
+        gs: GuildSettings | None,
     ) -> None:
         """Stream race commentary and post all post-race announcements:
         results, bet payouts, payout DMs, injuries, retirements, healings,
@@ -2147,7 +2157,7 @@ class DerbyScheduler:
 
     async def _stream_commentary(
         self, race_id: int, guild_id: int, log: list[str], delay: float = 6.0,
-        guild_settings: models.GuildSettings | None = None,
+        guild_settings: GuildSettings | None = None,
         channel_override: "discord.abc.Messageable | None" = None,
         charts: list[str] | None = None,
     ) -> None:
@@ -2283,7 +2293,7 @@ class DerbyScheduler:
         race_id: int,
         racers: list[models.Racer],
         race_map: logic.RaceMap | None = None,
-        guild_settings: models.GuildSettings | None = None,
+        guild_settings: GuildSettings | None = None,
     ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:
@@ -2416,7 +2426,7 @@ class DerbyScheduler:
             if npc is None:
                 return
 
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await core_repo.get_guild_settings(session, guild_id)
             racer_flavor = self._resolve("racer_flavor", gs) or ""
 
             # Get taken names for uniqueness
@@ -2887,7 +2897,7 @@ class DerbyScheduler:
     async def _countdown(
         self,
         guild_id: int,
-        guild_settings: models.GuildSettings | None = None,
+        guild_settings: GuildSettings | None = None,
     ) -> None:
         guild = self.bot.get_guild(guild_id)
         if guild is None:

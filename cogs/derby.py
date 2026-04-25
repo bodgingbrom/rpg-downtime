@@ -14,6 +14,7 @@ from sqlalchemy import select
 import checks
 from cogs._autocomplete import filter_choices
 from config import resolve_guild_setting
+from core import repositories as core_repo
 from derby import abilities, appearance, commentary, descriptions, flavor_names, logic, models
 from derby import repositories as repo
 from economy import repositories as wallet_repo
@@ -2756,12 +2757,12 @@ class Derby(commands.Cog, name="derby"):
         async with self.bot.scheduler.sessionmaker() as session:
             gs = await self.bot.scheduler.guild_settings.get(guild_id)
             if gs is None:
-                gs = await repo.create_guild_settings(
+                gs = await core_repo.create_guild_settings(
                     session, guild_id=guild_id
                 )
 
             if value.lower() == "reset":
-                await repo.update_guild_settings(
+                await core_repo.update_guild_settings(
                     session, guild_id, **{key: None}
                 )
                 if resolver is not None:
@@ -2807,7 +2808,7 @@ class Derby(commands.Cog, name="derby"):
                 )
                 return
 
-            await repo.update_guild_settings(
+            await core_repo.update_guild_settings(
                 session, guild_id, **{key: parsed}
             )
             if resolver is not None:

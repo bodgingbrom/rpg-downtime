@@ -7,10 +7,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from db_base import Base
 
-# Cross-game models live in core/. Re-exported here for backwards compat
-# with existing imports like ``from derby import models; models.GuildSettings``.
-from core.models import CommandLog, GuildSettings  # noqa: E402, F401
-
 
 class Racer(Base):
     __tablename__ = "racers"
