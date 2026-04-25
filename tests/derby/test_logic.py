@@ -289,6 +289,56 @@ def test_simulate_race_stumble_save_clamps_noise():
     assert save_count > 0
 
 
+def test_simulate_race_segment_ramp_skips_zero_effect_segments():
+    """Hot Start / Slow Starter use segment_ramp with value=0 at mid-race.
+    Those mid-race procs should NOT pollute the proc log or commentary
+    events — they didn't change anything, so they're not meaningful procs."""
+    # Hot Start: {opening: 2, mid: 0, final_stretch: -1}
+    r1 = Racer(id=1, name="HotStart", owner_id=1, speed=10, cornering=10, stamina=10)
+    race_map = RaceMap(
+        name="Test", theme="test", description="",
+        segments=[
+            MapSegment(type="straight", distance=2, description="Opening"),
+            MapSegment(type="straight", distance=2, description="Mid1"),
+            MapSegment(type="straight", distance=2, description="Mid2"),
+            MapSegment(type="straight", distance=2, description="Mid3"),
+            MapSegment(type="straight", distance=2, description="Final"),
+        ],
+    )
+    # solo_runner key is the YAML-registered Hot Start (inverted segment_ramp)
+    abilities_map = {1: ("solo_runner", None)}
+    result = simulate_race(
+        {"racers": [r1]}, seed=42, race_map=race_map,
+        abilities_map=abilities_map,
+    )
+
+    # Segment phases for a 5-segment race:
+    #   seg_idx=0 → opening  (value=+2, should fire)
+    #   seg_idx=1..3 → mid   (value=0, should SKIP — regression target)
+    #   seg_idx=4 → final_stretch (value=-1, should fire)
+    hot_start_segs = [
+        seg_idx for (_rid, key, seg_idx) in result.proc_log
+        if key == "solo_runner"
+    ]
+    # Should only have procs for opening (0) and final (4), not mids (1,2,3)
+    assert 0 in hot_start_segs
+    assert 4 in hot_start_segs
+    assert 1 not in hot_start_segs
+    assert 2 not in hot_start_segs
+    assert 3 not in hot_start_segs
+
+    # Commentary events should match: no [ABILITY] callout on mid segments
+    for seg_idx, seg in enumerate(result.segments):
+        ability_lines = [
+            e for e in seg.events if "Hot Start" in e
+        ]
+        if seg_idx in (1, 2, 3):
+            assert not ability_lines, (
+                f"Mid segment {seg_idx} should have NO Hot Start callout; "
+                f"got: {ability_lines}"
+            )
+
+
 def test_simulate_race_speed_track_favors_speed():
     """A speed-heavy track should favor the faster racer."""
     fast = Racer(id=1, name="Fast", owner_id=1, speed=31, cornering=5, stamina=5)

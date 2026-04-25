@@ -280,15 +280,15 @@ async def test_stream_commentary_renders_standings_field_when_charts_passed(
     )
     embeds = guild.system_channel.sent_embeds
     assert len(embeds) == 3
-    # Iter 0 (starting gun) has NO chart so the race feels like it's just
-    # beginning when the commentary starts.
+    # Iter 0 (starting gun): NO chart — the commentary is just starting.
     assert len(embeds[0].fields) == 0
-    # Iter 1 shows charts[0] (end-of-segment-0 standings) with "Current"
+    # Iter 1 shows charts[0] as "Current Standings" (mid-race).
     assert embeds[1].fields[0].name == "Current Standings"
     assert embeds[1].fields[0].value == charts[0]
-    # Iter 2 is the last — shows charts[1] with "Final Standings"
-    assert embeds[2].fields[0].name == "Final Standings"
-    assert embeds[2].fields[0].value == charts[1]
+    # Iter 2 is the LAST: NO chart on the commentary embed. The Final
+    # Standings field now lives on the subsequent "Race Complete!" embed
+    # posted by _post_results, so end-of-race info is consolidated there.
+    assert len(embeds[2].fields) == 0
 
 
 @pytest.mark.asyncio
@@ -323,13 +323,12 @@ async def test_stream_commentary_clamps_chart_index_when_log_longer(
     )
     embeds = guild.system_channel.sent_embeds
     # iter 0: no chart. iter 1: chart[0]. iter 2: chart[1]. iter 3: chart[1]
-    # (clamped). iter 4: chart[1] (clamped, last, Final Standings title).
+    # (clamped). iter 4 (LAST): no chart (consolidated into Race Complete).
     assert len(embeds[0].fields) == 0
     assert embeds[1].fields[0].value == "CHART_A"
     assert embeds[2].fields[0].value == "CHART_B"
     assert embeds[3].fields[0].value == "CHART_B"
-    assert embeds[4].fields[0].value == "CHART_B"
-    assert embeds[4].fields[0].name == "Final Standings"
+    assert len(embeds[4].fields) == 0
 
 
 @pytest.mark.asyncio
@@ -368,24 +367,68 @@ async def test_stream_commentary_strips_chart_from_old_msg_on_rollover(
     )
 
     embeds = guild.system_channel.sent_embeds
-    # With chart-shift (no chart on iter 0) and rollover on every iter:
+    # With chart-shift (no chart on iter 0) and no-chart on iter is_last,
+    # plus rollover on every iter:
     #   iter 0: send msg1, desc=e0, NO chart (i==0) → 0 fields
     #   iter 1: projected > 3800 → rollover.
     #           - msg1 has no chart so we SKIP the redundant strip-edit
     #           - send msg2, desc=e1, chart=CHART_A (Current) → 1 field
-    #   iter 2: projected > 3800 → rollover.
+    #   iter 2 (is_last): projected > 3800 → rollover.
     #           - msg2 HAS a chart → edit msg2 to strip it (0 fields)
-    #           - send msg3, desc=e2, chart=CHART_B (Final) → 1 field
+    #           - send msg3, desc=e2, NO chart (is_last — Final Standings
+    #             moved to the Race Complete embed) → 0 fields
     # So embeds captured: [msg1-send, msg2-send, msg2-strip-edit, msg3-send].
     field_counts = [len(e.fields) for e in embeds]
-    # Two live messages with a chart (msg2 send, msg3 send)
-    assert field_counts.count(1) == 2
-    # Two without (iter-0 send, msg2 strip)
-    assert field_counts.count(0) == 2
-    # The last embed (msg3 send) should say "Final Standings"
-    final_fields = [f for f in embeds[-1].fields]
-    assert len(final_fields) == 1
-    assert final_fields[0].name == "Final Standings"
+    # One live message with a chart (msg2 send, the mid-race one)
+    assert field_counts.count(1) == 1
+    # Three without chart (iter-0 send, msg2 strip, msg3 last send)
+    assert field_counts.count(0) == 3
+    # The last embed (msg3 send, the winner paragraph) should have NO field
+    assert len(embeds[-1].fields) == 0
+
+
+@pytest.mark.asyncio
+async def test_post_results_includes_final_chart_when_provided(
+    tmp_path: Path,
+) -> None:
+    """The "Race Complete!" embed now renders the final standings chart
+    when final_chart is supplied — consolidates end-of-race info into
+    one message instead of duplicating across commentary + results."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=0,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    placements = [1, 2, 3]
+    names = {1: "Alpha", 2: "Bravo", 3: "Charlie"}
+
+    # No final_chart → no standings field
+    await scheduler._post_results(guild.id, placements, names)
+    last = guild.system_channel.sent_embeds[-1]
+    assert last.title == "\U0001f3c1 Race Complete!"
+    assert not any(f.name == "Final Standings" for f in last.fields)
+
+    # With final_chart → standings field present with that content
+    await scheduler._post_results(
+        guild.id, placements, names,
+        final_chart="THE_FINAL_CHART",
+    )
+    last = guild.system_channel.sent_embeds[-1]
+    standings_fields = [f for f in last.fields if f.name == "Final Standings"]
+    assert len(standings_fields) == 1
+    assert standings_fields[0].value == "THE_FINAL_CHART"
 
 
 @pytest.mark.asyncio
