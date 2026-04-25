@@ -118,7 +118,7 @@ async def test_report_empty_stable(tmp_path: Path) -> None:
     """Handles player with no racers."""
     bot = _make_bot()
     await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     cog = Stable(bot)
     ctx = DummyContext(bot)
@@ -132,7 +132,7 @@ async def test_report_healthy_racer(tmp_path: Path) -> None:
     """Shows green ready status for healthy racer."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         await repo.create_racer(
@@ -157,7 +157,7 @@ async def test_report_injured_racer(tmp_path: Path) -> None:
     """Shows red injured status with race count."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         r = await repo.create_racer(
@@ -185,7 +185,7 @@ async def test_report_retiring_soon(tmp_path: Path) -> None:
     """Shows warning when 3 or fewer races left."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         r = await repo.create_racer(
@@ -210,7 +210,7 @@ async def test_report_declining_racer(tmp_path: Path) -> None:
     """Shows decline indicator with penalty."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         r = await repo.create_racer(
@@ -234,7 +234,7 @@ async def test_report_training_needed(tmp_path: Path) -> None:
     """Shows training status for bred racers below the gate."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         # Bred racer (has sire_id) with low training
@@ -259,7 +259,7 @@ async def test_report_breed_cooldown(tmp_path: Path) -> None:
     """Shows breed cooldown when active."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         r = await repo.create_racer(
@@ -282,7 +282,7 @@ async def test_report_tournament_registered(tmp_path: Path) -> None:
     """Shows registered status for tournaments."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         r = await repo.create_racer(
@@ -317,7 +317,7 @@ async def test_report_tournament_not_registered(tmp_path: Path) -> None:
     """Shows not-registered status for eligible but unregistered."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         await repo.create_racer(
@@ -344,7 +344,7 @@ async def test_report_retired_count(tmp_path: Path) -> None:
     """Shows collapsed count of retired racers."""
     bot = _make_bot()
     sched = await _make_scheduler(bot, tmp_path)
-    from cogs.derby import Stable
+    from cogs.stable import Stable
 
     async with sched.sessionmaker() as session:
         # Active racer
