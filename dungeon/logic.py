@@ -141,6 +141,8 @@ def load_dungeons() -> dict[str, dict[str, Any]]:
                             room, path=f"[{key}] floor[{f_idx}].room_pool[{r_idx}]."
                         )
                     )
+            # v2 dungeon-level meta — lore_fragments + legendary_reward.
+            errors.extend(_explore.validate_dungeon_meta(data, path=f"[{key}] "))
             if errors:
                 # Print to stderr; refusal to load keeps the bot healthy for
                 # other dungeons, and the authoring error gets surfaced.

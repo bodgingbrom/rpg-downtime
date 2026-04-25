@@ -866,6 +866,73 @@ def _build_inventory_embed(player, gear_inventory, item_inventory, display_name:
 BESTIARY_PAGE_SIZE = 8
 
 
+def _build_lore_embed(
+    dungeon_data: dict[str, Any],
+    owned_fragment_ids: set[int],
+    unlock_item_id: str | None,
+) -> discord.Embed:
+    """Render the player's lore book for a dungeon.
+
+    Found fragments display in full prose. Missing fragments display as
+    a stylized gap with the fragment number, so the player sees what's
+    still out there.
+    """
+    fragments = sorted(
+        (dungeon_data.get("lore_fragments") or []),
+        key=lambda f: int(f.get("id", 0)),
+    )
+    total = len(fragments)
+    found_count = sum(1 for f in fragments if f.get("id") in owned_fragment_ids)
+    name = dungeon_data.get("name", "Unknown Dungeon")
+    embed = discord.Embed(
+        title=f"\U0001f4d6 {name} — Lore Book",
+        color=EMBED_COLOR,
+    )
+
+    pieces: list[str] = []
+    pieces.append(f"_{found_count} / {total} fragments collected_")
+    pieces.append("")
+    for f in fragments:
+        fid = int(f.get("id", 0))
+        if fid in owned_fragment_ids:
+            text = (f.get("text") or "").strip()
+            pieces.append(f"**[{fid}]**  {text}")
+        else:
+            pieces.append(f"**[{fid}]**  ░░░ unread ░░░")
+        pieces.append("")
+    # Trim trailing blank.
+    while pieces and not pieces[-1]:
+        pieces.pop()
+
+    legendary = dungeon_data.get("legendary_reward") or {}
+    if legendary.get("item_id"):
+        legendary_name = legendary.get("name") or legendary["item_id"]
+        if unlock_item_id:
+            pieces.append("")
+            pieces.append(
+                f"_The book is complete. The dungeon's reward — "
+                f"**{legendary_name}** — is yours._"
+            )
+        elif found_count >= total and total > 0:
+            pieces.append("")
+            pieces.append(
+                f"_The book is complete. **{legendary_name}** awaits — "
+                f"continue your delves to claim it._"
+            )
+        elif found_count > 0:
+            pieces.append("")
+            pieces.append(
+                f"_Complete the book to unlock **{legendary_name}**._"
+            )
+
+    body = "\n".join(pieces)
+    # Discord embed description cap is 4096 chars. Truncate if needed.
+    if len(body) > 4000:
+        body = body[:3990] + "\n\n_(truncated — fragments overflow)_"
+    embed.description = body
+    return embed
+
+
 def _build_bestiary_embed(
     all_monsters: list[dict[str, Any]],
     discovered: dict[str, Any],
@@ -1990,6 +2057,8 @@ async def _handle_descend(interaction, run_id, user_id, sessionmaker):
             # response budget.)
             if not interaction.response.is_done():
                 await interaction.response.defer()
+            # If the player has a corpse on this floor, seed it.
+            await _v2_seed_corpse_if_present(session, run, dungeon_data, floor_state)
             await _v2_ensure_room_llm(run, dungeon_data, floor_state)
             run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
             await session.commit()
@@ -2160,6 +2229,15 @@ def _apply_v2_rewards(run, found_items: list[dict[str, Any]], rewards: list[dict
 
     Mutates ``run.run_gold`` and ``found_items`` in place. The caller is
     responsible for serializing ``found_items`` back to ``run.found_items_json``.
+
+    Reward types handled here (run-state mutations only):
+    - ``gold`` — adds to ``run.run_gold``
+    - ``item`` — appends to found_items (consumable inventory drop)
+    - ``gear`` — appends to found_items as a gear drop (corpse recovery)
+
+    Reward types handled by the caller (DB writes):
+    - ``lore_fragment`` — persisted via ``dungeon_repo.add_lore_fragment``
+    - ``corpse_recovered`` — signals corpse cleanup; cleared in caller
     """
     for r in rewards or []:
         rtype = r.get("type")
@@ -2169,6 +2247,129 @@ def _apply_v2_rewards(run, found_items: list[dict[str, Any]], rewards: list[dict
             item_id = r.get("item_id")
             if item_id:
                 found_items.append({"item_id": item_id})
+        elif rtype == "gear":
+            gear_id = r.get("gear_id")
+            if gear_id:
+                found_items.append({"item_id": gear_id, "type": "gear"})
+
+
+async def _v2_seed_corpse_if_present(
+    session, run, dungeon_data, floor_state,
+) -> None:
+    """If the player has a stored corpse for this dungeon AND it sits on
+    the current floor, seed it into a random non-boss room of the floor
+    state so the player can find it.
+
+    No-op if no corpse, the corpse is on a different floor, or this isn't
+    a v2 dungeon. Mutates ``floor_state`` in place; caller commits.
+    """
+    if not dungeon_explore.is_v2_dungeon(dungeon_data):
+        return
+    corpse_row = await dungeon_repo.get_corpse(
+        session, run.user_id, run.guild_id, run.dungeon_id,
+    )
+    if corpse_row is None:
+        return
+    if corpse_row.floor != run.floor:
+        return
+    try:
+        loot = json.loads(corpse_row.loot_json or "[]")
+    except (json.JSONDecodeError, TypeError):
+        loot = []
+    if not loot:
+        # Nothing to recover — clear the empty record so it doesn't linger.
+        await dungeon_repo.delete_corpse(
+            session, run.user_id, run.guild_id, run.dungeon_id,
+        )
+        return
+    rng = random.Random()
+    dungeon_explore.seed_corpse_in_floor(floor_state, rng, loot=loot)
+
+
+async def _v2_apply_meta_rewards(
+    session, run, dungeon_data, floor_state, rewards: list[dict[str, Any]],
+) -> list[str]:
+    """Persist lore fragments, grant legendary on full collection, and
+    clear the corpse if recovered. Returns narrative lines to append.
+
+    Called from the v2 explore handler after run-state rewards (gold,
+    items) have been applied. DB writes happen here; commit happens
+    in the caller along with the floor_state save.
+    """
+    extra: list[str] = []
+    now = datetime.now(timezone.utc)
+
+    # 1. Lore fragments — persist new ones, narrate which were collected.
+    new_fragment_ids: list[int] = []
+    already_owned: list[int] = []
+    for r in rewards:
+        if r.get("type") != "lore_fragment":
+            continue
+        fid = r.get("fragment_id")
+        if not isinstance(fid, int):
+            continue
+        added = await dungeon_repo.add_lore_fragment(
+            session, run.user_id, run.guild_id, run.dungeon_id, fid, now,
+        )
+        if added:
+            new_fragment_ids.append(fid)
+        else:
+            already_owned.append(fid)
+    if new_fragment_ids:
+        if len(new_fragment_ids) == 1:
+            extra.append(
+                f"_You commit fragment **#{new_fragment_ids[0]}** to memory._"
+            )
+        else:
+            ids_text = ", ".join(f"#{n}" for n in new_fragment_ids)
+            extra.append(f"_You commit fragments **{ids_text}** to memory._")
+    if already_owned:
+        ids_text = ", ".join(f"#{n}" for n in already_owned)
+        extra.append(
+            f"_You've recorded {ids_text} before. The page is already in your book._"
+        )
+
+    # 2. Legendary unlock — fires once when all fragments are collected.
+    if new_fragment_ids:
+        all_ids = {f["id"] for f in (dungeon_data.get("lore_fragments") or [])}
+        if all_ids:
+            owned = await dungeon_repo.get_lore_fragments(
+                session, run.user_id, run.guild_id, run.dungeon_id,
+            )
+            owned_ids = {row.fragment_id for row in owned}
+            if all_ids.issubset(owned_ids):
+                legendary = dungeon_data.get("legendary_reward") or {}
+                item_id = legendary.get("item_id")
+                if item_id:
+                    grant = await dungeon_repo.record_legendary_unlock(
+                        session, run.user_id, run.guild_id, run.dungeon_id,
+                        item_id, now,
+                    )
+                    if grant is not None:
+                        # Drop the legendary into the run's found_items as gear.
+                        try:
+                            fi = json.loads(run.found_items_json or "[]")
+                        except (json.JSONDecodeError, TypeError):
+                            fi = []
+                        fi.append({"item_id": item_id, "type": "gear"})
+                        run.found_items_json = json.dumps(fi)
+                        flavor = legendary.get("flavor") or (
+                            f"_The book is complete. A passage flares to life — "
+                            f"and **{item_id}** is in your hand. The dungeon's "
+                            f"final secret is yours._"
+                        )
+                        extra.append(flavor)
+
+    # 3. Corpse recovered — clear the DB row + floor_state marker.
+    if any(r.get("type") == "corpse_recovered" for r in rewards):
+        await dungeon_repo.delete_corpse(
+            session, run.user_id, run.guild_id, run.dungeon_id,
+        )
+        corpse = floor_state.get("corpse")
+        if corpse:
+            corpse["recovered"] = True
+
+    return extra
 
 
 async def _v2_start_combat(
@@ -2308,6 +2509,13 @@ async def _handle_v2_explore_action(
             _apply_v2_rewards(run, found_items, result.rewards)
             run.found_items_json = json.dumps(found_items)
 
+            # Persist lore fragments + check legendary unlock + clear corpse.
+            extra_narrative = await _v2_apply_meta_rewards(
+                session, run, dungeon_data, floor_state, result.rewards,
+            )
+            if extra_narrative:
+                result.narrative = list(result.narrative) + extra_narrative
+
         # Branch on outcome.
         if result.next_step == "combat":
             pending = floor_state.get("pending_combat") or {}
@@ -2446,6 +2654,39 @@ async def _process_death(session, run, player, dungeon_data, interaction, narrat
 
     # Update career stats
     player.total_runs += 1
+
+    # V2: snapshot run gear/items as a corpse so the player has a chance
+    # to recover them on a future delve. New deaths overwrite old corpses
+    # — only one corpse per (player, dungeon) ever.
+    is_v2 = dungeon_explore.is_v2_dungeon(dungeon_data)
+    if is_v2:
+        try:
+            found_items = json.loads(run.found_items_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            found_items = []
+        corpse_loot: list[dict[str, Any]] = []
+        # Carry the full found-items list onto the corpse — these are
+        # things the player picked up but never made it home with.
+        for item in found_items:
+            if not isinstance(item, dict):
+                continue
+            iid = item.get("item_id")
+            if not iid:
+                continue
+            if item.get("type") == "gear":
+                corpse_loot.append({"type": "gear", "gear_id": iid})
+            else:
+                corpse_loot.append({"type": "item", "item_id": iid})
+        if corpse_loot:
+            await dungeon_repo.upsert_corpse(
+                session,
+                user_id=run.user_id,
+                guild_id=run.guild_id,
+                dungeon_id=run.dungeon_id,
+                floor=run.floor,
+                loot_json=json.dumps(corpse_loot),
+                died_at=datetime.now(timezone.utc),
+            )
 
     # End run
     run.active = False
@@ -2749,6 +2990,9 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 await session.commit()
                 await session.refresh(run)
                 floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
+                # If the player died here previously and the corpse sits on
+                # floor 1, seed it into the floor state.
+                await _v2_seed_corpse_if_present(session, run, dungeon_data, floor_state)
                 # Pre-generate LLM intro for the entrance room so the very
                 # first thing the player reads is properly atmospheric.
                 await _v2_ensure_room_llm(run, dungeon_data, floor_state)
@@ -2979,6 +3223,94 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
         embed = _build_bestiary_embed(all_monsters, discovered, 0)
         view = BestiaryView(user_id, all_monsters, discovered, 0)
         await context.send(embed=embed, view=view, ephemeral=True)
+
+    # ------------------------------------------------------------------
+    # /dungeon lore <dungeon_name>
+    # ------------------------------------------------------------------
+
+    @dungeon.command(
+        name="lore",
+        description="View the lore fragments you've collected from a dungeon",
+    )
+    @app_commands.describe(dungeon_name="Which dungeon's lore to view")
+    async def dungeon_lore(
+        self, context: Context, dungeon_name: str | None = None,
+    ) -> None:
+        await context.defer(ephemeral=True)
+        guild_id = context.guild.id if context.guild else 0
+        user_id = context.author.id
+
+        all_dungeons = dungeon_logic.load_dungeons()
+        # Filter to dungeons the user can access AND that have authored lore.
+        visible: dict[str, dict[str, Any]] = {}
+        for k, d in all_dungeons.items():
+            if not checks.author_has_role(context, d.get("min_role")):
+                continue
+            if not (d.get("lore_fragments") or []):
+                continue
+            visible[k] = d
+
+        if not visible:
+            await context.send(
+                "No dungeons with lore are available yet.", ephemeral=True,
+            )
+            return
+
+        if dungeon_name and dungeon_name in visible:
+            target_key = dungeon_name
+        elif dungeon_name and dungeon_name in all_dungeons:
+            await context.send(
+                "That dungeon either has no lore or isn't available to you.",
+                ephemeral=True,
+            )
+            return
+        elif len(visible) == 1:
+            target_key = next(iter(visible))
+        else:
+            listing = "\n".join(
+                f"• `/dungeon lore {k}` — **{d.get('name', k)}**"
+                for k, d in visible.items()
+            )
+            await context.send(
+                f"**Choose a dungeon's lore to read:**\n{listing}",
+                ephemeral=True,
+            )
+            return
+
+        target = visible[target_key]
+        async with self.bot.scheduler.sessionmaker() as session:
+            owned = await dungeon_repo.get_lore_fragments(
+                session, user_id, guild_id, target_key,
+            )
+            unlock = await dungeon_repo.get_legendary_unlock(
+                session, user_id, guild_id, target_key,
+            )
+        owned_ids = {row.fragment_id for row in owned}
+
+        embed = _build_lore_embed(target, owned_ids, unlock_item_id=unlock.item_id if unlock else None)
+        await context.send(embed=embed, ephemeral=True)
+
+    @dungeon_lore.autocomplete("dungeon_name")
+    async def dungeon_lore_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        dungeons = dungeon_logic.load_dungeons()
+        user_role_names = {
+            getattr(r, "name", None)
+            for r in getattr(getattr(interaction, "user", None), "roles", []) or []
+        }
+        visible = {
+            k: d for k, d in dungeons.items()
+            if (not d.get("min_role") or d.get("min_role") in user_role_names)
+            and (d.get("lore_fragments") or [])
+        }
+        return filter_choices(
+            visible.items(),
+            current,
+            label=lambda kv: kv[1].get("name", kv[0]),
+            value=lambda kv: kv[0],
+            match=lambda kv: f"{kv[1].get('name', kv[0])} {kv[0]}",
+        )
 
     # /dungeon abandon — cancel an active run
     # ------------------------------------------------------------------

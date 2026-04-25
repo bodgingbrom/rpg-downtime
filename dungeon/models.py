@@ -114,10 +114,86 @@ class PlayerItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1)
 
 
+# ---------------------------------------------------------------------------
+# V2 — meta-progression tables.
+# ---------------------------------------------------------------------------
+
+
+class LoreFragment(Base):
+    """A lore fragment a player has discovered, persistent across deaths.
+
+    Fragments are numbered 1..N per dungeon. Each (user, guild, dungeon,
+    fragment_id) combination has at most one row. Once collected, never
+    lost. The full set unlocks the dungeon's legendary completion reward.
+    """
+
+    __tablename__ = "dungeon_lore_fragments"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guild_id", "dungeon_id", "fragment_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    dungeon_id: Mapped[str] = mapped_column(String, nullable=False)
+    fragment_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    found_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class LegendaryUnlock(Base):
+    """Tracks which dungeon legendary rewards a player has claimed.
+
+    A player unlocks a dungeon's legendary item exactly once — by
+    collecting all of its lore fragments. The grant happens automatically
+    when the final fragment is found. This row records that the grant
+    has fired so it doesn't re-fire on future fragment-finds (which
+    would be no-ops anyway since fragments don't refresh).
+    """
+
+    __tablename__ = "dungeon_legendary_unlocks"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guild_id", "dungeon_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    dungeon_id: Mapped[str] = mapped_column(String, nullable=False)
+    item_id: Mapped[str] = mapped_column(String, nullable=False)
+    unlocked_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class Corpse(Base):
+    """The player's last-death loot snapshot, keyed per-dungeon.
+
+    One row per (user, guild, dungeon). New deaths overwrite. Cleared
+    when the player recovers the corpse during a future delve. Holds
+    the floor of death and a JSON-serialized list of items that can be
+    recovered.
+    """
+
+    __tablename__ = "dungeon_corpses"
+    __table_args__ = (
+        UniqueConstraint("user_id", "guild_id", "dungeon_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    guild_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    dungeon_id: Mapped[str] = mapped_column(String, nullable=False)
+    floor: Mapped[int] = mapped_column(Integer, nullable=False)
+    # JSON list of {"type": "gold"|"item"|"gear", ...} entries.
+    loot_json: Mapped[str] = mapped_column(String, default="[]")
+    died_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 __all__ = [
     "DungeonPlayer",
     "DungeonRun",
     "BestiaryEntry",
     "PlayerGear",
     "PlayerItem",
+    "LoreFragment",
+    "LegendaryUnlock",
+    "Corpse",
 ]
