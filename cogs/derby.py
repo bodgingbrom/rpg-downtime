@@ -12,6 +12,7 @@ from discord.ext.commands import Context
 from sqlalchemy import select
 
 import checks
+from cogs._autocomplete import filter_choices
 from config import resolve_guild_setting
 from derby import abilities, appearance, commentary, descriptions, flavor_names, logic, models
 from derby import repositories as repo
@@ -58,14 +59,13 @@ async def racer_autocomplete(
         if race is None:
             return []
         racers = await repo.get_race_participants(session, race.id)
-    choices = []
-    current_lower = current.lower()
-    for r in racers:
-        if current_lower in r.name.lower():
-            choices.append(app_commands.Choice(name=f"{r.name} (#{r.id})", value=r.id))
-        if len(choices) >= 25:
-            break
-    return choices
+    return filter_choices(
+        racers,
+        current,
+        label=lambda r: f"{r.name} (#{r.id})",
+        value=lambda r: r.id,
+        match=lambda r: r.name,
+    )
 
 
 async def unowned_racer_autocomplete(
@@ -81,19 +81,13 @@ async def unowned_racer_autocomplete(
     base = resolve_guild_setting(gs, settings, "racer_buy_base")
     mult = resolve_guild_setting(gs, settings, "racer_buy_multiplier")
     fem_mult = resolve_guild_setting(gs, settings, "female_buy_multiplier")
-    choices = []
-    current_lower = current.lower()
-    for r in racers:
-        if current_lower in r.name.lower():
-            price = logic.calculate_buy_price(r, base, mult, fem_mult)
-            choices.append(
-                app_commands.Choice(
-                    name=f"{r.name} - {price} coins", value=r.id
-                )
-            )
-        if len(choices) >= 25:
-            break
-    return choices
+    return filter_choices(
+        racers,
+        current,
+        label=lambda r: f"{r.name} - {logic.calculate_buy_price(r, base, mult, fem_mult)} coins",
+        value=lambda r: r.id,
+        match=lambda r: r.name,
+    )
 
 
 async def owned_racer_autocomplete(
@@ -106,19 +100,18 @@ async def owned_racer_autocomplete(
         racers = await repo.get_stable_racers(
             session, interaction.user.id, guild_id
         )
-    choices = []
-    current_lower = current.lower()
-    for r in racers:
-        if current_lower in r.name.lower():
-            label = f"{r.name} (#{r.id})"
-            if r.retired:
-                label += " [retired]"
-            choices.append(
-                app_commands.Choice(name=label, value=r.id)
-            )
-        if len(choices) >= 25:
-            break
-    return choices
+
+    def _label(r):
+        suffix = " [retired]" if r.retired else ""
+        return f"{r.name} (#{r.id}){suffix}"
+
+    return filter_choices(
+        racers,
+        current,
+        label=_label,
+        value=lambda r: r.id,
+        match=lambda r: r.name,
+    )
 
 
 async def guild_racer_autocomplete(
@@ -131,17 +124,18 @@ async def guild_racer_autocomplete(
         racers = await repo.get_guild_racers(
             session, guild_id, eligible_only=False
         )
-    choices = []
-    current_lower = current.lower()
-    for r in racers:
-        if current_lower in r.name.lower():
-            label = f"{r.name} (#{r.id})"
-            if r.owner_id:
-                label += f" \u2014 owner:{r.owner_id}"
-            choices.append(app_commands.Choice(name=label[:100], value=r.id))
-        if len(choices) >= 25:
-            break
-    return choices
+
+    def _label(r):
+        suffix = f" \u2014 owner:{r.owner_id}" if r.owner_id else ""
+        return f"{r.name} (#{r.id}){suffix}"
+
+    return filter_choices(
+        racers,
+        current,
+        label=_label,
+        value=lambda r: r.id,
+        match=lambda r: r.name,
+    )
 
 
 async def viewable_racer_autocomplete(
@@ -1218,15 +1212,12 @@ class Derby(commands.Cog, name="derby"):
     async def map_name_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        maps = logic.load_all_maps()
-        choices = []
-        current_lower = current.lower()
-        for m in maps:
-            if current_lower in m.name.lower():
-                choices.append(app_commands.Choice(name=m.name, value=m.name))
-            if len(choices) >= 25:
-                break
-        return choices
+        return filter_choices(
+            logic.load_all_maps(),
+            current,
+            label=lambda m: m.name,
+            value=lambda m: m.name,
+        )
 
     # -- Economy commands -----------------------------------------------
 
@@ -1951,13 +1942,12 @@ class Derby(commands.Cog, name="derby"):
         guild_id = interaction.guild_id or 0
         async with self.bot.scheduler.sessionmaker() as session:
             npcs = await repo.get_guild_npcs(session, guild_id)
-        choices = []
-        for npc in npcs:
-            if current.lower() in npc.name.lower():
-                choices.append(
-                    app_commands.Choice(name=npc.name, value=npc.name)
-                )
-        return choices[:25]
+        return filter_choices(
+            npcs,
+            current,
+            label=lambda npc: npc.name,
+            value=lambda npc: npc.name,
+        )
 
     @npc_group.command(
         name="regenerate",
@@ -2846,12 +2836,12 @@ class Derby(commands.Cog, name="derby"):
     async def settings_key_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        current_lower = current.lower()
-        return [
-            app_commands.Choice(name=k, value=k)
-            for k in self.SETTING_KEYS
-            if current_lower in k.lower()
-        ][:25]
+        return filter_choices(
+            self.SETTING_KEYS,
+            current,
+            label=lambda k: k,
+            value=lambda k: k,
+        )
 
 
 

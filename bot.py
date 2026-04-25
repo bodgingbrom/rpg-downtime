@@ -74,7 +74,9 @@ class DiscordBot(commands.Bot):
         The code in this function is executed whenever the bot will start.
         """
         for file in os.listdir(f"{os.path.realpath(os.path.dirname(__file__))}/cogs"):
-            if file.endswith(".py"):
+            # Skip private helper modules (e.g. _autocomplete.py) — they
+            # provide shared utilities, not Cogs, so they have no setup().
+            if file.endswith(".py") and not file.startswith("_"):
                 extension = file[:-3]
                 try:
                     await self.load_extension(f"cogs.{extension}")

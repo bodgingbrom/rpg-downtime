@@ -10,6 +10,7 @@ from discord.ext.commands import Context
 
 from brewing import potions as brew_potions
 from brewing import repositories as brew_repo
+from cogs._autocomplete import filter_choices
 from derby import repositories as derby_repo
 
 
@@ -24,16 +25,12 @@ async def _potion_autocomplete(
     async with sessionmaker() as session:
         potions = await brew_repo.get_player_potions(session, user_id, guild_id)
 
-    current_lower = current.lower()
-    choices = []
-    for p in potions:
-        if current_lower in p.potion_name.lower():
-            choices.append(
-                app_commands.Choice(name=p.potion_name, value=str(p.id))
-            )
-        if len(choices) >= 25:
-            break
-    return choices
+    return filter_choices(
+        potions,
+        current,
+        label=lambda p: p.potion_name,
+        value=lambda p: str(p.id),
+    )
 
 
 async def _target_autocomplete(
