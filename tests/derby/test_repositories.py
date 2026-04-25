@@ -2,6 +2,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core import repositories as core_repo
 from db_base import Base
 from derby import repositories as repo
 import economy.models  # noqa: F401 — register Wallet table
@@ -104,17 +105,17 @@ async def test_course_segment_crud(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_guild_settings_crud(session: AsyncSession):
-    settings = await repo.create_guild_settings(session, guild_id=1)
+    settings = await core_repo.create_guild_settings(session, guild_id=1)
     assert settings.guild_id == 1
 
-    fetched = await repo.get_guild_settings(session, 1)
+    fetched = await core_repo.get_guild_settings(session, 1)
     assert fetched.guild_id == 1
 
-    updated = await repo.update_guild_settings(session, 1, bet_window=60)
+    updated = await core_repo.update_guild_settings(session, 1, bet_window=60)
     assert updated.bet_window == 60
 
-    await repo.delete_guild_settings(session, 1)
-    assert await repo.get_guild_settings(session, 1) is None
+    await core_repo.delete_guild_settings(session, 1)
+    assert await core_repo.get_guild_settings(session, 1) is None
 
 
 @pytest.mark.asyncio

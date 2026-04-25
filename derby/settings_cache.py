@@ -19,9 +19,8 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config import Settings, resolve_guild_setting
-
-from . import models
-from . import repositories as repo
+from core import repositories as core_repo
+from core.models import GuildSettings
 
 
 class GuildSettingsResolver:
@@ -38,9 +37,9 @@ class GuildSettingsResolver:
         self._global = global_settings
         self._max_age = max_age
         # guild_id → (cached_at_monotonic, GuildSettings row or None)
-        self._cache: dict[int, tuple[float, models.GuildSettings | None]] = {}
+        self._cache: dict[int, tuple[float, GuildSettings | None]] = {}
 
-    async def get(self, guild_id: int) -> models.GuildSettings | None:
+    async def get(self, guild_id: int) -> GuildSettings | None:
         """Return the GuildSettings row for `guild_id` (cached).
 
         Returns ``None`` when the guild has no row yet — which is the
@@ -53,7 +52,7 @@ class GuildSettingsResolver:
             if now - ts < self._max_age:
                 return gs
         async with self._sm() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await core_repo.get_guild_settings(session, guild_id)
         self._cache[guild_id] = (now, gs)
         return gs
 

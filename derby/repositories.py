@@ -7,13 +7,12 @@ from datetime import datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.models import CommandLog
 from .models import (
     AbilityProcLog,
     Bet,
-    CommandLog,
     CourseSegment,
     DailyReward,
-    GuildSettings,
     NPC,
     PlayerData,
     Race,
@@ -24,19 +23,8 @@ from .models import (
     TournamentEntry,
 )
 
-# Cross-game repo functions live in core/. Re-exported here so that
-# existing ``from derby import repositories as repo; repo.get_guild_settings``
-# imports keep working.
-from core.repositories import (  # noqa: E402, F401
-    create_guild_settings,
-    delete_guild_settings,
-    get_guild_settings,
-    log_command,
-    update_guild_settings,
-)
-
 ModelT = TypeVar(
-    "ModelT", Racer, Race, Bet, CourseSegment, GuildSettings, Tournament, TournamentEntry
+    "ModelT", Racer, Race, Bet, CourseSegment, Tournament, TournamentEntry
 )
 
 
@@ -342,7 +330,6 @@ async def delete_course_segment(session: AsyncSession, segment_id: int) -> None:
     await _delete(session, CourseSegment, segment_id)
 
 
-# GuildSettings
 # History
 async def get_race_history(
     session: AsyncSession, guild_id: int, limit: int

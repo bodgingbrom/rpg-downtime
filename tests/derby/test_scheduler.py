@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from config import Settings
+from core import repositories as core_repo
 from derby import repositories as repo
 from derby.models import Race, RaceEntry, Racer
 from derby.scheduler import DerbyScheduler
@@ -740,9 +741,9 @@ async def test_guild_settings_channel_override(tmp_path: Path) -> None:
 
     # Set per-guild override via derby_channel
     async with scheduler.sessionmaker() as session:
-        gs = await repo.get_guild_settings(session, guild.id)
+        gs = await core_repo.get_guild_settings(session, guild.id)
         if gs is None:
-            gs = await repo.create_guild_settings(session, guild_id=GUILD_ID)
+            gs = await core_repo.create_guild_settings(session, guild_id=GUILD_ID)
         gs.derby_channel = "arena"
         await session.commit()
     gs = await scheduler._load_guild_settings(GUILD_ID)
@@ -776,7 +777,7 @@ async def test_guild_settings_max_racers_override(tmp_path: Path) -> None:
                 session, name=f"R{i}", owner_id=i, guild_id=GUILD_ID
             )
         # Set guild override: max 3 racers per race
-        await repo.create_guild_settings(
+        await core_repo.create_guild_settings(
             session, guild_id=GUILD_ID, max_racers_per_race=3
         )
 

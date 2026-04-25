@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from config import Settings
 from db_base import Base
-from derby import repositories as repo
+from core import repositories as repo  # all repo calls below are core fns
 from derby.settings_cache import GuildSettingsResolver
 
 GUILD_ID = 1
