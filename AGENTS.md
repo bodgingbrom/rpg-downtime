@@ -38,8 +38,9 @@ Before committing any change:
 
 ### Scoped test suites
 
-Tests are auto-tagged by path + filename via `tests/conftest.py`. Run only
-what's relevant to your change:
+Tests are auto-tagged by directory via `tests/conftest.py`. Anything
+under `tests/<game>/` gets the `<game>` marker. Run only what's
+relevant to your change:
 
 ```bash
 pytest -m fishing              # Lazy Lures changes
@@ -55,9 +56,11 @@ Run the **full suite** (`pytest`) when your change touches anything
 cross-cutting — the scheduler, the economy/wallet, the daily digest, the
 db schema, or shared config. When in doubt, run everything.
 
-Markers are listed in `pytest.ini`. If you add a new mini-game or a new
-top-level test file, add the marker there and the auto-tagging rule in
-`tests/conftest.py`.
+Markers are listed in `pytest.ini`. New mini-game tests go under
+`tests/<game>/` and pick up the marker automatically — no conftest edit
+needed. The handful of genuinely cross-cutting top-level tests (e.g.
+`tests/test_admin_report.py`) declare their own marker via
+`pytestmark = pytest.mark.<name>`.
 
 ## Running Locally
 
