@@ -237,22 +237,61 @@ All settings have global defaults (in `config.yaml`) and can be overridden per g
 
 ```
 bot.py                    Entry point, initializes DerbyScheduler
+core/
+  models.py               GuildSettings, CommandLog (cross-game tables)
+  repositories.py         CRUD for those tables
 cogs/
-  derby.py                All player and admin slash commands (Derby + Stable cogs)
+  _autocomplete.py        Shared filter_choices helper (private — load_cogs skips _*)
+  derby.py                Race + bet + admin commands; module-level autocomplete callbacks
+  stable.py               Stable / breeding / training commands
+  tournament.py           Tournament register / cancel / list
   economy.py              Wallet commands
+  reports.py              Admin analytics
+  brewing.py              Potion Panic
+  fishing.py              Lazy Lures
+  dungeon.py              Monster Mash
+  potions.py              Potion application
+  rpg.py                  Player race selection (cross-game RPG layer)
+  help.py
+  owner.py                Bot owner commands
 derby/
-  models.py               SQLAlchemy ORM models (Racer, Race, Bet, RaceEntry, GuildSettings)
+  models.py               Racer, Race, Bet, RaceEntry, NPC, Tournament, etc.
   logic.py                Race simulation, odds, payouts, temperament, mood, training, injuries
-  repositories.py         Data access layer (CRUD for all models)
-  scheduler.py            Background task: race scheduling, execution, post-race effects, migrations
+  repositories.py         Data access for derby tables (NOT GuildSettings — that's in core/)
+  scheduler.py            DerbyScheduler — race tick, tournament tick, daily tick, fishing tick,
+                          GuildSettingsResolver mount, _spawn_background bookkeeping
+  settings_cache.py       GuildSettingsResolver (per-guild cache w/ TTL + bust)
   commentary.py           Race commentary generation
-  names.txt               200 unique racer names for pool generation
-  maps/                   JSON race maps with segment definitions
+  abilities.py            Per-racer signature + quirk abilities (race procs)
+  appearance.py           Visual descriptors (color, build, markings)
+  descriptions.py         LLM-generated racer descriptions
+  flavor_names.py         LLM-generated themed name pools
+  npc_generation.py       NPC trainer + racer generation
+  npc_quips.py            NPC pre/post-race quips
+  maps/                   YAML race maps with segment definitions
 economy/
   models.py               Wallet model
   repositories.py         Wallet CRUD
+brewing/                  Potion Panic — ingredients, brewing logic, potion catalog
+dungeon/                  Monster Mash — dungeon definitions, combat, gear, effects
+  ui/embeds.py            Pure embed builders (re-imported into cogs/dungeon.py)
+  data/dungeons/          YAML dungeon definitions
+fishing/                  Lazy Lures — locations, rods, AFK + active modes
+  handlers/{common,uncommon,rare,legendary}.py  Per-rarity event handlers
+  active.py               ActiveFishingRunner — asyncio task per active session
+  llm.py                  Anthropic-backed prompts (whispers, vibes, haikus, legendary dialogue)
+  locations/              YAML location definitions
+rpg/                      Player race selection (modifiers consumed by other games)
 config/
-  __init__.py             Settings loader (Pydantic + YAML) with guild override resolution
+  __init__.py             Settings loader (Pydantic + YAML) + resolve_guild_setting helper
 database/
   database.db             SQLite database (auto-created)
 ```
+
+### How GuildSettings reads work
+
+Every game reads per-guild settings through the `GuildSettingsResolver`
+mounted on `bot.scheduler.guild_settings`. Hits skip the DB; the cache
+TTL is 5 seconds. Admin commands that mutate settings call
+`bust(guild_id)` after the write so subsequent reads see the new value.
+This is documented in detail in [AGENTS.md](AGENTS.md#conventions).
