@@ -368,6 +368,61 @@ async def get_race_history(
     return history
 
 
+async def get_racer_record(
+    session: AsyncSession,
+    racer_id: int,
+    guild_id: int,
+    *,
+    include_test: bool = False,
+) -> dict:
+    """Return career race record for a racer, computed from the Race table.
+
+    Counts only finished races. Test races (``is_test=True``) are excluded
+    by default so the record reflects a racer's "real" career — admin-run
+    test races shouldn't pad the stats.
+
+    Returns ``{"total": int, "wins": int, "top3": int}`` where:
+    - ``total``: total finished races the racer participated in
+    - ``wins``: races where they finished 1st (Race.winner_id == racer_id)
+    - ``top3``: races where they finished in placements[:3]
+
+    Computed retroactively from existing data — works for any race that
+    was already finished before this helper existed.
+    """
+    import json as _json
+
+    q = (
+        select(Race.winner_id, Race.placements)
+        .join(RaceEntry, RaceEntry.race_id == Race.id)
+        .where(
+            Race.guild_id == guild_id,
+            Race.finished.is_(True),
+            RaceEntry.racer_id == racer_id,
+        )
+    )
+    if not include_test:
+        q = q.where(Race.is_test.is_(False))
+
+    rows = (await session.execute(q)).all()
+
+    total = 0
+    wins = 0
+    top3 = 0
+    for winner_id, placements_str in rows:
+        total += 1
+        if winner_id == racer_id:
+            wins += 1
+        if placements_str:
+            try:
+                placements = _json.loads(placements_str)
+            except (ValueError, TypeError):
+                placements = []
+            if isinstance(placements, list) and racer_id in placements[:3]:
+                top3 += 1
+
+    return {"total": total, "wins": wins, "top3": top3}
+
+
 # PlayerData
 async def get_player_data(
     session: AsyncSession, user_id: int, guild_id: int

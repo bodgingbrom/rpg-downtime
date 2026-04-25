@@ -55,6 +55,7 @@ async def _fetch_manage_data(sessionmaker, racer_id, user_id, guild_id, bot_sett
         max_trains = resolve_guild_setting(gs, bot_settings, "max_trains_per_race")
         rest_cost = resolve_guild_setting(gs, bot_settings, "rest_cost")
         feed_cost = resolve_guild_setting(gs, bot_settings, "feed_cost")
+        record = await repo.get_racer_record(session, racer_id, guild_id)
         return {
             "racer": racer,
             "gs": gs,
@@ -64,6 +65,7 @@ async def _fetch_manage_data(sessionmaker, racer_id, user_id, guild_id, bot_sett
             "max_trains": max_trains,
             "rest_cost": rest_cost,
             "feed_cost": feed_cost,
+            "record": record,
         }
 
 
@@ -98,6 +100,18 @@ def _build_manage_embed(data, *, status_text=None):
         value=f"{trains_left}/{max_trains} sessions left" + (" \u2022 Rested \u2705" if rested else ""),
         inline=True,
     )
+    # Career race record (computed retroactively from finished real races)
+    record = data.get("record") or {"total": 0, "wins": 0, "top3": 0}
+    if record["total"] > 0:
+        win_pct = round(100 * record["wins"] / record["total"])
+        embed.add_field(
+            name="Record",
+            value=(
+                f"{record['wins']}W / {record['top3']} top-3 "
+                f"in {record['total']} ({win_pct}% wins)"
+            ),
+            inline=True,
+        )
     embed.set_footer(text=f"Balance: {wallet.balance} coins")
 
     if status_text:
@@ -1065,6 +1079,23 @@ class Stable(commands.Cog, name="stable"):
                 inline=True,
             )
 
+        # Career race record — computed retroactively from finished races.
+        # Test races excluded so the record reflects "real" career.
+        async with self.bot.scheduler.sessionmaker() as _session:
+            record = await repo.get_racer_record(_session, racer_obj.id, guild_id)
+        if record["total"] > 0:
+            win_pct = round(100 * record["wins"] / record["total"])
+            top3_pct = round(100 * record["top3"] / record["total"])
+            embed.add_field(
+                name="Race Record",
+                value=(
+                    f"**{record['wins']}W** / **{record['top3']}** top-3 "
+                    f"in {record['total']} races "
+                    f"({win_pct}% / {top3_pct}%)"
+                ),
+                inline=False,
+            )
+
         training_val = f"{racer_obj.training_count or 0} sessions"
         if not racer_obj.retired:
             train_base = self._resolve("training_base", gs)
@@ -1239,6 +1270,22 @@ class Stable(commands.Cog, name="stable"):
                 name="Tournament Record",
                 value=f"{t_wins}W / {t_place} top-3",
                 inline=True,
+            )
+
+        # Career race record (computed retroactively, excludes test races)
+        async with self.bot.scheduler.sessionmaker() as _session:
+            record = await repo.get_racer_record(_session, racer_obj.id, guild_id)
+        if record["total"] > 0:
+            win_pct = round(100 * record["wins"] / record["total"])
+            top3_pct = round(100 * record["top3"] / record["total"])
+            embed.add_field(
+                name="Race Record",
+                value=(
+                    f"**{record['wins']}W** / **{record['top3']}** top-3 "
+                    f"in {record['total']} races "
+                    f"({win_pct}% / {top3_pct}%)"
+                ),
+                inline=False,
             )
 
         # Appearance (structured attributes rolled at creation)
