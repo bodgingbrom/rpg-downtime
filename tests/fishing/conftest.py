@@ -4,12 +4,15 @@ Provides:
   - sessionmaker          in-memory sqlite, all fishing tables created
   - sample_location       a hand-crafted location dict matching the YAML schema
   - sample_rod            a basic rod dict matching the rods.yaml schema
+  - mock_runner           an ActiveFishingRunner wired to a stub bot
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -17,6 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db_base import Base
 import fishing.models  # noqa: F401 — register fishing tables on Base
+from fishing.active import ActiveFishingRunner
 
 
 @pytest_asyncio.fixture
@@ -94,3 +98,63 @@ def sample_rod() -> dict[str, Any]:
         "trash_multiplier": 1.0,
         "rare_boost": 0.0,
     }
+
+
+@pytest.fixture
+def mock_runner(sessionmaker):
+    """A real ActiveFishingRunner backed by a stub bot.
+
+    The bot exposes ``scheduler.sessionmaker`` (real, in-memory) so
+    handler DB writes hit a real DB. ``get_channel`` and ``get_guild``
+    return ``None`` by default — handlers that need a posting target
+    should patch ``runner.bot.get_channel`` to return a mock channel
+    (use ``make_mock_channel`` below).
+
+    Tests own the LLM mocks: patch the relevant ``fishing.handlers.<rarity>.llm.*``
+    function with ``unittest.mock.patch``.
+    """
+    bot = SimpleNamespace(
+        scheduler=SimpleNamespace(sessionmaker=sessionmaker),
+        get_channel=lambda _id: None,
+        get_guild=lambda _id: None,
+    )
+    return ActiveFishingRunner(bot)
+
+
+@pytest.fixture
+def dummy_fs():
+    """A read-only stub of a FishingSession suitable for handler tests.
+
+    Real DB sessions live in test_repositories.py — handler tests only
+    need ``fs.user_id``/``guild_id``/``location_name``/``thread_id``/
+    ``channel_id``/``angler_name``.
+    """
+    return SimpleNamespace(
+        id=1,
+        user_id=42,
+        guild_id=100,
+        location_name="calm_pond",
+        thread_id=None,
+        channel_id=999,
+        angler_name="TestAngler",
+        bait_remaining=5,
+        bait_type="worm",
+        active=True,
+        mode="active",
+    )
+
+
+def make_mock_channel():
+    """A Discord channel/thread stub that satisfies ``await channel.send(...)``.
+
+    Returns a MagicMock channel where ``send`` is an AsyncMock returning
+    a message stub whose ``edit`` is also async. Use in tests that need
+    handlers to make it past ``_get_post_target``:
+
+        runner.bot.get_channel = lambda _: make_mock_channel()
+    """
+    message = MagicMock()
+    message.edit = AsyncMock()
+    channel = MagicMock()
+    channel.send = AsyncMock(return_value=message)
+    return channel
