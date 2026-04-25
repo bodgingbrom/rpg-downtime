@@ -17,6 +17,7 @@ from dungeon import repositories as dungeon_repo
 from dungeon import effects as dungeon_effects
 from dungeon import resolver as dungeon_resolver
 from dungeon import explore as dungeon_explore
+from dungeon import map_render as dungeon_map
 from economy import repositories as wallet_repo
 from rpg import repositories as rpg_repo
 from rpg.logic import get_racial_modifier
@@ -2015,6 +2016,12 @@ def _build_v2_explore_embed(
     if narrative:
         parts.append("")
         parts.extend(narrative)
+    # Fog-of-war floor map.
+    map_block = dungeon_map.render_map(floor_state)
+    if map_block:
+        parts.append("")
+        parts.append(map_block)
+        parts.append(f"_{dungeon_map.map_legend()}_")
     embed.description = "\n".join(parts)
     embed.set_footer(text=_status_line(run, player))
     return embed
