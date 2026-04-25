@@ -74,7 +74,9 @@ class DiscordBot(commands.Bot):
         The code in this function is executed whenever the bot will start.
         """
         for file in os.listdir(f"{os.path.realpath(os.path.dirname(__file__))}/cogs"):
-            if file.endswith(".py"):
+            # Skip private helper modules (e.g. _autocomplete.py) — they
+            # provide shared utilities, not Cogs, so they have no setup().
+            if file.endswith(".py") and not file.startswith("_"):
                 extension = file[:-3]
                 try:
                     await self.load_extension(f"cogs.{extension}")
@@ -115,12 +117,12 @@ class DiscordBot(commands.Bot):
             extra={"guild_id": guild.id},
         )
         if self.scheduler:
-            from derby import repositories as repo
+            from core import repositories as core_repo
 
             async with self.scheduler.sessionmaker() as session:
-                existing = await repo.get_guild_settings(session, guild.id)
+                existing = await core_repo.get_guild_settings(session, guild.id)
                 if existing is None:
-                    await repo.create_guild_settings(
+                    await core_repo.create_guild_settings(
                         session, guild_id=guild.id
                     )
             await self.scheduler._replenish_pool(guild.id)
@@ -160,10 +162,10 @@ class DiscordBot(commands.Bot):
             # Persist to database for analytics
             try:
                 if self.scheduler:
-                    from derby import repositories as repo
+                    from core import repositories as core_repo
 
                     async with self.scheduler.sessionmaker() as session:
-                        await repo.log_command(
+                        await core_repo.log_command(
                             session,
                             guild_id=context.guild.id,
                             user_id=context.author.id,

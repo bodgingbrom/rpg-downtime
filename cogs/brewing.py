@@ -13,6 +13,7 @@ from brewing import logic as brew_logic
 from brewing import potions as brew_potions
 from brewing import repositories as brew_repo
 from brewing.shop import get_daily_shop
+from cogs._autocomplete import filter_choices
 from config import resolve_guild_setting
 from derby import repositories as repo
 from economy import repositories as wallet_repo
@@ -33,15 +34,13 @@ async def shop_ingredient_autocomplete(
     free_items = [i for i in all_ingredients if i.rarity == "free"]
     available = shop_items + free_items
 
-    current_lower = current.lower()
-    choices = []
-    for ing in available:
-        if current_lower in ing.name.lower():
-            label = ing.name if ing.base_cost == 0 else f"{ing.name} — {ing.base_cost} coins"
-            choices.append(app_commands.Choice(name=label, value=ing.name))
-        if len(choices) >= 25:
-            break
-    return choices
+    return filter_choices(
+        available,
+        current,
+        label=lambda i: i.name if i.base_cost == 0 else f"{i.name} — {i.base_cost} coins",
+        value=lambda i: i.name,
+        match=lambda i: i.name,
+    )
 
 
 async def _brew_ingredient_autocomplete(
@@ -99,17 +98,18 @@ async def _all_ingredient_autocomplete(
 
     revealed_ids = {r.ingredient_id for r in revealed}
 
-    current_lower = current.lower()
-    choices = []
-    for ing in all_ingredients:
-        if current_lower in ing.name.lower():
-            label = ing.name
-            if ing.id in revealed_ids:
-                label += f" [{ing.tag_1}/{ing.tag_2}]"
-            choices.append(app_commands.Choice(name=label[:100], value=ing.name))
-        if len(choices) >= 25:
-            break
-    return choices
+    def _label(ing):
+        if ing.id in revealed_ids:
+            return f"{ing.name} [{ing.tag_1}/{ing.tag_2}]"
+        return ing.name
+
+    return filter_choices(
+        all_ingredients,
+        current,
+        label=_label,
+        value=lambda ing: ing.name,
+        match=lambda ing: ing.name,
+    )
 
 
 class Brewing(commands.Cog, name="brewing"):
@@ -280,7 +280,7 @@ class Brewing(commands.Cog, name="brewing"):
             if total_cost > 0:
                 wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
                 if wallet is None:
-                    gs = await repo.get_guild_settings(session, guild_id)
+                    gs = await self.bot.scheduler.guild_settings.get(guild_id)
                     default_bal = resolve_guild_setting(
                         gs, self.bot.settings, "default_wallet"
                     )
@@ -351,7 +351,7 @@ class Brewing(commands.Cog, name="brewing"):
                 return
 
             # Resolve bottle fee from config
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             bottle_fee = resolve_guild_setting(gs, self.bot.settings, "bottle_fee")
 
             # Get/create wallet and check balance
@@ -504,7 +504,7 @@ class Brewing(commands.Cog, name="brewing"):
                     cauldron_ingredients.append(cauldron_ing)
 
             # Calculate potency gain
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             base_potency = resolve_guild_setting(
                 gs, self.bot.settings, "base_potency"
             )
@@ -553,9 +553,13 @@ class Brewing(commands.Cog, name="brewing"):
                 await session.commit()
 
                 total_lost = brew_session.bottle_cost + brew_session.ingredient_cost_total
+                brewer_name = context.author.display_name
                 embed = discord.Embed(
                     title="\U0001f4a5 CATASTROPHIC FAILURE",
-                    description=brew_logic.get_explosion_text(),
+                    description=(
+                        f"**{brewer_name}**'s cauldron erupts!\n\n"
+                        + brew_logic.get_explosion_text()
+                    ),
                     color=brew_logic.COLOR_EXPLODED,
                 )
                 embed.add_field(
@@ -569,7 +573,16 @@ class Brewing(commands.Cog, name="brewing"):
                     value=", ".join(ingredient_names),
                     inline=False,
                 )
-                await context.send(embed=embed)
+                # Public announcement to the channel so the whole server sees
+                try:
+                    await context.channel.send(embed=embed)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+                # Ephemeral ack to close out the interaction
+                await context.send(
+                    "\U0001f4a5 Your cauldron exploded! See the channel for details.",
+                    ephemeral=True,
+                )
                 return
 
             await session.commit()
@@ -625,7 +638,7 @@ class Brewing(commands.Cog, name="brewing"):
             # Add payout to wallet
             wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
             if wallet is None:
-                gs = await repo.get_guild_settings(session, guild_id)
+                gs = await self.bot.scheduler.guild_settings.get(guild_id)
                 default_bal = resolve_guild_setting(
                     gs, self.bot.settings, "default_wallet"
                 )
@@ -636,7 +649,7 @@ class Brewing(commands.Cog, name="brewing"):
 
             # Rare ingredient drop at 200+ potency
             rare_drop_name = None
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             rare_threshold = resolve_guild_setting(
                 gs, self.bot.settings, "rare_drop_potency"
             )

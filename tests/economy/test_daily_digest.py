@@ -12,9 +12,9 @@ from unittest.mock import patch
 import pytest
 
 from config import Settings
+from core.models import GuildSettings
 from derby import logic, repositories as repo
 from derby.models import (
-    GuildSettings,
     Race,
     RaceEntry,
     Racer,

@@ -1,0 +1,498 @@
+id: the_cartographers_folly
+name: The Cartographer's Folly
+description: "An abandoned survey tower. The maps inside are correcting themselves."
+
+background:
+  tone: "Eerie, obsessive, quietly absurd. Dry humor. Leans literary."
+  pitch: "An abandoned survey tower. The maps inside are correcting themselves."
+  lore: |
+    Alaric Venn was the royal cartographer — a commission, a title, and an
+    obsession. He believed the world was sloppy: coastlines that drifted,
+    mountains never quite where his surveys said, rivers that meandered
+    differently between visits. So he began drawing maps the world was
+    forced to obey. Small corrections at first. Then a village relocated
+    because it was in the wrong place. Then a whole valley. Then he
+    stopped coming back from his surveys, and the blank places on his
+    last map began to fill themselves in.
+
+    The Folly is what grew in the margins he never finished. Locals who
+    wander near the old survey tower have seen pencil lines stretching
+    across hillsides. Sometimes a road ends in a faint sketch and then
+    just stops.
+  dm_hooks:
+    - "Margin notes in an apprentice's handwriting on the walls"
+    - "Corrections scratched over the apprentice notes in a tighter, angrier hand"
+    - "Compass needles embedded in stone, all pointing different directions"
+    - "Unfinished corridors sketched in graphite, ceilings marked '(detail forthcoming)'"
+  style_notes: |
+    Favor cartography jargon (latitude, rhumb line, lacuna, cartouche).
+    Avoid modern idiom. Lean literary rather than bombastic.
+    Puns are allowed if they're dry.
+
+floors:
+  # =======================================================================
+  - floor: 1
+    theme: the_margins
+    background: |
+      The outer edges of the map — where Alaric hadn't yet imposed detail.
+      Corridors are half-sketched. Monsters here are doodles, marginalia,
+      things that escaped from apprentice practice sheets.
+    rooms: [5, 6]
+    room_weights:
+      combat: 50
+      treasure: 20
+      trap: 15
+      rest: 15
+    monsters:
+      - id: compass_rose
+        name: Compass Rose
+        description: "A spinning, winged construct of four dagger-points. It has decided which way is north, and it is wrong."
+        hp: 12
+        defense: 1
+        attack_dice: "1d6"
+        attack_bonus: 0
+        xp: 10
+        gold: [2, 7]
+        # Unpredictable AI — almost evenly split between three actions.
+        ai: {attack: 40, heavy: 35, defend: 25}
+        loot:
+          - {item_id: worm, chance: 20, type: cross_game_bait}
+          - {item_id: insect, chance: 10, type: cross_game_bait}
+          - {item_id: Singing Quartz, chance: 7, type: cross_game_ingredient, name: Singing Quartz}
+          - {item_id: Flickerstone, chance: 6, type: cross_game_ingredient, name: Flickerstone}
+
+      - id: here_be_dragon
+        name: Here-Be-Dragon
+        description: "A small, flat, stylized dragon drawn in a margin warning. It does not know it is not real."
+        hp: 6
+        defense: 0
+        attack_dice: "1d8"
+        attack_bonus: 2
+        xp: 12
+        gold: [3, 9]
+        # Glass cannon: hits hard, never defends, low HP.
+        ai: {attack: 60, heavy: 40}
+        loot:
+          - {item_id: health_potion, chance: 15}
+          - {item_id: insect, chance: 15, type: cross_game_bait}
+          - {item_id: Prism Beetle Shell, chance: 7, type: cross_game_ingredient, name: Prism Beetle Shell}
+
+      - id: margin_scribble
+        name: Margin Scribble
+        description: "A tangled knot of apprentice doodles — rude caricatures, tic-tac-toe grids, one recognizable cat. It lunges with pencil-sharp limbs."
+        hp: 5
+        defense: 0
+        attack_dice: "1d4"
+        attack_bonus: 0
+        xp: 6
+        gold: [1, 4]
+        ai: {attack: 85, heavy: 15}
+        loot:
+          - {item_id: worm, chance: 25, type: cross_game_bait}
+          - {item_id: Coilweed, chance: 6, type: cross_game_ingredient, name: Coilweed}
+    traps:
+      - id: x_marks_the_spot
+        name: X Marks The Spot
+        damage: [3, 8]
+        dex_dc: 12
+        flavor_success: "A black X burns itself onto the floor — you dive aside as something bursts from under it."
+        flavor_fail: "An X flares beneath your feet and the floor erupts in ink-black brimstone!"
+      - id: latitude_drift
+        name: Latitude Drift
+        damage: [2, 6]
+        dex_dc: 11
+        flavor_success: "The corridor tilts northward — you catch yourself before sliding into the wall."
+        flavor_fail: "The room's coordinates shift mid-step; you slam into unexpected geography!"
+    treasure_tier: common
+    rest_shrines: 1
+    boss:
+      id: the_scale_bar
+      name: The Scale Bar
+      description: "A measuring line, embedded in the floor, humming with incremental authority. Each turn a new unit of measure appears on it, and it grows."
+      hp: 30
+      defense: 1
+      attack_dice: "1d4"   # Base dice — escalates via dice_step_self ability.
+      attack_bonus: 1
+      xp: 32
+      gold: [15, 30]
+      ai: {attack: 70, heavy: 30}
+      abilities:
+        # Signature mechanic: attack dice grow on a schedule. Turn 1 = 1d4,
+        # turn 3 = 1d6, turn 5 = 1d8, turn 7 = 1d10. Burn it down fast.
+        - type: dice_step_self
+          trigger: on_turn
+          every: 1
+          step_schedule:
+            - {turn: 1, step: 0}
+            - {turn: 3, step: 1}
+            - {turn: 5, step: 2}
+            - {turn: 7, step: 3}
+        - type: narrate
+          trigger: on_turn
+          every: 2
+          text: "_A new unit appears on the bar: **mile**, **league**, **day's march**..._"
+      loot:
+        - {item_id: shortsword, chance: 100, type: gear}
+        - {item_id: worm, chance: 35, type: cross_game_bait}
+        - {item_id: insect, chance: 25, type: cross_game_bait}
+        - {item_id: Singing Quartz, chance: 18, type: cross_game_ingredient, name: Singing Quartz}
+        - {item_id: Flickerstone, chance: 15, type: cross_game_ingredient, name: Flickerstone}
+        - {item_id: shortsword_plus1, chance: 10, type: gear}
+        - {item_id: leather_armor_plus1, chance: 10, type: gear}
+
+  # =======================================================================
+  - floor: 2
+    theme: the_legend
+    background: |
+      The map's legend — its key of symbols — given form. Things here are
+      still abstract, but the abstraction has teeth. Icons step off the
+      cartouche and come for you.
+    rooms: [6, 7]
+    room_weights:
+      combat: 55
+      treasure: 15
+      trap: 20
+      rest: 10
+    monsters:
+      - id: capital_city_icon
+        name: Capital-City Icon
+        description: "A small drawn castle on tiny legs. It fights like a miniature fortress, slow but bristling."
+        hp: 20
+        defense: 3
+        attack_dice: "1d6"
+        attack_bonus: 2
+        xp: 16
+        gold: [5, 12]
+        ai: {attack: 40, heavy: 20, defend: 40}
+        loot:
+          - {item_id: health_potion, chance: 15}
+          - {item_id: insect, chance: 15, type: cross_game_bait}
+          - {item_id: Starite Shard, chance: 8, type: cross_game_ingredient, name: Starite Shard}
+          - {item_id: Ashenworm Silk, chance: 7, type: cross_game_ingredient, name: Ashenworm Silk}
+
+      - id: elevation_line
+        name: Elevation Line
+        description: "A hovering band of stacked terrain silhouettes, forever shifting from hills to peaks. It looks down on you — literally."
+        hp: 14
+        defense: 1
+        attack_dice: "1d6"
+        attack_bonus: 2
+        xp: 14
+        gold: [4, 10]
+        ai: {attack: 60, heavy: 30, defend: 10}
+        abilities:
+          # After its first hit lands, "high ground" grants flat bonus damage.
+          - type: flat_damage_bonus_self
+            trigger: on_hit
+            amount: 2
+            _source_id: elevation_line_high_ground
+        loot:
+          - {item_id: insect, chance: 15, type: cross_game_bait}
+          - {item_id: Flickerstone, chance: 8, type: cross_game_ingredient, name: Flickerstone}
+          - {item_id: Marshglow Lichen, chance: 7, type: cross_game_ingredient, name: Marshglow Lichen}
+
+      - id: terrain_swatch
+        name: Terrain Swatch
+        description: "A floating patch of map texture, flickering between biomes. It has opinions about which one you should be standing on."
+        hp: 14
+        defense: 1
+        attack_dice: "1d6"
+        attack_bonus: 1
+        xp: 15
+        gold: [4, 10]
+        ai: {attack: 55, heavy: 30, defend: 15}
+        # Variant mechanic — one of three biomes is picked at spawn.
+        variants:
+          - key: swamp
+            name_suffix: "(Swamp)"
+            defense_delta: 0
+          - key: forest
+            name_suffix: "(Forest)"
+            hp_delta: 4
+            attack_bonus_delta: -1
+          - key: mountain
+            name_suffix: "(Mountain)"
+            defense_delta: 2
+            attack_bonus_delta: -1
+        loot:
+          - {item_id: worm, chance: 20, type: cross_game_bait}
+          - {item_id: Coilweed, chance: 8, type: cross_game_ingredient, name: Coilweed}
+          - {item_id: Rot Blossom, chance: 6, type: cross_game_ingredient, name: Rot Blossom}
+    traps:
+      - id: not_to_scale
+        name: Not To Scale
+        damage: [1, 20]
+        # Low DC = easy to avoid, but on failure the damage is wildly random.
+        # Reality briefly consults the wrong map.
+        dex_dc: 11
+        flavor_success: "The corridor's proportions tear loose — but you spot the lie and slip through unhurt."
+        flavor_fail: "Reality consults the wrong map. The pit is the wrong size, and so, briefly, are you!"
+      - id: compass_confusion
+        name: Compass Confusion
+        damage: [3, 9]
+        dex_dc: 13
+        flavor_success: "Four compass needles embedded in the ceiling swing wildly — you crouch and cross beneath them."
+        flavor_fail: "The needles all point at you. Something in the air shifts — you stumble into a wall that wasn't there a moment ago!"
+      - id: cartouche_clamp
+        name: Cartouche Clamp
+        damage: [4, 10]
+        dex_dc: 12
+        flavor_success: "An ornate frame drops from above — you dance sideways as it crashes to the floor."
+        flavor_fail: "A heavy decorative cartouche slams down around your ankles and pins you!"
+    treasure_tier: uncommon
+    rest_shrines: 1
+    boss:
+      id: the_key_legend
+      name: The Key Legend
+      description: "A ten-foot floating manuscript page bristling with symbols. The symbols rotate. The symbols are staring. The symbols are translating themselves at you."
+      hp: 55
+      defense: 3
+      attack_dice: "1d8"
+      attack_bonus: 3
+      xp: 52
+      gold: [25, 50]
+      ai: {attack: 50, heavy: 30, defend: 20}
+      # Three phases cycle as HP drops. Each phase has a distinct
+      # damage profile. On top of phases, every 2 turns a random
+      # weird effect fires — keeps every turn off-kilter.
+      phases:
+        # Phase 1 = INKED (baseline heavy singles) is implicit — no overrides.
+        - hp_below_pct: 66
+          # DRAFTED — multi-hit flurry (bias heavy).
+          attack_dice: "1d8"
+          ai: {attack: 35, heavy: 55, defend: 10}
+          on_enter:
+            type: narrate
+            text: "_The symbols shift. The page rearranges itself — now drafted, not yet inked._"
+        - hp_below_pct: 33
+          # ANNOTATED — debuff-leaning, tighter defense.
+          attack_dice: "1d10"
+          ai: {attack: 40, heavy: 30, defend: 30}
+          on_enter:
+            type: narrate
+            text: "_Annotations bloom across the page. The Legend is **explaining itself** at you._"
+      abilities:
+        # Signature mechanic: every 2 turns, roll a weird effect.
+        - type: random_effect_pool
+          trigger: on_turn
+          every: 2
+          pool:
+            - {type: player_next_attack_invert}
+            - {type: player_next_attack_advantage}
+            - {type: player_hit_chance_reduction, amount: 0.3, turns: 1}
+            - {type: bleed, damage: 2, turns: 2}
+            - {type: narrate, text: "_The Legend translates a passage under its breath. Nothing visible changes. You feel watched._"}
+      loot:
+        - {item_id: greater_health_potion, chance: 60}
+        - {item_id: chain_shirt, chance: 100, type: gear}
+        - {item_id: insect, chance: 30, type: cross_game_bait}
+        - {item_id: shiny_lure, chance: 10, type: cross_game_bait}
+        - {item_id: Starite Shard, chance: 20, type: cross_game_ingredient, name: Starite Shard}
+        - {item_id: Ghostlight Oil, chance: 18, type: cross_game_ingredient, name: Ghostlight Oil}
+        - {item_id: Nullite Powder, chance: 12, type: cross_game_ingredient, name: Nullite Powder}
+        - {item_id: longsword_plus1, chance: 12, type: gear}
+        - {item_id: chain_shirt_plus1, chance: 12, type: gear}
+
+  # =======================================================================
+  - floor: 3
+    theme: the_territory
+    background: |
+      The deep interior. Alaric's obsession stopped being metaphorical
+      somewhere up the stairs. Rooms rearrange if you take your eyes off
+      them. The air smells faintly of ink.
+    rooms: [6, 8]
+    room_weights:
+      combat: 60
+      treasure: 15
+      trap: 20
+      rest: 5
+    monsters:
+      - id: surveyors_ghost
+        name: Surveyor's Ghost
+        description: "A translucent apprentice, still measuring, still arguing with a colleague who isn't there about whose chain was off by an inch."
+        hp: 18
+        defense: 2
+        attack_dice: "1d8"
+        attack_bonus: 2
+        xp: 20
+        gold: [8, 16]
+        ai: {attack: 55, heavy: 30, defend: 15}
+        loot:
+          - {item_id: health_potion, chance: 20}
+          - {item_id: insect, chance: 15, type: cross_game_bait}
+          - {item_id: Echo Bone, chance: 10, type: cross_game_ingredient, name: Echo Bone}
+          - {item_id: Tremor Grub, chance: 7, type: cross_game_ingredient, name: Tremor Grub}
+
+      - id: wandering_landmark
+        name: Wandering Landmark
+        description: "A large, unbothered landmark that has decided to relocate. The relocation is occurring through you."
+        description_pool:
+          - "A mossy standing stone, leaning slightly. It is heavier than physics."
+          - "A lone oak with bark like old parchment, roots torn free of the ground."
+          - "A ruined bridge, missing its middle span, somehow still mobile."
+          - "A wayside shrine — candles long extinguished, stone cold to the touch."
+          - "A boundary marker carved with a name in a script you can almost read."
+          - "A waterfall where there is no water — only the suggestion of falling."
+        hp: 28
+        defense: 3
+        attack_dice: "1d10"
+        attack_bonus: 3
+        xp: 26
+        gold: [10, 20]
+        # Heavy, slow, defensive — like a landmark.
+        ai: {attack: 40, heavy: 30, defend: 30}
+        loot:
+          - {item_id: worm, chance: 20, type: cross_game_bait}
+          - {item_id: Singing Quartz, chance: 12, type: cross_game_ingredient, name: Singing Quartz}
+          - {item_id: Duskfen Mud, chance: 8, type: cross_game_ingredient, name: Duskfen Mud}
+          - {item_id: Scorchcap Spore, chance: 7, type: cross_game_ingredient, name: Scorchcap Spore}
+
+      # Alaric's summoned adds — included as regular floor-3 monsters so
+      # they can also appear in normal combat rooms AND be looked up by
+      # Alaric's summon_add ability at runtime. Weak on purpose — meant
+      # to be a speed bump, not a wall.
+      - id: scribbled_hound
+        name: Scribbled Hound
+        description: "A dog drawn in hurried ink strokes. Its outline flickers. Its teeth are very, very permanent."
+        hp: 10
+        defense: 1
+        attack_dice: "1d6"
+        attack_bonus: 2
+        xp: 10
+        gold: [3, 8]
+        ai: {attack: 80, heavy: 20}
+        loot:
+          - {item_id: worm, chance: 25, type: cross_game_bait}
+          - {item_id: Ashenworm Silk, chance: 7, type: cross_game_ingredient, name: Ashenworm Silk}
+
+      - id: inkwash_wraith
+        name: Inkwash Wraith
+        description: "A pale, thin-limbed figure the color of wet ink. Its eyes are two dropped punctuation marks. It drifts, rather than walks."
+        hp: 12
+        defense: 0
+        attack_dice: "1d8"
+        attack_bonus: 2
+        xp: 12
+        gold: [4, 9]
+        # More fragile than the hound, hits harder — different tactical threat.
+        ai: {attack: 70, heavy: 30}
+        loot:
+          - {item_id: insect, chance: 20, type: cross_game_bait}
+          - {item_id: Ghostlight Oil, chance: 10, type: cross_game_ingredient, name: Ghostlight Oil}
+          - {item_id: Marshglow Lichen, chance: 6, type: cross_game_ingredient, name: Marshglow Lichen}
+
+      - id: survey_error
+        name: Survey Error
+        description: "A shimmering distortion where the map and the territory disagree. It has noticed you, and it is very angry about the inconsistency."
+        hp: 22
+        defense: 2
+        attack_dice: "1d8"
+        attack_bonus: 3
+        xp: 24
+        gold: [8, 18]
+        ai: {attack: 60, heavy: 30, defend: 10}
+        abilities:
+          # Once per fight: when HP drops below 50%, redraw the room around
+          # the player — a high-damage partial-armor-bypass strike.
+          - type: redraw_strike
+            trigger: on_hp_below_pct
+            pct: 50
+            damage_dice: "2d8"
+            damage_bonus: 2
+            defense_ignore: 2
+            text: "_The **Survey Error** redraws the room around you — floor, walls, your armor's exact position. Reality snaps back a half-beat late. **Defense partially bypassed.**_"
+        loot:
+          - {item_id: insect, chance: 15, type: cross_game_bait}
+          - {item_id: shiny_lure, chance: 5, type: cross_game_bait}
+          - {item_id: Ghostlight Oil, chance: 13, type: cross_game_ingredient, name: Ghostlight Oil}
+          - {item_id: Nullite Powder, chance: 8, type: cross_game_ingredient, name: Nullite Powder}
+    traps:
+      - id: rerouting
+        name: Rerouting
+        damage: [5, 12]
+        dex_dc: 14
+        flavor_success: "The corridor tries to loop back on itself — you notice the repeated patterns and force your way through."
+        flavor_fail: "You walked for an hour. You ended up right where you started. Exhaustion hits like a hammer!"
+      - id: contour_fall
+        name: Contour Fall
+        damage: [6, 14]
+        dex_dc: 15
+        flavor_success: "A line of elevation peels off the wall and slams down — you dive sideways as it crashes."
+        flavor_fail: "A contour line falls on you with the weight of real topography!"
+      - id: legend_rewrite
+        name: Legend Rewrite
+        damage: [4, 12]
+        dex_dc: 14
+        flavor_success: "The floor's legend rewrites itself — you spot the change and sidestep before the new terrain can take effect."
+        flavor_fail: "The floor quietly reclassifies itself from 'stone' to 'void' — you plummet through!"
+    treasure_tier: rare
+    rest_shrines: 1
+    boss:
+      id: alaric_venn
+      name: Alaric Venn, The Cartographer
+      description: "An old man with an ink-stained beard, seated at a drafting table in the center of a blank white room. He doesn't strike directly. He draws."
+      hp: 80
+      defense: 4
+      attack_dice: "1d10"
+      attack_bonus: 4
+      xp: 90
+      gold: [50, 100]
+      # Phase 1 caster: biases heavy (drawing big summons); defensive.
+      ai: {attack: 40, heavy: 35, defend: 25}
+      phases:
+        # Phase 2: wall — becomes harder to reach. AI leans defend.
+        - hp_below_pct: 66
+          ai: {attack: 30, heavy: 20, defend: 50}
+          on_enter:
+            type: narrate
+            text: "_Alaric lays down his quill. He draws a wall between you — fast, practiced lines. **His defense rises.**_"
+        # Phase 3: quill up — existential attacks each turn. Race to finish him.
+        - hp_below_pct: 33
+          ai: {attack: 70, heavy: 30}
+          on_enter:
+            type: narrate
+            text: "_Alaric lifts his quill and **looks at you**, really looks at you, for the first time. He begins to draw you **into** the map._"
+          abilities_add:
+            - type: existential_strike
+              trigger: on_turn
+              every: 1
+              damage_dice: "2d10"
+              damage_bonus: 3
+              text: "_The quill moves. You feel yourself being flattened — simplified, labeled. Your outline is being **traced**._"
+      abilities:
+        # Phase 1 ONLY (phase_max: 0 = baseline phase only). Summon one add
+        # every 2 turns, picked randomly from the sketchbook. When HP drops
+        # below 66% we're in phase 1 (internal index), which gate-blocks
+        # this ability so Alaric stops summoning — transitioning the fight
+        # to the wall phase.
+        - type: summon_add
+          trigger: on_turn
+          every: 2
+          phase_max: 0
+          add_pool: [scribbled_hound, inkwash_wraith]
+          max_active: 1
+          untargetable_self: true
+        # Phase 2 only: defense buff (the wall) — fires once when HP drops
+        # below 66% via on_hp_below_pct. Permanent (remaining -1).
+        - type: defense_bonus_self
+          trigger: on_hp_below_pct
+          pct: 66
+          amount: 3
+          turns: -1
+      on_death_narration: |
+        _Alaric's quill stills. The parchment at his feet flashes pale, and his figure — suddenly flat, suddenly two-dimensional — is pulled gently onto the page. The map is, at last, complete._
+
+        _In the bottom-right corner, newly inked, a small neat signature reads: **— A. Venn, Cartographer Royal.**_
+      loot:
+        - {item_id: greataxe, chance: 100, type: gear}
+        - {item_id: greater_health_potion, chance: 100}
+        - {item_id: insect, chance: 40, type: cross_game_bait}
+        - {item_id: shiny_lure, chance: 25, type: cross_game_bait}
+        - {item_id: Harmonic Amber, chance: 15, type: cross_game_ingredient, name: Harmonic Amber}
+        - {item_id: Ghostlight Oil, chance: 25, type: cross_game_ingredient, name: Ghostlight Oil}
+        - {item_id: Singing Quartz, chance: 20, type: cross_game_ingredient, name: Singing Quartz}
+        - {item_id: Scorchcap Spore, chance: 18, type: cross_game_ingredient, name: Scorchcap Spore}
+        - {item_id: war_hammer_plus1, chance: 12, type: gear}
+        - {item_id: scale_mail_plus1, chance: 12, type: gear}
+        - {item_id: war_hammer_plus2, chance: 5, type: gear}
+        - {item_id: scale_mail_plus2, chance: 5, type: gear}

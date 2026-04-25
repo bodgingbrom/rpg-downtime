@@ -99,18 +99,58 @@ def load_items() -> list[dict[str, Any]]:
 
 
 def load_dungeons() -> dict[str, dict[str, Any]]:
-    """Load all dungeon YAML files, keyed by filename stem. Cached."""
+    """Load all dungeon YAML files, keyed by filename stem. Cached.
+
+    Validates the new optional monster fields (abilities, variants, phases,
+    description_pool) at load time. Validation errors are logged and the
+    offending dungeon is SKIPPED rather than crashing the whole bot.
+    """
     global _dungeons_cache
     if _dungeons_cache is not None:
         return _dungeons_cache
+
+    # Lazy import to avoid a circular dependency (effects imports nothing
+    # from logic, but logic-time validation can be heavy at module import).
+    from dungeon import effects as _effects
+    from dungeon import explore as _explore
 
     dungeons: dict[str, dict[str, Any]] = {}
     for yaml_file in sorted(glob.glob(os.path.join(_DUNGEONS_DIR, "*.yaml"))):
         with open(yaml_file, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-            if data:
-                key = Path(yaml_file).stem
-                dungeons[key] = data
+            if not data:
+                continue
+            key = Path(yaml_file).stem
+            errors: list[str] = []
+            for f_idx, floor in enumerate(data.get("floors", []) or []):
+                for m_idx, monster in enumerate(floor.get("monsters", []) or []):
+                    errors.extend(
+                        _effects.validate_monster(
+                            monster, path=f"[{key}] floor[{f_idx}].monsters[{m_idx}]."
+                        )
+                    )
+                boss = floor.get("boss")
+                if boss:
+                    errors.extend(
+                        _effects.validate_monster(boss, path=f"[{key}] floor[{f_idx}].boss.")
+                    )
+                # v2 room-pool schema validation.
+                for r_idx, room in enumerate(floor.get("room_pool") or []):
+                    errors.extend(
+                        _explore.validate_room(
+                            room, path=f"[{key}] floor[{f_idx}].room_pool[{r_idx}]."
+                        )
+                    )
+            # v2 dungeon-level meta — lore_fragments + legendary_reward.
+            errors.extend(_explore.validate_dungeon_meta(data, path=f"[{key}] "))
+            if errors:
+                # Print to stderr; refusal to load keeps the bot healthy for
+                # other dungeons, and the authoring error gets surfaced.
+                import sys
+                for e in errors:
+                    print(f"dungeon schema error: {e}", file=sys.stderr)
+                continue
+            dungeons[key] = data
     _dungeons_cache = dungeons
     return dungeons
 
@@ -470,6 +510,121 @@ def select_monster_action(ai_weights: dict[str, int], rng: random.Random | None 
     actions = list(ai_weights.keys())
     weights = [ai_weights[a] for a in actions]
     return rng.choices(actions, weights=weights, k=1)[0]
+
+
+# ---------------------------------------------------------------------------
+# Variant / phase / description helpers (PR 1: reusable combat mechanics)
+# ---------------------------------------------------------------------------
+
+
+def apply_variant(monster_def: dict[str, Any], variant: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a copy of ``monster_def`` with variant overrides applied.
+
+    Variants contribute via additive deltas where possible so base stats
+    remain meaningful:
+
+    - ``hp_delta`` (int): added to ``hp``.
+    - ``defense_delta`` (int): added to ``defense``.
+    - ``attack_bonus_delta`` (int): added to ``attack_bonus``.
+    - ``name_suffix`` (str): appended to ``name`` for display.
+    - ``attack_dice`` (str): replaces ``attack_dice`` outright.
+    - Any other key is merged in verbatim (``on_hit_effect``,
+      ``on_turn_effect``, etc. — read by the combat loop).
+
+    If ``variant`` is None, the monster_def is returned unchanged.
+    """
+    if not variant:
+        return monster_def
+    out = dict(monster_def)
+    if "hp_delta" in variant:
+        out["hp"] = out.get("hp", 0) + int(variant["hp_delta"])
+    if "defense_delta" in variant:
+        out["defense"] = out.get("defense", 0) + int(variant["defense_delta"])
+    if "attack_bonus_delta" in variant:
+        out["attack_bonus"] = out.get("attack_bonus", 0) + int(variant["attack_bonus_delta"])
+    if "name_suffix" in variant and variant.get("name_suffix"):
+        out["name"] = f"{out.get('name', '')} {variant['name_suffix']}".strip()
+    if "attack_dice" in variant:
+        out["attack_dice"] = variant["attack_dice"]
+    # Pass-through for ability-triggering keys the combat loop reads.
+    for passthrough in ("on_hit_effect", "on_turn_effect", "description"):
+        if passthrough in variant:
+            out[passthrough] = variant[passthrough]
+    return out
+
+
+def compute_phase(monster_hp: int, monster_max_hp: int, phases: list[dict[str, Any]] | None) -> int:
+    """Return the active phase index based on HP fraction.
+
+    Phases are ordered highest-threshold-first in YAML (e.g. 66 then 33).
+    The returned index is the last phase whose ``hp_below_pct`` has been
+    crossed. 0 means "baseline, no phase triggered".
+
+    Baseline (no phase triggered) is index 0; phase 1 is phases[0], phase
+    2 is phases[1], etc.
+    """
+    if not phases or monster_max_hp <= 0:
+        return 0
+    hp_pct = (monster_hp / monster_max_hp) * 100.0
+    active = 0
+    for i, p in enumerate(phases, start=1):
+        threshold = float(p.get("hp_below_pct", 0))
+        if hp_pct < threshold:
+            active = i
+    return active
+
+
+def pick_description(
+    monster_def: dict[str, Any], rng: random.Random | None = None
+) -> str | None:
+    """Pick a random flavor description from ``description_pool`` if present.
+
+    Returns None if no pool; caller should fall back to the static
+    ``description`` field.
+    """
+    pool = monster_def.get("description_pool")
+    if not pool:
+        return None
+    rng = rng or random.Random()
+    return rng.choice(pool)
+
+
+def get_phase_def(
+    monster_def: dict[str, Any], phase_index: int
+) -> dict[str, Any] | None:
+    """Return the phase dict for ``phase_index`` (1-based), or None."""
+    if phase_index <= 0:
+        return None
+    phases = monster_def.get("phases") or []
+    if phase_index > len(phases):
+        return None
+    return phases[phase_index - 1]
+
+
+def merge_phase_overrides(
+    monster_def: dict[str, Any], phase_index: int
+) -> dict[str, Any]:
+    """Return a copy of monster_def with phase overrides merged in.
+
+    Phase fields supported:
+    - ``attack_dice``: replaces base
+    - ``attack_bonus``: replaces base
+    - ``defense``: replaces base
+    - ``ai``: replaces base ``ai``
+    - ``abilities_add``: extends base ``abilities``
+    """
+    phase = get_phase_def(monster_def, phase_index)
+    if phase is None:
+        return monster_def
+    out = dict(monster_def)
+    for key in ("attack_dice", "attack_bonus", "defense", "ai"):
+        if key in phase:
+            out[key] = phase[key]
+    extras = phase.get("abilities_add")
+    if extras:
+        base_abilities = list(out.get("abilities") or [])
+        out["abilities"] = base_abilities + list(extras)
+    return out
 
 
 def check_flee(

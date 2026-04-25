@@ -24,20 +24,41 @@ def has_role(role_name: str) -> commands.Check:
     return commands.check(predicate)
 
 
+def author_has_role(ctx: commands.Context | None, role_name: str | None) -> bool:
+    """Return True if the command author has ``role_name``, or if no role
+    is required.
+
+    Convenience for runtime checks (rather than decorators) — useful when
+    we need to filter a list of items by per-item role gates. A ``None``
+    role_name means "no gate," i.e. always allowed.
+    """
+    if not role_name:
+        return True
+    if ctx is None:
+        return False
+    roles = getattr(getattr(ctx, "author", None), "roles", [])
+    for role in roles:
+        if getattr(role, "name", None) == role_name:
+            return True
+    return False
+
+
 async def _load_guild_settings(ctx: commands.Context):
-    """Load GuildSettings for the current guild, or None."""
+    """Load GuildSettings for the current guild, or None.
+
+    Uses the scheduler's GuildSettingsResolver cache — channel checks fire
+    on every command, so a per-command DB hit would be wasteful.
+    """
     scheduler = getattr(ctx.bot, "scheduler", None)
     if scheduler is None:
         return None
     guild = ctx.guild
     if guild is None:
         return None
-    sessionmaker = getattr(scheduler, "sessionmaker", None)
-    if sessionmaker is None:
+    resolver = getattr(scheduler, "guild_settings", None)
+    if resolver is None:
         return None
-    from derby import repositories as repo
-    async with sessionmaker() as session:
-        return await repo.get_guild_settings(session, guild.id)
+    return await resolver.get(guild.id)
 
 
 async def in_bot_channel(ctx: commands.Context, channel_key: str | None = None) -> bool:

@@ -2,6 +2,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core import repositories as core_repo
 from db_base import Base
 from derby import repositories as repo
 import economy.models  # noqa: F401 — register Wallet table
@@ -104,17 +105,17 @@ async def test_course_segment_crud(session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_guild_settings_crud(session: AsyncSession):
-    settings = await repo.create_guild_settings(session, guild_id=1)
+    settings = await core_repo.create_guild_settings(session, guild_id=1)
     assert settings.guild_id == 1
 
-    fetched = await repo.get_guild_settings(session, 1)
+    fetched = await core_repo.get_guild_settings(session, 1)
     assert fetched.guild_id == 1
 
-    updated = await repo.update_guild_settings(session, 1, bet_window=60)
+    updated = await core_repo.update_guild_settings(session, 1, bet_window=60)
     assert updated.bet_window == 60
 
-    await repo.delete_guild_settings(session, 1)
-    assert await repo.get_guild_settings(session, 1) is None
+    await core_repo.delete_guild_settings(session, 1)
+    assert await core_repo.get_guild_settings(session, 1) is None
 
 
 @pytest.mark.asyncio
@@ -543,3 +544,131 @@ async def test_get_ability_stats_empty_guild(session: AsyncSession):
     stats, races_analyzed = await repo.get_ability_stats(session, guild_id=999)
     assert stats == {}
     assert races_analyzed == 0
+
+
+# ---------------------------------------------------------------------------
+# Career race record (retroactive)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_race(
+    session: AsyncSession, guild_id: int, racer_ids: list[int],
+    *, finished: bool = True, is_test: bool = False,
+):
+    """Helper: create a finished race with placements + entries."""
+    import json as _json
+    from derby.models import Race, RaceEntry
+
+    race = Race(
+        guild_id=guild_id,
+        finished=finished,
+        winner_id=racer_ids[0] if racer_ids else None,
+        placements=_json.dumps(racer_ids) if racer_ids else None,
+        is_test=is_test,
+    )
+    session.add(race)
+    await session.commit()
+    await session.refresh(race)
+    for rid in racer_ids:
+        session.add(RaceEntry(race_id=race.id, racer_id=rid))
+    await session.commit()
+    return race
+
+
+@pytest.mark.asyncio
+async def test_get_racer_record_basic(session: AsyncSession):
+    """Wins, top-3, and total counts pulled from finished races."""
+    # Set up 3 racers in guild 1
+    a = await repo.create_racer(session, name="A", owner_id=1, guild_id=1, speed=10)
+    b = await repo.create_racer(session, name="B", owner_id=2, guild_id=1, speed=10)
+    c = await repo.create_racer(session, name="C", owner_id=3, guild_id=1, speed=10)
+
+    # Race 1: A wins, [A, B, C]
+    await _seed_race(session, 1, [a.id, b.id, c.id])
+    # Race 2: B wins, [B, A, C]
+    await _seed_race(session, 1, [b.id, a.id, c.id])
+    # Race 3: C wins, [C, B, A]
+    await _seed_race(session, 1, [c.id, b.id, a.id])
+    # Race 4: A wins again, [A, C, B]
+    await _seed_race(session, 1, [a.id, c.id, b.id])
+
+    # A: 4 races, 2 wins, all top-3
+    rec_a = await repo.get_racer_record(session, a.id, guild_id=1)
+    assert rec_a == {"total": 4, "wins": 2, "top3": 4}
+
+    # B: 3 races (was in 1,2,3,4 = 4), 1 win, all top-3
+    rec_b = await repo.get_racer_record(session, b.id, guild_id=1)
+    assert rec_b == {"total": 4, "wins": 1, "top3": 4}
+
+    # C: 4 races, 1 win, all top-3
+    rec_c = await repo.get_racer_record(session, c.id, guild_id=1)
+    assert rec_c == {"total": 4, "wins": 1, "top3": 4}
+
+
+@pytest.mark.asyncio
+async def test_get_racer_record_outside_top3(session: AsyncSession):
+    """Racers finishing 4th or worse don't get a top-3 credit."""
+    a = await repo.create_racer(session, name="A", owner_id=1, guild_id=1, speed=10)
+    b = await repo.create_racer(session, name="B", owner_id=2, guild_id=1, speed=10)
+    c = await repo.create_racer(session, name="C", owner_id=3, guild_id=1, speed=10)
+    d = await repo.create_racer(session, name="D", owner_id=4, guild_id=1, speed=10)
+    e = await repo.create_racer(session, name="E", owner_id=5, guild_id=1, speed=10)
+
+    # E finishes 5th (last) — no win, no top-3
+    await _seed_race(session, 1, [a.id, b.id, c.id, d.id, e.id])
+    rec_e = await repo.get_racer_record(session, e.id, guild_id=1)
+    assert rec_e == {"total": 1, "wins": 0, "top3": 0}
+
+    # D finishes 4th — no win, no top-3
+    rec_d = await repo.get_racer_record(session, d.id, guild_id=1)
+    assert rec_d == {"total": 1, "wins": 0, "top3": 0}
+
+    # C finishes 3rd — no win, top-3 yes
+    rec_c = await repo.get_racer_record(session, c.id, guild_id=1)
+    assert rec_c == {"total": 1, "wins": 0, "top3": 1}
+
+
+@pytest.mark.asyncio
+async def test_get_racer_record_excludes_test_races(session: AsyncSession):
+    """Default behavior: test races are skipped so career record is "real"."""
+    a = await repo.create_racer(session, name="A", owner_id=1, guild_id=1, speed=10)
+
+    # One real race (A wins), one test race (A also wins — should NOT count)
+    await _seed_race(session, 1, [a.id], is_test=False)
+    await _seed_race(session, 1, [a.id], is_test=True)
+
+    # Default (include_test=False)
+    rec = await repo.get_racer_record(session, a.id, guild_id=1)
+    assert rec == {"total": 1, "wins": 1, "top3": 1}
+
+    # Opt in
+    rec_with = await repo.get_racer_record(session, a.id, guild_id=1, include_test=True)
+    assert rec_with == {"total": 2, "wins": 2, "top3": 2}
+
+
+@pytest.mark.asyncio
+async def test_get_racer_record_excludes_unfinished(session: AsyncSession):
+    """Pending races (not finished) shouldn't count toward record."""
+    a = await repo.create_racer(session, name="A", owner_id=1, guild_id=1, speed=10)
+    await _seed_race(session, 1, [a.id], finished=False)
+    rec = await repo.get_racer_record(session, a.id, guild_id=1)
+    assert rec == {"total": 0, "wins": 0, "top3": 0}
+
+
+@pytest.mark.asyncio
+async def test_get_racer_record_only_in_guild(session: AsyncSession):
+    """Cross-guild races for the same racer (shouldn't happen, but if it
+    did) don't bleed into the count."""
+    a = await repo.create_racer(session, name="A", owner_id=1, guild_id=1, speed=10)
+    # A race in guild 2 with the same racer_id (cross-guild bleed scenario)
+    await _seed_race(session, 2, [a.id])
+    rec = await repo.get_racer_record(session, a.id, guild_id=1)
+    assert rec == {"total": 0, "wins": 0, "top3": 0}
+
+
+@pytest.mark.asyncio
+async def test_get_racer_record_no_races(session: AsyncSession):
+    """Brand-new racer that never raced returns zeros."""
+    a = await repo.create_racer(session, name="Fresh", owner_id=1, guild_id=1, speed=10)
+    rec = await repo.get_racer_record(session, a.id, guild_id=1)
+    assert rec == {"total": 0, "wins": 0, "top3": 0}

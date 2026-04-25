@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ext.commands import Context
 
+from cogs._autocomplete import filter_choices
 from config import resolve_guild_setting
 from derby import repositories as derby_repo
 from economy import repositories as wallet_repo
@@ -22,14 +23,13 @@ async def location_autocomplete(
 ) -> list[app_commands.Choice[str]]:
     """Autocomplete for fishing location names."""
     locations = fish_logic.load_locations()
-    current_lower = current.lower()
-    choices = []
-    for key, loc in locations.items():
-        if current_lower in loc["name"].lower() or current_lower in key.lower():
-            choices.append(app_commands.Choice(name=loc["name"], value=key))
-        if len(choices) >= 25:
-            break
-    return choices
+    return filter_choices(
+        locations.items(),
+        current,
+        label=lambda kv: kv[1]["name"],
+        value=lambda kv: kv[0],
+        match=lambda kv: f"{kv[1]['name']} {kv[0]}",
+    )
 
 
 def _as_unix(dt) -> int:
@@ -636,7 +636,7 @@ class Fishing(commands.Cog, name="fishing"):
 
         async with self.bot.scheduler.sessionmaker() as session:
             # Get or create wallet
-            gs = await derby_repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
             if wallet is None:
                 default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
@@ -692,7 +692,7 @@ class Fishing(commands.Cog, name="fishing"):
                 return
 
             # Check wallet
-            gs = await derby_repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
             if wallet is None:
                 default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")

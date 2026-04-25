@@ -9,6 +9,7 @@ from discord.ext import commands
 from discord.ext.commands import Context
 
 import checks
+from cogs._autocomplete import filter_choices
 from economy import repositories as wallet_repo
 from rpg import logic as rpg_logic
 from rpg import repositories as rpg_repo
@@ -448,13 +449,13 @@ class RPG(commands.Cog, name="rpg"):
     async def race_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        choices = []
-        for rd in _load_race_display():
-            if current.lower() in rd["name"].lower() or current.lower() in rd["id"]:
-                choices.append(
-                    app_commands.Choice(name=rd["name"], value=rd["id"])
-                )
-        return choices[:25]
+        return filter_choices(
+            _load_race_display(),
+            current,
+            label=lambda rd: rd["name"],
+            value=lambda rd: rd["id"],
+            match=lambda rd: f"{rd['name']} {rd['id']}",
+        )
 
 
 async def setup(bot) -> None:

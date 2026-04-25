@@ -12,9 +12,15 @@ import discord
 import pytest
 
 from config import Settings
+from core import repositories as core_repo
+from core.models import CommandLog
 from derby import repositories as repo
-from derby.models import CommandLog
 from derby.scheduler import DerbyScheduler
+
+# Admin reporting is cross-cutting (touches every game's tables) but lives
+# at the top level rather than under tests/derby/. Mark explicitly so
+# `pytest -m admin` keeps working without filename-keyword scanning.
+pytestmark = pytest.mark.admin
 
 
 GUILD_ID = 1
@@ -113,7 +119,7 @@ async def test_log_command_creates_entry(tmp_path: Path) -> None:
     sched = await _make_scheduler(bot, tmp_path)
 
     async with sched.sessionmaker() as session:
-        entry = await repo.log_command(
+        entry = await core_repo.log_command(
             session,
             guild_id=GUILD_ID,
             user_id=USER_ID,
@@ -135,15 +141,15 @@ async def test_command_usage_counts(tmp_path: Path) -> None:
 
     async with sched.sessionmaker() as session:
         for _ in range(3):
-            await repo.log_command(
+            await core_repo.log_command(
                 session, guild_id=GUILD_ID, user_id=USER_ID,
                 command="bet", cog="Derby",
             )
-        await repo.log_command(
+        await core_repo.log_command(
             session, guild_id=GUILD_ID, user_id=USER_ID_2,
             command="bet", cog="Derby",
         )
-        await repo.log_command(
+        await core_repo.log_command(
             session, guild_id=GUILD_ID, user_id=USER_ID,
             command="daily", cog="Economy",
         )
@@ -168,7 +174,7 @@ async def test_command_usage_respects_date_filter(tmp_path: Path) -> None:
 
     async with sched.sessionmaker() as session:
         # Recent command
-        await repo.log_command(
+        await core_repo.log_command(
             session, guild_id=GUILD_ID, user_id=USER_ID,
             command="bet", cog="Derby",
         )
@@ -195,12 +201,12 @@ async def test_player_activity_counts(tmp_path: Path) -> None:
 
     async with sched.sessionmaker() as session:
         for _ in range(5):
-            await repo.log_command(
+            await core_repo.log_command(
                 session, guild_id=GUILD_ID, user_id=USER_ID,
                 command="bet", cog="Derby",
             )
         for _ in range(2):
-            await repo.log_command(
+            await core_repo.log_command(
                 session, guild_id=GUILD_ID, user_id=USER_ID_2,
                 command="daily", cog="Economy",
             )
@@ -223,11 +229,11 @@ async def test_player_top_command(tmp_path: Path) -> None:
 
     async with sched.sessionmaker() as session:
         for _ in range(3):
-            await repo.log_command(
+            await core_repo.log_command(
                 session, guild_id=GUILD_ID, user_id=USER_ID,
                 command="bet", cog="Derby",
             )
-        await repo.log_command(
+        await core_repo.log_command(
             session, guild_id=GUILD_ID, user_id=USER_ID,
             command="daily", cog="Economy",
         )
@@ -246,11 +252,11 @@ async def test_weekly_totals(tmp_path: Path) -> None:
 
     async with sched.sessionmaker() as session:
         for _ in range(3):
-            await repo.log_command(
+            await core_repo.log_command(
                 session, guild_id=GUILD_ID, user_id=USER_ID,
                 command="bet", cog="Derby",
             )
-        await repo.log_command(
+        await core_repo.log_command(
             session, guild_id=GUILD_ID, user_id=USER_ID_2,
             command="daily", cog="Economy",
         )
@@ -279,11 +285,11 @@ async def test_admin_usage_command(tmp_path: Path) -> None:
 
     async with sched.sessionmaker() as session:
         for _ in range(3):
-            await repo.log_command(
+            await core_repo.log_command(
                 session, guild_id=GUILD_ID, user_id=USER_ID,
                 command="bet", cog="Derby",
             )
-        await repo.log_command(
+        await core_repo.log_command(
             session, guild_id=GUILD_ID, user_id=USER_ID_2,
             command="stable report", cog="Derby",
         )
@@ -309,11 +315,11 @@ async def test_admin_activity_command(tmp_path: Path) -> None:
 
     async with sched.sessionmaker() as session:
         for _ in range(5):
-            await repo.log_command(
+            await core_repo.log_command(
                 session, guild_id=GUILD_ID, user_id=USER_ID,
                 command="bet", cog="Derby",
             )
-        await repo.log_command(
+        await core_repo.log_command(
             session, guild_id=GUILD_ID, user_id=USER_ID_2,
             command="daily", cog="Economy",
         )
@@ -341,7 +347,7 @@ async def test_admin_trends_command(tmp_path: Path) -> None:
     async with sched.sessionmaker() as session:
         # Current period commands (last 7 days)
         for _ in range(5):
-            await repo.log_command(
+            await core_repo.log_command(
                 session, guild_id=GUILD_ID, user_id=USER_ID,
                 command="bet", cog="Derby",
             )

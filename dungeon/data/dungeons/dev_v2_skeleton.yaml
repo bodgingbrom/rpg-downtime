@@ -1,0 +1,154 @@
+# =============================================================================
+# DEV V2 SKELETON — throwaway placeholder for PR 1 testing.
+# =============================================================================
+# This file exists ONLY to validate that the v2 dungeon engine works
+# end-to-end. It is admin-gated to "Race Admin" and will be deleted at
+# the v1 → v2 cutover (PR 8). Do not author against this file — it is
+# not the template.
+# =============================================================================
+
+id: dev_v2_skeleton
+name: Dev V2 Skeleton
+description: "Placeholder v2 dungeon for engine testing. Admin-only."
+min_role: "Race Admin"
+
+# Three test fragments + a legendary unlock for PR 5 validation.
+lore_fragments:
+  - id: 1
+    text: "_(Test fragment 1)_  The first apprentice never spoke much. Mostly noted things in the margins."
+  - id: 2
+    text: "_(Test fragment 2)_  Margaret was the second apprentice. She drew the eastern hills, and they obliged."
+  - id: 3
+    text: "_(Test fragment 3)_  The master signed his last entry with no name at all — only a small neat sigil where the name should be."
+
+legendary_reward:
+  item_id: vorpal_dagger
+  name: "Apprentice's Pen"
+  flavor: |
+    _The fragments resolve themselves into a complete account. As the last
+    page seals, a slender weight settles into your hand — sharp, balanced,
+    inked steel. **Apprentice's Pen** is yours._
+
+background:
+  tone: "Sparse and perfunctory. This is a test fixture, not a story."
+  pitch: "A throwaway dungeon for v2 testing. Three rooms. Admin-only."
+  lore: |
+    [Placeholder lore. This dungeon exists to validate the v2 engine.
+    Players see this only because they have the Race Admin role and
+    decided to take a look.]
+  dm_hooks: []
+  style_notes: "Keep prose flat — this is a test fixture."
+
+floors:
+  - floor: 1
+    theme: dev_test
+    background: |
+      A featureless test corridor. The only purpose of this floor is to
+      verify that movement, ticks, ambushes, and boss combat all wire up.
+    layout:
+      rooms_per_run: [3, 3]
+      branches: [0, 0]
+    anchors:
+      - {position: entrance, room_id: dev_alcove}
+      - {position: boss, room_id: dev_endroom}
+    wandering_threshold: 5
+    wandering_pool:
+      - {monster_id: dev_rat, weight: 100}
+    monsters:
+      - id: dev_rat
+        name: Test Rat
+        description: "A perfunctory test rat, drawn from a fixture data file."
+        hp: 6
+        defense: 0
+        attack_dice: "1d4"
+        attack_bonus: 0
+        xp: 5
+        gold: [1, 3]
+        ai: {attack: 100}
+    boss:
+      id: dev_boss
+      name: The Test Subject
+      description: "A larger test rat. Allegedly boss-tier. Mostly indignant."
+      hp: 22
+      defense: 1
+      attack_dice: "1d6"
+      attack_bonus: 1
+      xp: 30
+      gold: [10, 20]
+      ai: {attack: 70, heavy: 30}
+    treasure_tier: common
+    rest_shrines: 0
+    room_pool:
+      - id: dev_alcove
+        weight: 100
+        description_pool:
+          - "A bare stone alcove. Footsteps echo if you move quickly. There is one way forward."
+        ambient_pool:
+          - "A faint draft from the corridor ahead."
+        features:
+          # Visible feature — surfaced on entry. Investigate has a small
+          # gold reward to validate the rewards plumbing.
+          - id: scratched_wall
+            name: "scratched wall"
+            visibility: visible
+            investigate_label: "Examine the scratched wall"
+            noise: 1
+            content:
+              - {type: gold, amount: [3, 6], chance: 1.0}
+              - {type: narrate, text: "Scratched into the stone, in apprentice handwriting: \"PR1 was here.\""}
+              - {type: lore_fragment, fragment_id: 1, chance: 1.0}
+            flavor_success: "_You run your fingers over the marks. They've been scratched in deliberately._"
+
+          # Concealed feature — only surfaces if Look Around's perception
+          # roll beats DC 12 (DEX 10 player has 50% chance per try).
+          - id: loose_stone
+            name: "loose stone"
+            visibility: concealed
+            perception_dc: 12
+            look_hint: "a flagstone that doesn't sit quite flush"
+            investigate_label: "Lift the loose stone"
+            noise: 2
+            content:
+              - {type: gold, amount: [10, 18], chance: 1.0}
+              - {type: lore_fragment, fragment_id: 2, chance: 1.0}
+            flavor_success: "_You pry up the flagstone. Beneath it, a small cache of coins, long forgotten._"
+
+      - id: dev_corridor
+        weight: 100
+        description_pool:
+          - "A narrow stone corridor. The kind of place an ambush would make sense."
+        ambient_pool:
+          - "A faint scrape, ahead."
+        ambush:
+          armed: true
+          monster_id: dev_rat
+
+      - id: dev_endroom
+        weight: 100
+        description_pool:
+          - "The end of the line. Something larger is waiting in the dim corner."
+        ambient_pool:
+          - "An indignant huffing sound."
+        features:
+          # Visible feature with a secret unlocked by Investigating it —
+          # validates the secret-reveal chain.
+          - id: rusted_chest
+            name: "rusted chest"
+            visibility: visible
+            investigate_label: "Open the rusted chest"
+            noise: 2
+            content:
+              - {type: item, item_id: health_potion, chance: 1.0}
+            flavor_success: "_The chest's lid creaks open. Inside, a forgotten healing potion._"
+
+          - id: false_bottom
+            name: "false bottom"
+            visibility: secret
+            revealed_by: rusted_chest
+            investigate_label: "Search the false bottom"
+            noise: 1
+            content:
+              - {type: gold, amount: [25, 40], chance: 1.0}
+              - {type: narrate, text: "_A neat little hidden compartment, lined with velvet. Whoever owned this chest had something to hide._"}
+              - {type: lore_fragment, fragment_id: 3, chance: 1.0}
+            flavor_success: "_The chest's bottom panel slides aside under your fingertips._"

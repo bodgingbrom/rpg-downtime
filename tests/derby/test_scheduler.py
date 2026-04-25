@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from config import Settings
+from core import repositories as core_repo
 from derby import repositories as repo
 from derby.models import Race, RaceEntry, Racer
 from derby.scheduler import DerbyScheduler
@@ -134,16 +135,24 @@ async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
         races = (await session.execute(select(Race))).scalars().all()
         assert len(races) == 0
 
-    # Add racers and create a pending race with entries
+    # Add racers and create a pending race with entries.
+    #
+    # Use 4 racers, not 2: post-race injury rolls in logic.check_injury_risk
+    # use their own random.Random() instance (independent of any global
+    # random.seed), so they're intentionally non-deterministic. With only
+    # 2 racers, an unlucky injury can leave <2 eligible racers and
+    # _create_next_race returns None — failing the "next race" assertion
+    # below for reasons unrelated to scheduler logic. 4 racers tolerates
+    # multiple injuries and exercises the same code path.
     async with scheduler.sessionmaker() as session:
-        r1 = await repo.create_racer(
-            session, name="A", owner_id=1, guild_id=GUILD_ID
-        )
-        r2 = await repo.create_racer(
-            session, name="B", owner_id=2, guild_id=GUILD_ID
-        )
+        racer_ids: list[int] = []
+        for i, name in enumerate(["A", "B", "C", "D"]):
+            r = await repo.create_racer(
+                session, name=name, owner_id=i + 1, guild_id=GUILD_ID,
+            )
+            racer_ids.append(r.id)
         race = await repo.create_race(session, guild_id=guild.id)
-        await repo.create_race_entries(session, race.id, [r1.id, r2.id])
+        await repo.create_race_entries(session, race.id, racer_ids)
 
     # tick() should run the pending race and create the next one
     await scheduler.tick()
@@ -775,9 +784,9 @@ async def test_guild_settings_channel_override(tmp_path: Path) -> None:
 
     # Set per-guild override via derby_channel
     async with scheduler.sessionmaker() as session:
-        gs = await repo.get_guild_settings(session, guild.id)
+        gs = await core_repo.get_guild_settings(session, guild.id)
         if gs is None:
-            gs = await repo.create_guild_settings(session, guild_id=GUILD_ID)
+            gs = await core_repo.create_guild_settings(session, guild_id=GUILD_ID)
         gs.derby_channel = "arena"
         await session.commit()
     gs = await scheduler._load_guild_settings(GUILD_ID)
@@ -811,7 +820,7 @@ async def test_guild_settings_max_racers_override(tmp_path: Path) -> None:
                 session, name=f"R{i}", owner_id=i, guild_id=GUILD_ID
             )
         # Set guild override: max 3 racers per race
-        await repo.create_guild_settings(
+        await core_repo.create_guild_settings(
             session, guild_id=GUILD_ID, max_racers_per_race=3
         )
 
@@ -868,6 +877,46 @@ async def test_replenish_pool(tmp_path: Path) -> None:
     async with scheduler.sessionmaker() as session:
         count = await repo.count_unowned_eligible_racers(session, GUILD_ID)
         assert count == 8
+
+
+@pytest.mark.asyncio
+async def test_replenish_pool_sets_abilities_on_new_racers(tmp_path: Path) -> None:
+    """Regression: _replenish_pool must roll abilities for each new racer.
+    Previously pool racers were created without abilities, and the next
+    bot restart would silently back-fill them, spamming the log with
+    "Back-filling abilities for N racers" every boot."""
+    db_path = tmp_path / "db.sqlite"
+    settings = Settings(
+        race_times=["12:00"],
+        default_wallet=100,
+        retirement_threshold=101,
+        bet_window=0,
+        countdown_total=0,
+        commentary_delay=0,
+        min_pool_size=5,
+    )
+    bot = DummyBot(settings)
+    guild = DummyGuild(GUILD_ID)
+    bot.guilds.append(guild)
+
+    scheduler = DerbyScheduler(bot, db_path=str(db_path))
+    await scheduler._init_db()
+
+    created = await scheduler._replenish_pool(GUILD_ID)
+    assert created == 5
+
+    async with scheduler.sessionmaker() as session:
+        racers = (await session.execute(select(Racer))).scalars().all()
+    assert len(racers) == 5
+    # Every newly-created pool racer must have both ability slots set.
+    for r in racers:
+        assert r.signature_ability, (
+            f"Pool racer {r.name!r} missing signature_ability — would "
+            "trigger a back-fill on next restart"
+        )
+        assert r.quirk_ability, (
+            f"Pool racer {r.name!r} missing quirk_ability"
+        )
 
 
 @pytest.mark.asyncio

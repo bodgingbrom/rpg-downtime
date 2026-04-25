@@ -7,13 +7,12 @@ from datetime import datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.models import CommandLog
 from .models import (
     AbilityProcLog,
     Bet,
-    CommandLog,
     CourseSegment,
     DailyReward,
-    GuildSettings,
     NPC,
     PlayerData,
     Race,
@@ -25,7 +24,7 @@ from .models import (
 )
 
 ModelT = TypeVar(
-    "ModelT", Racer, Race, Bet, CourseSegment, GuildSettings, Tournament, TournamentEntry
+    "ModelT", Racer, Race, Bet, CourseSegment, Tournament, TournamentEntry
 )
 
 
@@ -331,27 +330,6 @@ async def delete_course_segment(session: AsyncSession, segment_id: int) -> None:
     await _delete(session, CourseSegment, segment_id)
 
 
-# GuildSettings
-async def create_guild_settings(session: AsyncSession, **kwargs) -> GuildSettings:
-    return await _create(session, GuildSettings, **kwargs)
-
-
-async def get_guild_settings(
-    session: AsyncSession, guild_id: int
-) -> GuildSettings | None:
-    return await _get(session, GuildSettings, guild_id)
-
-
-async def update_guild_settings(
-    session: AsyncSession, guild_id: int, **kwargs
-) -> GuildSettings | None:
-    return await _update(session, GuildSettings, guild_id, **kwargs)
-
-
-async def delete_guild_settings(session: AsyncSession, guild_id: int) -> None:
-    await _delete(session, GuildSettings, guild_id)
-
-
 # History
 async def get_race_history(
     session: AsyncSession, guild_id: int, limit: int
@@ -388,6 +366,61 @@ async def get_race_history(
             payout = 0
         history.append((race, winner, payout))
     return history
+
+
+async def get_racer_record(
+    session: AsyncSession,
+    racer_id: int,
+    guild_id: int,
+    *,
+    include_test: bool = False,
+) -> dict:
+    """Return career race record for a racer, computed from the Race table.
+
+    Counts only finished races. Test races (``is_test=True``) are excluded
+    by default so the record reflects a racer's "real" career — admin-run
+    test races shouldn't pad the stats.
+
+    Returns ``{"total": int, "wins": int, "top3": int}`` where:
+    - ``total``: total finished races the racer participated in
+    - ``wins``: races where they finished 1st (Race.winner_id == racer_id)
+    - ``top3``: races where they finished in placements[:3]
+
+    Computed retroactively from existing data — works for any race that
+    was already finished before this helper existed.
+    """
+    import json as _json
+
+    q = (
+        select(Race.winner_id, Race.placements)
+        .join(RaceEntry, RaceEntry.race_id == Race.id)
+        .where(
+            Race.guild_id == guild_id,
+            Race.finished.is_(True),
+            RaceEntry.racer_id == racer_id,
+        )
+    )
+    if not include_test:
+        q = q.where(Race.is_test.is_(False))
+
+    rows = (await session.execute(q)).all()
+
+    total = 0
+    wins = 0
+    top3 = 0
+    for winner_id, placements_str in rows:
+        total += 1
+        if winner_id == racer_id:
+            wins += 1
+        if placements_str:
+            try:
+                placements = _json.loads(placements_str)
+            except (ValueError, TypeError):
+                placements = []
+            if isinstance(placements, list) and racer_id in placements[:3]:
+                top3 += 1
+
+    return {"total": total, "wins": wins, "top3": top3}
 
 
 # PlayerData
@@ -647,29 +680,6 @@ async def consume_racer_buffs(
     await session.commit()
 
 
-# ---------------------------------------------------------------------------
-# Command logging / analytics
-# ---------------------------------------------------------------------------
-
-
-async def log_command(
-    session: AsyncSession,
-    *,
-    guild_id: int,
-    user_id: int,
-    command: str,
-    cog: str = "unknown",
-) -> CommandLog:
-    """Insert a command log entry."""
-    entry = CommandLog(
-        guild_id=guild_id,
-        user_id=user_id,
-        command=command,
-        cog=cog,
-    )
-    session.add(entry)
-    await session.commit()
-    return entry
 
 
 async def get_command_usage(
