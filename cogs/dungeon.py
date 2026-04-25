@@ -17,6 +17,7 @@ from dungeon import repositories as dungeon_repo
 from dungeon import effects as dungeon_effects
 from dungeon import resolver as dungeon_resolver
 from dungeon import explore as dungeon_explore
+from dungeon import llm as dungeon_llm
 from dungeon import map_render as dungeon_map
 from economy import repositories as wallet_repo
 from rpg import repositories as rpg_repo
@@ -1984,6 +1985,15 @@ async def _handle_descend(interaction, run_id, user_id, sessionmaker):
         if is_v2:
             # Drop straight into the entrance room of the new floor.
             floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
+            # Pre-generate the new entrance's LLM intro before rendering.
+            # (Defer the interaction so the LLM call doesn't blow the 3s
+            # response budget.)
+            if not interaction.response.is_done():
+                await interaction.response.defer()
+            await _v2_ensure_room_llm(run, dungeon_data, floor_state)
+            run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+            await session.commit()
+            await session.refresh(run)
             embed = _build_v2_explore_embed(
                 run, player, dungeon_data, floor_state,
                 narrative=[
@@ -1991,7 +2001,7 @@ async def _handle_descend(interaction, run_id, user_id, sessionmaker):
                 ],
             )
             view = _v2_render_view(run_id, user_id, sessionmaker, floor_state, floor_data)
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.edit_original_response(embed=embed, view=view)
             return
 
         # v1: blind-room "Continue" UX.
@@ -2027,11 +2037,22 @@ async def _handle_retreat(interaction, run_id, user_id, sessionmaker):
 def _build_v2_explore_embed(
     run, player, dungeon_data, floor_state, narrative=None,
 ) -> discord.Embed:
-    """Build the embed for the current room of a v2 dungeon."""
+    """Build the embed for the current room of a v2 dungeon.
+
+    If an LLM-narrated intro is cached on the room (set by
+    :func:`_v2_ensure_room_llm`), it replaces the authored description.
+    Otherwise falls back to the picked authored description.
+    """
     floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
     description, ambient_lines, _exits = dungeon_explore.render_room_intro(
         floor_state, floor_data,
     )
+    cur = floor_state.get("current")
+    rs = floor_state.get("room_states", {}).get(cur, {}) if cur else {}
+    llm_intro = rs.get("llm_intro")
+    if llm_intro:
+        description = llm_intro
+
     bg = floor_data.get("background")
     floor_label = f"Floor {run.floor}"
     if isinstance(bg, str) and bg.strip():
@@ -2059,6 +2080,46 @@ def _build_v2_explore_embed(
     embed.description = "\n".join(parts)
     embed.set_footer(text=_status_line(run, player))
     return embed
+
+
+async def _v2_ensure_room_llm(run, dungeon_data, floor_state) -> None:
+    """Generate and cache an LLM room intro for the current room, once.
+
+    No-op if:
+    - LLM is unavailable (no API key, SDK missing, etc.)
+    - The current room already has ``llm_intro_attempted`` set (whether
+      success or failure — we don't retry).
+
+    Mutates ``floor_state`` in place. Caller commits to DB.
+    """
+    if not dungeon_llm.is_available():
+        return
+    cur = floor_state.get("current")
+    if cur is None:
+        return
+    rs = floor_state.setdefault("room_states", {}).setdefault(cur, {})
+    if rs.get("llm_intro_attempted"):
+        return
+    # Mark attempted up-front so a transient failure doesn't trigger
+    # retries every action.
+    rs["llm_intro_attempted"] = True
+
+    floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+    graph = floor_state.get("graph") or {}
+    room_def_id = (graph.get("rooms") or {}).get(cur, {}).get("room_def_id")
+    pool_by_id = {r["id"]: r for r in (floor_data.get("room_pool") or [])}
+    room_def = pool_by_id.get(room_def_id, {})
+    description = rs.get("description") or room_def.get("description") or ""
+    if not description:
+        return
+    intro = await dungeon_llm.narrate_room_intro(
+        dungeon_data=dungeon_data,
+        room_description=description,
+        ambient_pool=room_def.get("ambient_pool"),
+        features=room_def.get("features"),
+    )
+    if intro:
+        rs["llm_intro"] = intro
 
 
 def _v2_room_def(floor_data: dict[str, Any], room_def_id: str) -> dict[str, Any]:
@@ -2172,11 +2233,20 @@ async def _handle_v2_explore_action(
     target_node: str | None = None,
     feature_id: str | None = None,
 ):
-    """Apply a v2 exploration action (Look / Listen / Move on / Investigate)."""
+    """Apply a v2 exploration action (Look / Listen / Move on / Investigate).
+
+    LLM narration may add ~500-1500ms of latency. We defer the interaction
+    response up-front so we don't blow Discord's 3-second initial response
+    window, then ``edit_original_response`` once the work is done.
+    """
+    # Defer immediately — LLM call(s) below may push us past the 3s limit.
+    if not interaction.response.is_done():
+        await interaction.response.defer()
+
     async with sessionmaker() as session:
         ctx = await _load_run_context(session, run_id)
         if ctx is None:
-            await interaction.response.send_message("Run not found.", ephemeral=True)
+            await interaction.followup.send("Run not found.", ephemeral=True)
             return
         run, player, dungeon_data = ctx
         profile = await rpg_repo.get_or_create_profile(
@@ -2206,10 +2276,24 @@ async def _handle_v2_explore_action(
                 floor_state, floor_data, rng, feature_id=feature_id,
             )
         else:
-            await interaction.response.send_message(
-                "Unknown action.", ephemeral=True,
-            )
+            await interaction.followup.send("Unknown action.", ephemeral=True)
             return
+
+        # If a search just succeeded, ask the LLM to dress up the outcome.
+        # Authored ``flavor_success`` plus engine rewards stay in result.narrative
+        # as a safe fallback if the LLM is down or returns nothing.
+        if (
+            action == "investigate"
+            and feature_id
+            and result.next_step == "explore"
+            and (result.rewards or any(not n.startswith("_(") for n in result.narrative))
+        ):
+            llm_outcome = await _v2_narrate_search_outcome(
+                dungeon_data, floor_data, floor_state, feature_id, result.rewards,
+            )
+            if llm_outcome:
+                # Replace the narrative entirely so we don't double up flavor.
+                result.narrative = [llm_outcome]
 
         # Apply rewards (gold + items) if any. Done before combat handoff
         # so the player keeps anything they'd already found this room
@@ -2235,6 +2319,12 @@ async def _handle_v2_explore_action(
             )
             return
 
+        # On a room transition, ensure the new room has its LLM intro generated
+        # and cached before we render the embed. Subsequent actions in the
+        # same room read the cached intro — no LLM call.
+        if action == "move_on" and result.next_step == "transition":
+            await _v2_ensure_room_llm(run, dungeon_data, floor_state)
+
         # explore / transition: persist floor_state and re-render.
         run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
         await session.commit()
@@ -2244,7 +2334,34 @@ async def _handle_v2_explore_action(
             run, player, dungeon_data, floor_state, narrative=result.narrative,
         )
         view = _v2_render_view(run_id, user_id, sessionmaker, floor_state, floor_data)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+
+async def _v2_narrate_search_outcome(
+    dungeon_data: dict[str, Any],
+    floor_data: dict[str, Any],
+    floor_state: dict[str, Any],
+    feature_id: str,
+    rewards: list[dict[str, Any]],
+) -> str | None:
+    """Wrap dungeon_llm.narrate_search_outcome with feature lookup."""
+    cur = floor_state.get("current")
+    graph = floor_state.get("graph") or {}
+    room_def_id = (graph.get("rooms") or {}).get(cur, {}).get("room_def_id")
+    pool_by_id = {r["id"]: r for r in (floor_data.get("room_pool") or [])}
+    room_def = pool_by_id.get(room_def_id, {})
+    feature_def = next(
+        (f for f in (room_def.get("features") or []) if f.get("id") == feature_id),
+        None,
+    )
+    if feature_def is None:
+        return None
+    return await dungeon_llm.narrate_search_outcome(
+        dungeon_data=dungeon_data,
+        feature_name=feature_def.get("name") or feature_id,
+        feature_flavor=feature_def.get("flavor_success"),
+        rewards=rewards,
+    )
 
 
 async def _v2_post_combat_return(
@@ -2632,6 +2749,12 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 await session.commit()
                 await session.refresh(run)
                 floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
+                # Pre-generate LLM intro for the entrance room so the very
+                # first thing the player reads is properly atmospheric.
+                await _v2_ensure_room_llm(run, dungeon_data, floor_state)
+                run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+                await session.commit()
+                await session.refresh(run)
                 explore_embed = _build_v2_explore_embed(
                     run, player, dungeon_data, floor_state,
                     narrative=[
