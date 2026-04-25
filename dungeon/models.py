@@ -62,6 +62,11 @@ class DungeonRun(Base):
     # picked description, active effects, summon adds, etc. See dungeon/effects.py
     # for the shape. Default "{}" means "not in an encounter" or legacy pre-column row.
     combat_state_json: Mapped[str] = mapped_column(String, default="{}")
+    # Per-floor exploration state blob (v2 dungeons only) — the procedural graph,
+    # discovered rooms, per-room state (searched features, found items, ambush flags),
+    # and danger / wandering counters. See dungeon/explore.py for shape. Default "{}"
+    # means "not in a v2 floor" or legacy pre-column row.
+    floor_state_json: Mapped[str] = mapped_column(String, default="{}")
 
 
 class BestiaryEntry(Base):

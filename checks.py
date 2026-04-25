@@ -24,6 +24,25 @@ def has_role(role_name: str) -> commands.Check:
     return commands.check(predicate)
 
 
+def author_has_role(ctx: commands.Context | None, role_name: str | None) -> bool:
+    """Return True if the command author has ``role_name``, or if no role
+    is required.
+
+    Convenience for runtime checks (rather than decorators) — useful when
+    we need to filter a list of items by per-item role gates. A ``None``
+    role_name means "no gate," i.e. always allowed.
+    """
+    if not role_name:
+        return True
+    if ctx is None:
+        return False
+    roles = getattr(getattr(ctx, "author", None), "roles", [])
+    for role in roles:
+        if getattr(role, "name", None) == role_name:
+            return True
+    return False
+
+
 async def _load_guild_settings(ctx: commands.Context):
     """Load GuildSettings for the current guild, or None.
 

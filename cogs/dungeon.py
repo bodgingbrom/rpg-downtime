@@ -16,6 +16,7 @@ from dungeon import logic as dungeon_logic
 from dungeon import repositories as dungeon_repo
 from dungeon import effects as dungeon_effects
 from dungeon import resolver as dungeon_resolver
+from dungeon import explore as dungeon_explore
 from economy import repositories as wallet_repo
 from rpg import repositories as rpg_repo
 from rpg.logic import get_racial_modifier
@@ -86,7 +87,14 @@ def _get_view_for_state(run, user_id, sessionmaker, dungeon_data):
         can_descend = run.floor < max_floor
         return FloorCompleteView(run.id, user_id, sessionmaker, can_descend)
     else:
-        # exploring, or any other state → continue/retreat
+        # exploring (or any other state) — v2 runs use ExploreView, v1 keeps
+        # the existing ContinueView "continue or retreat" UX.
+        floor_state = dungeon_explore.load_floor_state(
+            getattr(run, "floor_state_json", None)
+        )
+        if floor_state and dungeon_explore.is_v2_dungeon(dungeon_data or {}):
+            floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+            return _v2_render_view(run.id, user_id, sessionmaker, floor_state, floor_data)
         return ContinueView(run.id, user_id, sessionmaker)
 
 
@@ -177,6 +185,76 @@ class FloorCompleteView(DungeonView):
 
     @discord.ui.button(label="Return to Town", style=discord.ButtonStyle.success, emoji="\U0001f3e0")
     async def return_town(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _handle_retreat(interaction, self.run_id, self.user_id, self.sessionmaker)
+
+
+class ExploreView(DungeonView):
+    """V2 dungeon exploration buttons.
+
+    PR 1 surfaces three actions: Look Around (once per room), Listen
+    (repeatable), and Move on (per discovered exit). Investigate buttons
+    arrive in PR 3 alongside the hidden-content schema.
+    """
+
+    def __init__(self, run_id, user_id, sessionmaker, *, looked_around: bool, exits: list[dict[str, Any]]):
+        super().__init__(run_id, user_id, sessionmaker)
+        # Look Around — disabled if already done in this room.
+        look_btn = discord.ui.Button(
+            label="Look Around",
+            style=discord.ButtonStyle.primary,
+            emoji="\U0001f50d",
+            disabled=looked_around,
+        )
+        look_btn.callback = self._look_callback
+        self.add_item(look_btn)
+        # Listen — always repeatable.
+        listen_btn = discord.ui.Button(
+            label="Listen",
+            style=discord.ButtonStyle.secondary,
+            emoji="\U0001f442",
+        )
+        listen_btn.callback = self._listen_callback
+        self.add_item(listen_btn)
+        # Move on (per exit). Up to a sensible limit so we don't blow Discord's button cap.
+        for exit_info in exits[:3]:
+            btn = discord.ui.Button(
+                label=exit_info.get("label", "Move on"),
+                style=discord.ButtonStyle.success,
+                emoji="\U0001f6aa",
+                custom_id=f"v2_move:{exit_info['node_id']}",
+            )
+            btn.callback = self._make_move_callback(exit_info["node_id"])
+            self.add_item(btn)
+        # Always offer retreat.
+        retreat_btn = discord.ui.Button(
+            label="Retreat to Town",
+            style=discord.ButtonStyle.secondary,
+            emoji="\U0001f3e0",
+        )
+        retreat_btn.callback = self._retreat_callback
+        self.add_item(retreat_btn)
+
+    async def _look_callback(self, interaction: discord.Interaction):
+        await _handle_v2_explore_action(
+            interaction, self.run_id, self.user_id, self.sessionmaker,
+            action="look_around",
+        )
+
+    async def _listen_callback(self, interaction: discord.Interaction):
+        await _handle_v2_explore_action(
+            interaction, self.run_id, self.user_id, self.sessionmaker,
+            action="listen",
+        )
+
+    def _make_move_callback(self, target_node: str):
+        async def _cb(interaction: discord.Interaction):
+            await _handle_v2_explore_action(
+                interaction, self.run_id, self.user_id, self.sessionmaker,
+                action="move_on", target_node=target_node,
+            )
+        return _cb
+
+    async def _retreat_callback(self, interaction: discord.Interaction):
         await _handle_retreat(interaction, self.run_id, self.user_id, self.sessionmaker)
 
 
@@ -1087,6 +1165,32 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
             )
             if fled:
                 narrative.append("You turn and run! You escape the fight.")
+                # V2 dispatch: route flee back to the explore loop instead
+                # of the v1 rooms_json path.
+                if combat_state.get("return_to") == "v2_explore":
+                    run.state = "exploring"
+                    run.monster_id = None
+                    run.monster_hp = 0
+                    run.monster_max_hp = 0
+                    run.combat_state_json = "{}"
+                    floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
+                    cur = floor_state.get("current")
+                    if cur is not None:
+                        rs = floor_state.setdefault("room_states", {}).setdefault(cur, {})
+                        rs["encounter_resolved"] = True
+                    run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+                    await session.commit()
+                    await session.refresh(run)
+                    floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+                    embed = _build_v2_explore_embed(
+                        run, player, dungeon_data, floor_state, narrative=narrative,
+                    )
+                    view = _v2_render_view(
+                        run_id, user_id, sessionmaker, floor_state, floor_data,
+                    )
+                    await interaction.response.edit_message(embed=embed, view=view)
+                    return
+
                 run.room_index += 1
                 run.state = "exploring"
                 run.monster_id = None
@@ -1480,6 +1584,23 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
 
             player.total_kills += 1
 
+            # V2 dispatch: if combat was started by the v2 explore loop,
+            # hand off to the v2 post-combat path instead of v1's
+            # rooms_json/room_index advancement. The XP/loot/bestiary
+            # work above is identical for both.
+            if combat_state.get("return_to") == "v2_explore":
+                v2_was_boss = (
+                    combat_state.get("combat_kind") == "boss"
+                    or run.state == "boss"
+                )
+                if v2_was_boss and run.floor > player.deepest_floor:
+                    player.deepest_floor = run.floor
+                await _v2_post_combat_return(
+                    interaction, session, sessionmaker, run, player, dungeon_data,
+                    was_boss=v2_was_boss,
+                )
+                return
+
             is_boss = run.state == "boss"
             run.monster_id = None
             run.monster_hp = 0
@@ -1793,6 +1914,233 @@ async def _handle_retreat(interaction, run_id, user_id, sessionmaker):
 
 
 # ---------------------------------------------------------------------------
+# V2 dungeon — explore room loop.
+# ---------------------------------------------------------------------------
+
+
+def _build_v2_explore_embed(
+    run, player, dungeon_data, floor_state, narrative=None,
+) -> discord.Embed:
+    """Build the embed for the current room of a v2 dungeon."""
+    floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+    description, ambient_lines, _exits = dungeon_explore.render_room_intro(
+        floor_state, floor_data,
+    )
+    bg = floor_data.get("background")
+    floor_label = f"Floor {run.floor}"
+    if isinstance(bg, str) and bg.strip():
+        # Per-floor backgrounds get their first line surfaced as a subtitle.
+        first_line = bg.strip().split("\n", 1)[0]
+        floor_label = f"Floor {run.floor} — {first_line}"
+
+    embed = discord.Embed(
+        title=dungeon_data.get("name", "Dungeon"),
+        color=EMBED_COLOR,
+    )
+    parts = [f"_{floor_label}_", "", description]
+    if ambient_lines:
+        parts.append("")
+        parts.extend(ambient_lines)
+    if narrative:
+        parts.append("")
+        parts.extend(narrative)
+    embed.description = "\n".join(parts)
+    embed.set_footer(text=_status_line(run, player))
+    return embed
+
+
+def _v2_room_def(floor_data: dict[str, Any], room_def_id: str) -> dict[str, Any]:
+    for r in (floor_data.get("room_pool") or []):
+        if r.get("id") == room_def_id:
+            return r
+    return {}
+
+
+def _v2_render_view(run_id, user_id, sessionmaker, floor_state, floor_data) -> ExploreView:
+    """Build an ExploreView for the current room state."""
+    cur = floor_state.get("current")
+    rs = floor_state.get("room_states", {}).get(cur, {}) if cur else {}
+    looked = bool(rs.get("looked_around", False))
+    _, _, exits = dungeon_explore.render_room_intro(floor_state, floor_data)
+    return ExploreView(
+        run_id, user_id, sessionmaker,
+        looked_around=looked, exits=exits,
+    )
+
+
+async def _v2_start_combat(
+    interaction, session, sessionmaker, run, player, dungeon_data, floor_state, monster_id, kind,
+):
+    """Set up run.monster_* + combat_state_json from a monster id and a v2
+    combat trigger (boss / ambush / wandering). Routes to CombatView.
+    """
+    floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+
+    # Look up the monster definition. Boss field for boss kind, monsters
+    # list (or floor.boss with id match) otherwise.
+    monster_def: dict[str, Any] | None = None
+    if kind == "boss":
+        boss = floor_data.get("boss") or {}
+        if boss.get("id") == monster_id:
+            monster_def = boss
+    if monster_def is None:
+        for m in (floor_data.get("monsters") or []):
+            if m.get("id") == monster_id:
+                monster_def = m
+                break
+    if monster_def is None:
+        # Fall back to any boss with the id.
+        boss = floor_data.get("boss") or {}
+        if boss.get("id") == monster_id:
+            monster_def = boss
+    if monster_def is None:
+        # Defensive: monster id missing — abort to explore.
+        floor_state["pending_combat"] = None
+        run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+        await session.commit()
+        await session.refresh(run)
+        embed = _build_v2_explore_embed(
+            run, player, dungeon_data, floor_state,
+            narrative=[f"_(combat aborted: monster '{monster_id}' not found)_"],
+        )
+        view = _v2_render_view(run.id, run.user_id, sessionmaker, floor_state, floor_data)
+        await interaction.response.edit_message(embed=embed, view=view)
+        return
+
+    # Initialize combat state via the existing effects pipeline so phases /
+    # variants / abilities all work for v2 monsters too.
+    rng = random.Random()
+    combat_state = dungeon_effects.initial_combat_state(monster_def, rng)
+    combat_state["primary_monster_id"] = monster_def["id"]
+    combat_state["return_to"] = "v2_explore"
+    combat_state["combat_kind"] = kind   # boss | ambush | wandering
+
+    effective = dungeon_logic.apply_variant(monster_def, combat_state.get("variant"))
+    if "description" in combat_state:
+        effective["description"] = combat_state["description"]
+
+    run.state = "boss" if kind == "boss" else "combat"
+    run.monster_id = monster_def["id"]
+    run.monster_hp = effective["hp"]
+    run.monster_max_hp = effective["hp"]
+    run.is_defending = False
+    run.combat_state_json = json.dumps(combat_state)
+
+    # Persist floor_state too so the pending_combat flag is cleared.
+    floor_state["pending_combat"] = None
+    run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+
+    await session.commit()
+    await session.refresh(run)
+
+    intro = build_combat_start_embed(run, player, effective, dungeon_data)
+    view = CombatView(run.id, run.user_id, sessionmaker)
+    await interaction.response.edit_message(embed=intro, view=view)
+
+
+async def _handle_v2_explore_action(
+    interaction, run_id, user_id, sessionmaker, *, action: str, target_node: str | None = None,
+):
+    """Apply a v2 exploration action (Look Around / Listen / Move on)."""
+    async with sessionmaker() as session:
+        ctx = await _load_run_context(session, run_id)
+        if ctx is None:
+            await interaction.response.send_message("Run not found.", ephemeral=True)
+            return
+        run, player, dungeon_data = ctx
+        floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+        floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
+        if not floor_state:
+            # Defensive: somehow the state is missing. Re-init.
+            floor_state = dungeon_explore.initial_floor_state(floor_data, random.Random())
+
+        rng = random.Random()
+        if action == "look_around":
+            result = dungeon_explore.take_look_around(floor_state, floor_data, rng)
+        elif action == "listen":
+            result = dungeon_explore.take_listen(floor_state, floor_data, rng)
+        elif action == "move_on" and target_node:
+            result = dungeon_explore.take_move_on(
+                floor_state, floor_data, rng, target_node=target_node,
+            )
+        else:
+            await interaction.response.send_message(
+                "Unknown action.", ephemeral=True,
+            )
+            return
+
+        # Branch on outcome.
+        if result.next_step == "combat":
+            pending = floor_state.get("pending_combat") or {}
+            monster_id = pending.get("monster_id")
+            kind = pending.get("kind", "wandering")
+            await _v2_start_combat(
+                interaction, session, sessionmaker, run, player, dungeon_data, floor_state,
+                monster_id, kind,
+            )
+            return
+
+        # explore / transition: persist floor_state and re-render.
+        run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+        await session.commit()
+        await session.refresh(run)
+
+        embed = _build_v2_explore_embed(
+            run, player, dungeon_data, floor_state, narrative=result.narrative,
+        )
+        view = _v2_render_view(run_id, user_id, sessionmaker, floor_state, floor_data)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+async def _v2_post_combat_return(
+    interaction, session, sessionmaker, run, player, dungeon_data, *, was_boss: bool,
+):
+    """Called from the combat handler when a v2 monster has died.
+
+    The XP/loot/bestiary path has already been run by the combat handler
+    (it's identical for v1 and v2). This function decides what UI to show
+    next based on whether the kill was a boss or a regular encounter, and
+    updates floor_state to mark the room's encounter as resolved.
+    """
+    floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
+    cur = floor_state.get("current")
+    if cur is not None:
+        rs = floor_state.setdefault("room_states", {}).setdefault(cur, {})
+        rs["encounter_resolved"] = True
+
+    if was_boss:
+        # Boss kill → floor complete. Re-use the v1 floor-complete UI.
+        run.state = "floor_complete"
+        run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+        await session.commit()
+        await session.refresh(run)
+        embed = build_floor_complete_embed(run, player, dungeon_data)
+        max_floor = dungeon_logic.get_max_floor(dungeon_data)
+        can_descend = run.floor < max_floor
+        view = FloorCompleteView(run.id, run.user_id, sessionmaker, can_descend)
+        await interaction.response.edit_message(embed=embed, view=view)
+        return
+
+    # Non-boss kill → return to explore. Clear combat state, keep floor state.
+    run.state = "exploring"
+    run.combat_state_json = "{}"
+    run.monster_id = None
+    run.monster_hp = 0
+    run.monster_max_hp = 0
+    run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+    await session.commit()
+    await session.refresh(run)
+
+    floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+    embed = _build_v2_explore_embed(
+        run, player, dungeon_data, floor_state,
+        narrative=["_The corridor settles. You return your attention to the room._"],
+    )
+    view = _v2_render_view(run.id, run.user_id, sessionmaker, floor_state, floor_data)
+    await interaction.response.edit_message(embed=embed, view=view)
+
+
+# ---------------------------------------------------------------------------
 # Run end processing
 # ---------------------------------------------------------------------------
 
@@ -1992,13 +2340,27 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 )
                 return
 
-            # Pick dungeon
-            dungeons = dungeon_logic.load_dungeons()
+            # Pick dungeon — filter out role-gated ones the user can't access.
+            all_dungeons = dungeon_logic.load_dungeons()
+            dungeons = {
+                k: d for k, d in all_dungeons.items()
+                if checks.author_has_role(context, d.get("min_role"))
+            }
             if not dungeons:
                 await context.send("No dungeons available.", ephemeral=True)
                 return
 
-            if dungeon_name and dungeon_name in dungeons:
+            if dungeon_name and dungeon_name in all_dungeons:
+                # User asked for a specific dungeon by name. Honor the role
+                # gate explicitly so they get a permissions error rather
+                # than a silent "not found."
+                target = all_dungeons[dungeon_name]
+                if not checks.author_has_role(context, target.get("min_role")):
+                    await context.send(
+                        f"That dungeon requires the **{target.get('min_role')}** role.",
+                        ephemeral=True,
+                    )
+                    return
                 dungeon_key = dungeon_name
             elif len(dungeons) == 1:
                 dungeon_key = next(iter(dungeons))
@@ -2034,15 +2396,26 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 hp_multiplier=get_racial_modifier(race, "dungeon.hp_multiplier", 2.0),
             )
 
-            # Generate floor 1 rooms
+            # Floor 1 must exist.
             floor_data = dungeon_logic.get_floor_data(dungeon_data, 1)
             if floor_data is None:
                 await context.send("Dungeon has no floors!", ephemeral=True)
                 return
 
             seed = random.randint(0, 2**31)
-            rooms = dungeon_logic.generate_rooms(floor_data, seed)
-            rooms_json = json.dumps(rooms)
+            is_v2 = dungeon_explore.is_v2_dungeon(dungeon_data)
+            rooms_json = "[]"
+            floor_state_json = "{}"
+            if is_v2:
+                # V2 path: build a procedural floor graph + room states.
+                floor_state = dungeon_explore.initial_floor_state(
+                    floor_data, random.Random(seed),
+                )
+                floor_state_json = dungeon_explore.dump_floor_state(floor_state)
+            else:
+                # V1 path: linear room list (unchanged).
+                rooms = dungeon_logic.generate_rooms(floor_data, seed)
+                rooms_json = json.dumps(rooms)
 
             # Create a thread for this run
             display_name = context.author.display_name
@@ -2097,9 +2470,28 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 started_at=now,
             )
 
-            # Add ContinueView — first room is blind
-            view = ContinueView(run.id, user_id, self.bot.scheduler.sessionmaker)
-            await msg.edit(embed=embed, view=view)
+            if is_v2:
+                # V2: stash floor_state and render the entrance room directly
+                # via the explore view (no "Continue Deeper" intermediate).
+                run.floor_state_json = floor_state_json
+                await session.commit()
+                await session.refresh(run)
+                floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
+                explore_embed = _build_v2_explore_embed(
+                    run, player, dungeon_data, floor_state,
+                    narrative=[
+                        "_You step inside. The dungeon settles around you, waiting._",
+                    ],
+                )
+                explore_view = _v2_render_view(
+                    run.id, user_id, self.bot.scheduler.sessionmaker,
+                    floor_state, floor_data,
+                )
+                await msg.edit(embed=explore_embed, view=explore_view)
+            else:
+                # V1: blind first room.
+                view = ContinueView(run.id, user_id, self.bot.scheduler.sessionmaker)
+                await msg.edit(embed=embed, view=view)
 
             # Notify in main channel
             await context.send(
@@ -2347,9 +2739,19 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
     async def dungeon_name_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
+        # Filter by min_role so role-gated dungeons don't appear in
+        # autocomplete unless the user qualifies.
         dungeons = dungeon_logic.load_dungeons()
+        user_role_names = {
+            getattr(r, "name", None)
+            for r in getattr(getattr(interaction, "user", None), "roles", []) or []
+        }
+        visible = {
+            k: d for k, d in dungeons.items()
+            if not d.get("min_role") or d.get("min_role") in user_role_names
+        }
         return filter_choices(
-            dungeons.items(),
+            visible.items(),
             current,
             label=lambda kv: kv[1].get("name", kv[0]),
             value=lambda kv: kv[0],

@@ -557,6 +557,13 @@ class DerbyScheduler:
                             "ADD COLUMN combat_state_json VARCHAR DEFAULT '{}'"
                         )
                     )
+                if "floor_state_json" not in dr_cols:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE dungeon_runs "
+                            "ADD COLUMN floor_state_json VARCHAR DEFAULT '{}'"
+                        )
+                    )
 
         # Seed brewing reference data (ingredients + dangerous triples)
         async with self.sessionmaker() as session:
