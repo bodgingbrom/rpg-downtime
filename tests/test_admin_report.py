@@ -16,6 +16,11 @@ from derby import repositories as repo
 from derby.models import CommandLog
 from derby.scheduler import DerbyScheduler
 
+# Admin reporting is cross-cutting (touches every game's tables) but lives
+# at the top level rather than under tests/derby/. Mark explicitly so
+# `pytest -m admin` keeps working without filename-keyword scanning.
+pytestmark = pytest.mark.admin
+
 
 GUILD_ID = 1
 USER_ID = 100
