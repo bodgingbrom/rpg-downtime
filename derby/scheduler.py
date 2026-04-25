@@ -1509,6 +1509,36 @@ class DerbyScheduler:
     async def _run_race_inner(
         self, race_id: int, guild_id: int, participants: list[models.Racer]
     ) -> None:
+        gs, race_map = await self._open_betting_window(
+            race_id, guild_id, participants
+        )
+        result, color_map = await self._simulate_race_with_buffs(
+            race_id, participants, race_map,
+        )
+        outcomes = await self._persist_race_outcomes(
+            race_id, guild_id, participants, result, race_map, gs,
+        )
+        await self._narrate_and_announce(
+            race_id, guild_id, participants, result, color_map, outcomes, gs,
+        )
+        self.bot.logger.info(
+            "Race finished",
+            extra={"guild_id": guild_id, "race_id": race_id},
+        )
+
+    async def _open_betting_window(
+        self,
+        race_id: int,
+        guild_id: int,
+        participants: list[models.Racer],
+    ) -> tuple[models.GuildSettings | None, Any]:
+        """Announce the upcoming race, hold the bet window, then transition
+        the race from "betting open" to "active" (autocomplete stops
+        suggesting this race's racers once it goes active).
+
+        Returns the resolved guild settings and race map for use by the
+        simulation phase.
+        """
         gs = await self._load_guild_settings(guild_id)
         # Use the pre-picked map stored on the race, fall back to a random pick
         async with self.sessionmaker() as session:
@@ -1523,21 +1553,30 @@ class DerbyScheduler:
             guild_settings=gs,
         )
         await asyncio.sleep(self._resolve("bet_window", gs))
-        # Transition from betting → active: bets are now closed,
-        # autocomplete will stop showing this race's racers.
         self.betting_races.discard(race_id)
         self.active_races.add(race_id)
         self.bot.logger.info(
             "Race starting",
             extra={"guild_id": guild_id, "race_id": race_id},
         )
-        # Load potion buffs for race participants
+        return gs, race_map
+
+    async def _simulate_race_with_buffs(
+        self,
+        race_id: int,
+        participants: list[models.Racer],
+        race_map: Any,
+    ) -> tuple[Any, dict[int, str]]:
+        """Load active potion buffs, build the abilities/color maps, and run
+        the pure simulation. Returns the simulation result and the color
+        assignment so the caller can reuse it when rendering charts and the
+        pre-race lineup.
+        """
         racer_ids = [r.id for r in participants]
         async with self.sessionmaker() as session:
             raw_buffs = await repo.get_race_buffs_for_racers(session, racer_ids)
         stat_buffs, mood_buffs = logic.convert_buffs(raw_buffs)
 
-        # Build abilities + color context for the race
         from . import abilities as _abilities
         abilities_map = {
             r.id: (
@@ -1546,15 +1585,36 @@ class DerbyScheduler:
             )
             for r in participants
         }
-        color_map = _abilities.assign_race_colors([r.id for r in participants])
+        color_map = _abilities.assign_race_colors(racer_ids)
 
         result = logic.simulate_race(
             {"racers": participants}, race_id, race_map=race_map,
             stat_buffs=stat_buffs, mood_buffs=mood_buffs,
             abilities_map=abilities_map, color_map=color_map,
         )
+        return result, color_map
+
+    async def _persist_race_outcomes(
+        self,
+        race_id: int,
+        guild_id: int,
+        participants: list[models.Racer],
+        result: Any,
+        race_map: Any,
+        gs: models.GuildSettings | None,
+    ) -> dict[str, Any]:
+        """Apply every DB-touching consequence of the race in a single
+        transaction: race row, ability proc log, payouts, placement prizes,
+        mood drift, injuries, injury recovery, career increments, breed
+        cooldowns, retirements, stat gains, and buff consumption. A second
+        session resets training counters for the guild.
+
+        Returns a dict of the outcomes the announcement phase needs.
+        """
+        racer_ids = [r.id for r in participants]
         winner_id = result.placements[0] if result.placements else None
         placements_json = json.dumps(result.placements)
+
         async with self.sessionmaker() as session:
             await repo.update_race(
                 session, race_id, finished=True, winner_id=winner_id,
@@ -1577,17 +1637,8 @@ class DerbyScheduler:
                         )
                     )
                 await session.commit()
-            bets = (
-                (
-                    await session.execute(
-                        select(models.Bet).where(models.Bet.race_id == race_id)
-                    )
-                )
-                .scalars()
-                .all()
-            )
             bet_results = await logic.resolve_payouts(
-                session, race_id, result.placements, guild_id=guild_id
+                session, race_id, result.placements, guild_id=guild_id,
             )
             prize_list = logic.parse_placement_prizes(
                 self._resolve("placement_prizes", gs)
@@ -1606,16 +1657,20 @@ class DerbyScheduler:
                 _seen_owners: dict[int, str] = {}
                 for _rid, _oid in _owner_ids.items():
                     if _oid not in _seen_owners:
-                        _prof = await _rpg_repo.get_or_create_profile(session, _oid, guild_id)
+                        _prof = await _rpg_repo.get_or_create_profile(
+                            session, _oid, guild_id
+                        )
                         _seen_owners[_oid] = _prof.race
-                    _race = _seen_owners[_oid]
-                    _mf = _get_rm(_race, "racing.mood_floor", 1)
+                    _player_race = _seen_owners[_oid]
+                    _mf = _get_rm(_player_race, "racing.mood_floor", 1)
                     if _mf > 1:
                         _mood_floors[_rid] = _mf
-                    _im = _get_rm(_race, "racing.injury_chance_multiplier", 1.0)
+                    _im = _get_rm(
+                        _player_race, "racing.injury_chance_multiplier", 1.0,
+                    )
                     if _im != 1.0:
                         _injury_mults[_rid] = _im
-            mood_changes = await logic.apply_mood_drift(
+            await logic.apply_mood_drift(
                 session, result.placements, participants,
                 mood_floors=_mood_floors or None,
             )
@@ -1627,16 +1682,15 @@ class DerbyScheduler:
             await self._increment_careers(session, participants)
             await self._tick_breed_cooldowns(session, guild_id)
             retirements = await self._apply_retirements(
-                session, participants, guild_id=guild_id
+                session, participants, guild_id=guild_id,
             )
             stat_gains = await logic.apply_placement_stat_gains(
                 session, result.placements, participants, race_map, prize_list,
             )
-            # Consume potion buffs after race
             await repo.consume_racer_buffs(session, racer_ids)
             await session.commit()
 
-        # Reset training counters for all guild racers
+        # Reset training counters for all guild racers in a separate session
         async with self.sessionmaker() as session:
             await session.execute(
                 text(
@@ -1647,70 +1701,108 @@ class DerbyScheduler:
             )
             await session.commit()
 
+        return {
+            "bet_results": bet_results,
+            "placement_awards": placement_awards,
+            "new_injuries": new_injuries,
+            "healed": healed,
+            "retirements": retirements,
+            "stat_gains": stat_gains,
+        }
+
+    async def _send_lineup_embed(
+        self,
+        guild_id: int,
+        participants: list[models.Racer],
+        result: Any,
+        color_map: dict[int, str],
+        gs: models.GuildSettings | None,
+    ) -> None:
+        """Post the "Racers Getting Ready" lineup embed to the guild channel
+        and pause briefly so commentary streaming feels natural.
+
+        Looks up NPC + owner display names for the lineup and reuses the
+        color assignment from simulation.
+        """
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return
+        channel = self._get_channel(guild, gs)
+        if not channel:
+            return
+
+        npc_names: dict[int, str] = {}
+        npc_ids = {r.npc_id for r in participants if r.npc_id}
+        if npc_ids:
+            async with self.sessionmaker() as session:
+                for npc_id in npc_ids:
+                    npc = await repo.get_npc(session, npc_id)
+                    if npc:
+                        prefix = f"{npc.emoji} " if npc.emoji else ""
+                        npc_names[npc_id] = f"{prefix}{npc.name}"
+
+        owner_names: dict[int, str] = {}
+        player_ids = {
+            r.owner_id for r in participants
+            if r.owner_id and r.owner_id != 0 and not r.npc_id
+        }
+        for pid in player_ids:
+            try:
+                member = guild.get_member(pid) or await guild.fetch_member(pid)
+                owner_names[pid] = member.display_name
+            except (discord.NotFound, discord.HTTPException):
+                owner_names[pid] = f"Player #{pid}"
+
+        sorted_participants = sorted(participants, key=lambda r: r.name.lower())
+        lineup_lines = []
+        for r in sorted_participants:
+            color = color_map.get(r.id, "")
+            if r.npc_id and r.npc_id in npc_names:
+                owner_tag = npc_names[r.npc_id]
+            elif r.owner_id and r.owner_id != 0:
+                owner_tag = owner_names.get(r.owner_id, f"Player #{r.owner_id}")
+            else:
+                owner_tag = "Unowned"
+            lineup_lines.append(f"{color} **{r.name}** ({owner_tag})".strip())
+
+        lineup = "\n".join(lineup_lines)
+        track_info = f" on **{result.map_name}**" if result.map_name else ""
+        ready_embed = discord.Embed(
+            title=f"{self._resolve('racer_emoji', gs)} Racers Getting Ready!",
+            description=(
+                f"The racers line up{track_info}!\n\n"
+                f"{lineup}\n\n"
+                f"*The race is about to begin...*"
+            ),
+            color=0xFFAA00,
+        )
+        try:
+            await channel.send(embed=ready_embed)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        await asyncio.sleep(3)
+
+    async def _narrate_and_announce(
+        self,
+        race_id: int,
+        guild_id: int,
+        participants: list[models.Racer],
+        result: Any,
+        color_map: dict[int, str],
+        outcomes: dict[str, Any],
+        gs: models.GuildSettings | None,
+    ) -> None:
+        """Stream race commentary and post all post-race announcements:
+        results, bet payouts, payout DMs, injuries, retirements, healings,
+        and placement prizes.
+        """
         names = result.racer_names
 
-        # Show a "getting ready" message while LLM generates commentary
-        guild = self.bot.get_guild(guild_id)
-        if guild:
-            channel = self._get_channel(guild, gs)
-            if channel:
-                # Build lineup with owner names, sorted alphabetically
-                npc_names: dict[int, str] = {}
-                npc_ids = {r.npc_id for r in participants if r.npc_id}
-                if npc_ids:
-                    async with self.sessionmaker() as session:
-                        for npc_id in npc_ids:
-                            npc = await repo.get_npc(session, npc_id)
-                            if npc:
-                                prefix = f"{npc.emoji} " if npc.emoji else ""
-                                npc_names[npc_id] = f"{prefix}{npc.name}"
-
-                owner_names: dict[int, str] = {}
-                player_ids = {
-                    r.owner_id for r in participants
-                    if r.owner_id and r.owner_id != 0 and not r.npc_id
-                }
-                for pid in player_ids:
-                    try:
-                        member = guild.get_member(pid) or await guild.fetch_member(pid)
-                        owner_names[pid] = member.display_name
-                    except (discord.NotFound, discord.HTTPException):
-                        owner_names[pid] = f"Player #{pid}"
-
-                from . import abilities as _abilities_pre
-                race_colors_pre = _abilities_pre.assign_race_colors(
-                    [r.id for r in participants]
-                )
-                sorted_participants = sorted(participants, key=lambda r: r.name.lower())
-                lineup_lines = []
-                for r in sorted_participants:
-                    name = r.name
-                    color = race_colors_pre.get(r.id, "")
-                    if r.npc_id and r.npc_id in npc_names:
-                        owner_tag = npc_names[r.npc_id]
-                    elif r.owner_id and r.owner_id != 0:
-                        owner_tag = owner_names.get(r.owner_id, f"Player #{r.owner_id}")
-                    else:
-                        owner_tag = "Unowned"
-                    lineup_lines.append(f"{color} **{name}** ({owner_tag})".strip())
-
-                lineup = "\n".join(lineup_lines)
-                track_info = f" on **{result.map_name}**" if result.map_name else ""
-                ready_embed = discord.Embed(
-                    title=f"{self._resolve('racer_emoji', gs)} Racers Getting Ready!",
-                    description=(
-                        f"The racers line up{track_info}!\n\n"
-                        f"{lineup}\n\n"
-                        f"*The race is about to begin...*"
-                    ),
-                    color=0xFFAA00,
-                )
-                try:
-                    await channel.send(embed=ready_embed)
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-
-                await asyncio.sleep(3)
+        # Pre-race lineup embed (acts as a wait card while LLM commentary loads)
+        await self._send_lineup_embed(
+            guild_id, participants, result, color_map, gs,
+        )
 
         log = await commentary.generate_commentary(result)
         if log is None:
@@ -1737,24 +1829,22 @@ class DerbyScheduler:
         )
         await self._post_results(guild_id, result.placements, names)
         await self._announce_bet_results(
-            guild_id, bet_results, names
+            guild_id, outcomes["bet_results"], names,
         )
-        await self._dm_payouts(bet_results, race_id, names)
-        if new_injuries:
-            await self._announce_injuries(guild_id, new_injuries, names)
-        if retirements:
-            await self._announce_retirements(guild_id, retirements)
-        if healed:
-            await self._announce_healed(guild_id, healed)
-        if placement_awards:
-            await self._announce_placement_prizes(
-                guild_id, placement_awards, names,
-                stat_gains=stat_gains,
+        await self._dm_payouts(outcomes["bet_results"], race_id, names)
+        if outcomes["new_injuries"]:
+            await self._announce_injuries(
+                guild_id, outcomes["new_injuries"], names,
             )
-        self.bot.logger.info(
-            "Race finished",
-            extra={"guild_id": guild_id, "race_id": race_id},
-        )
+        if outcomes["retirements"]:
+            await self._announce_retirements(guild_id, outcomes["retirements"])
+        if outcomes["healed"]:
+            await self._announce_healed(guild_id, outcomes["healed"])
+        if outcomes["placement_awards"]:
+            await self._announce_placement_prizes(
+                guild_id, outcomes["placement_awards"], names,
+                stat_gains=outcomes["stat_gains"],
+            )
 
     MEDAL_EMOJI = {1: "\U0001f947", 2: "\U0001f948", 3: "\U0001f949"}
 
