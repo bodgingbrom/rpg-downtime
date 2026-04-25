@@ -112,6 +112,7 @@ def load_dungeons() -> dict[str, dict[str, Any]]:
     # Lazy import to avoid a circular dependency (effects imports nothing
     # from logic, but logic-time validation can be heavy at module import).
     from dungeon import effects as _effects
+    from dungeon import explore as _explore
 
     dungeons: dict[str, dict[str, Any]] = {}
     for yaml_file in sorted(glob.glob(os.path.join(_DUNGEONS_DIR, "*.yaml"))):
@@ -132,6 +133,13 @@ def load_dungeons() -> dict[str, dict[str, Any]]:
                 if boss:
                     errors.extend(
                         _effects.validate_monster(boss, path=f"[{key}] floor[{f_idx}].boss.")
+                    )
+                # v2 room-pool schema validation.
+                for r_idx, room in enumerate(floor.get("room_pool") or []):
+                    errors.extend(
+                        _explore.validate_room(
+                            room, path=f"[{key}] floor[{f_idx}].room_pool[{r_idx}]."
+                        )
                     )
             if errors:
                 # Print to stderr; refusal to load keeps the bot healthy for

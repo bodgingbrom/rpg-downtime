@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import json
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -68,6 +68,114 @@ def is_v2_dungeon(dungeon_data: dict[str, Any]) -> bool:
 
 def floor_is_v2(floor_data: dict[str, Any]) -> bool:
     return bool(floor_data.get("room_pool"))
+
+
+KNOWN_VISIBILITIES: set[str] = {"passive", "visible", "concealed", "secret"}
+KNOWN_CONTENT_TYPES: set[str] = {"gold", "item", "narrate"}
+
+
+def validate_room(room_def: dict[str, Any], path: str = "") -> list[str]:
+    """Return human-readable errors for a v2 room definition. Empty = valid.
+
+    PR 3 schema covers ``features``, ``ambush``, ``description_pool``,
+    and ``ambient_pool``. Variant overrides go through this validator
+    too (the variants list is checked separately).
+    """
+    errors: list[str] = []
+    features = room_def.get("features")
+    if features is not None:
+        if not isinstance(features, list):
+            errors.append(f"{path}features must be a list")
+        else:
+            seen_ids: set[str] = set()
+            for i, feat in enumerate(features):
+                if not isinstance(feat, dict):
+                    errors.append(f"{path}features[{i}] must be a dict")
+                    continue
+                fid = feat.get("id")
+                if not fid or not isinstance(fid, str):
+                    errors.append(f"{path}features[{i}].id missing or not a string")
+                elif fid in seen_ids:
+                    errors.append(f"{path}features[{i}].id '{fid}' duplicated")
+                else:
+                    seen_ids.add(fid)
+                vis = feat.get("visibility", "visible")
+                if vis not in KNOWN_VISIBILITIES:
+                    errors.append(
+                        f"{path}features[{i}].visibility '{vis}' not in {sorted(KNOWN_VISIBILITIES)}"
+                    )
+                if vis == "concealed" and "perception_dc" not in feat:
+                    errors.append(
+                        f"{path}features[{i}] visibility=concealed requires perception_dc"
+                    )
+                if vis == "secret" and not feat.get("revealed_by"):
+                    errors.append(
+                        f"{path}features[{i}] visibility=secret requires revealed_by"
+                    )
+                # Validate content table.
+                content = feat.get("content")
+                if content is not None:
+                    if not isinstance(content, list):
+                        errors.append(f"{path}features[{i}].content must be a list")
+                    else:
+                        for j, c in enumerate(content):
+                            if not isinstance(c, dict):
+                                errors.append(
+                                    f"{path}features[{i}].content[{j}] must be a dict"
+                                )
+                                continue
+                            ctype = c.get("type")
+                            if ctype not in KNOWN_CONTENT_TYPES:
+                                errors.append(
+                                    f"{path}features[{i}].content[{j}].type "
+                                    f"'{ctype}' not in {sorted(KNOWN_CONTENT_TYPES)}"
+                                )
+            # Cross-check secret revealed_by points to a real feature.
+            for i, feat in enumerate(features):
+                if not isinstance(feat, dict):
+                    continue
+                if feat.get("visibility") == "secret":
+                    rby = feat.get("revealed_by")
+                    if rby and rby not in seen_ids:
+                        errors.append(
+                            f"{path}features[{i}].revealed_by '{rby}' not found in this room's features"
+                        )
+
+    # Ambient pool — list of strings.
+    ambient = room_def.get("ambient_pool")
+    if ambient is not None and not (
+        isinstance(ambient, list) and all(isinstance(s, str) for s in ambient)
+    ):
+        errors.append(f"{path}ambient_pool must be a list of strings")
+
+    # description_pool — list of strings.
+    descs = room_def.get("description_pool")
+    if descs is not None and not (
+        isinstance(descs, list) and all(isinstance(s, str) for s in descs)
+    ):
+        errors.append(f"{path}description_pool must be a list of strings")
+
+    # Variants — recurse on overrides.
+    variants = room_def.get("variants")
+    if variants is not None:
+        if not isinstance(variants, list):
+            errors.append(f"{path}variants must be a list")
+        else:
+            for i, v in enumerate(variants):
+                if not isinstance(v, dict):
+                    errors.append(f"{path}variants[{i}] must be a dict")
+                    continue
+                if "key" not in v:
+                    errors.append(f"{path}variants[{i}] missing 'key'")
+                # If variant declares features_add, validate as a sub-room.
+                if "features_add" in v:
+                    errors.extend(
+                        validate_room(
+                            {"features": v["features_add"]},
+                            path=f"{path}variants[{i}].",
+                        )
+                    )
+    return errors
 
 
 def find_floor_monster(floor_data: dict[str, Any], monster_id: str | None) -> dict[str, Any] | None:
@@ -241,8 +349,12 @@ def initial_floor_state(
         room_states[node_id] = {
             "visited": False,
             "looked_around": False,
-            "searched": [],          # feature ids investigated (PR 3+)
-            "found": [],             # found feature ids (PR 3+)
+            # PR 3 feature tracking:
+            "searched": [],            # feature ids the player has Investigated
+            "revealed_concealed": [],  # concealed feature ids surfaced via Look Around
+            "revealed_secrets": [],    # secret feature ids unlocked via revealed_by
+            "found_log": [],           # human-readable log of what was found in this room
+            # Variant + flavor (PR 1+):
             "variant_key": (variant or {}).get("key"),
             "description": picked_desc,
             "ambush_armed": bool(ambush_def.get("armed", False)),
@@ -345,22 +457,67 @@ class ActionResult:
         ``state["pending_combat"]``
       - ``"transition"`` — current room changed; re-render new room
       - ``"floor_complete"`` — boss defeated, floor done
+
+    ``rewards`` is a list of reward descriptors the caller applies to the
+    run (gold to add, items to drop into found_items, etc.). Rewards
+    aren't applied by the explore module so the module stays free of
+    persistence coupling.
     """
     narrative: list[str]
     next_step: str  # explore | combat | transition | floor_complete
+    rewards: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _room_def_for_current(state: dict[str, Any], floor_data: dict[str, Any]) -> dict[str, Any]:
+    """Look up the room_pool definition for the player's current room."""
+    cur = state.get("current")
+    graph = state.get("graph") or {}
+    rooms = graph.get("rooms") or {}
+    if cur is None or cur not in rooms:
+        return {}
+    pool_by_id = {r["id"]: r for r in (floor_data.get("room_pool") or [])}
+    return pool_by_id.get(rooms[cur]["room_def_id"], {})
+
+
+def _features_in_room(state: dict[str, Any], floor_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the feature list for the current room, applying variant overrides.
+
+    Variants can declare ``features_add`` (extends the base list) or
+    ``features`` (replaces it). Both are honored here.
+    """
+    room_def = _room_def_for_current(state, floor_data)
+    cur = state.get("current")
+    rs = state["room_states"].get(cur, {}) if cur else {}
+    variant_key = rs.get("variant_key")
+    base = list(room_def.get("features") or [])
+    if not variant_key:
+        return base
+    for v in (room_def.get("variants") or []):
+        if v.get("key") != variant_key:
+            continue
+        if "features" in v:
+            return list(v["features"])
+        if "features_add" in v:
+            return base + list(v["features_add"])
+        return base
+    return base
 
 
 def take_look_around(
     state: dict[str, Any],
     floor_data: dict[str, Any],
     rng: random.Random,
+    *,
+    perception_modifier: int = 0,
 ) -> ActionResult:
-    """Player looks around. PR 1: narrates a placeholder line.
+    """Player looks around. Once-per-room. Tick cost 1.
 
-    Tick cost 1. May trigger wandering encounter. If the room has an armed
-    ambush, lookin around can also trigger it (the player draws attention).
-    PR 1 keeps it simple: no ambush trigger from Look (that's a PR 3
-    decision when authored content has variety).
+    Reveals **concealed** features via a perception check
+    (1d20 + ``perception_modifier`` >= the feature's ``perception_dc``).
+    Visible features are always already surfaced; secret features only
+    appear after Investigating their ``revealed_by`` parent.
+
+    May trigger a wandering encounter from the tick.
     """
     cur = state.get("current")
     if cur is None:
@@ -368,19 +525,34 @@ def take_look_around(
     rs = state["room_states"].setdefault(cur, {})
 
     narrative: list[str] = []
-    if rs.get("looked_around"):
-        narrative.append("_You've already looked around. Nothing new catches your eye._")
-        # Still costs a tick.
-        tells, monster_id = advance_tick(state, floor_data, rng, cost=1)
-        narrative.extend(tells)
-        if monster_id:
-            state["pending_combat"] = {"monster_id": monster_id, "kind": "wandering"}
-            return ActionResult(narrative, "combat")
-        return ActionResult(narrative, "explore")
-
+    already = bool(rs.get("looked_around"))
     rs["looked_around"] = True
-    # PR 1 placeholder: no concealed features to surface yet. Just narrate.
-    narrative.append("_You scan the room slowly. Nothing of obvious interest._")
+
+    if already:
+        narrative.append("_You've already swept the room. Nothing new catches your eye._")
+    else:
+        features = _features_in_room(state, floor_data)
+        revealed = list(rs.get("revealed_concealed") or [])
+        new_reveals: list[str] = []
+        for feat in features:
+            if feat.get("visibility") != "concealed":
+                continue
+            fid = feat.get("id")
+            if not fid or fid in revealed:
+                continue
+            roll = rng.randint(1, 20) + int(perception_modifier)
+            dc = int(feat.get("perception_dc", 12))
+            if roll >= dc:
+                revealed.append(fid)
+                new_reveals.append(fid)
+                hint = feat.get("look_hint") or feat.get("name") or fid
+                narrative.append(f"_You spot **{hint}**._")
+        rs["revealed_concealed"] = revealed
+        if not new_reveals:
+            # No concealed features found (or none authored). Narrate a flat line.
+            narrative.append(
+                "_You scan the room slowly. Nothing else catches your eye._"
+            )
 
     tells, monster_id = advance_tick(state, floor_data, rng, cost=1)
     narrative.extend(tells)
@@ -388,6 +560,115 @@ def take_look_around(
         state["pending_combat"] = {"monster_id": monster_id, "kind": "wandering"}
         return ActionResult(narrative, "combat")
     return ActionResult(narrative, "explore")
+
+
+def take_investigate(
+    state: dict[str, Any],
+    floor_data: dict[str, Any],
+    rng: random.Random,
+    *,
+    feature_id: str,
+) -> ActionResult:
+    """Player Investigates a specific feature in the current room.
+
+    Tick cost is per-feature (``noise``, default 2). May trigger a
+    wandering encounter mid-search; per the design spec, the action is
+    *cancelled* in that case — the feature is NOT marked searched, the
+    player can re-attempt after combat.
+
+    On success, rolls the feature's ``content`` table:
+    - ``{type: gold, amount: [min, max], chance: float}`` — adds gold
+    - ``{type: item, item_id: str, chance: float}`` — drops a consumable
+    - ``{type: narrate, text: str}`` — pure flavor
+
+    Marks the feature as searched. Reveals any ``secret`` features whose
+    ``revealed_by`` matches this feature.
+    """
+    cur = state.get("current")
+    if cur is None:
+        return ActionResult([], "explore")
+    rs = state["room_states"].setdefault(cur, {})
+
+    features = _features_in_room(state, floor_data)
+    feature = next((f for f in features if f.get("id") == feature_id), None)
+    if feature is None:
+        return ActionResult(["_You can't find anything like that to inspect._"], "explore")
+
+    if feature_id in (rs.get("searched") or []):
+        return ActionResult(["_You've already searched that._"], "explore")
+
+    # Tick before content roll. If a wandering encounter triggers, the
+    # action is cancelled — the player has to retry.
+    cost = int(feature.get("noise", 2))
+    tells, monster_id = advance_tick(state, floor_data, rng, cost=cost)
+    if monster_id:
+        state["pending_combat"] = {"monster_id": monster_id, "kind": "wandering"}
+        return ActionResult(tells, "combat")
+
+    # Mark searched.
+    rs.setdefault("searched", []).append(feature_id)
+
+    # Reveal any secret features unlocked by this one.
+    secret_reveals: list[str] = []
+    for f in features:
+        if f.get("visibility") != "secret":
+            continue
+        if f.get("revealed_by") != feature_id:
+            continue
+        sid = f.get("id")
+        if sid and sid not in (rs.get("revealed_secrets") or []):
+            rs.setdefault("revealed_secrets", []).append(sid)
+            secret_reveals.append(f.get("name") or sid)
+
+    # Roll content.
+    narrative: list[str] = []
+    rewards: list[dict[str, Any]] = []
+    success_flavor = feature.get("flavor_success")
+    if success_flavor:
+        narrative.append(success_flavor)
+
+    for content in (feature.get("content") or []):
+        chance = float(content.get("chance", 1.0))
+        if chance < 1.0 and rng.random() > chance:
+            continue
+        ctype = content.get("type", "")
+        if ctype == "gold":
+            amt_range = content.get("amount", [1, 1])
+            if isinstance(amt_range, list) and len(amt_range) == 2:
+                amt = rng.randint(int(amt_range[0]), int(amt_range[1]))
+            else:
+                amt = int(amt_range)
+            if amt > 0:
+                rewards.append({"type": "gold", "amount": amt})
+                narrative.append(f"You find **{amt}g**.")
+        elif ctype == "item":
+            item_id = content.get("item_id")
+            if item_id:
+                rewards.append({"type": "item", "item_id": item_id})
+                narrative.append(f"You find a **{item_id}**.")
+        elif ctype == "narrate":
+            text = content.get("text") or ""
+            if text:
+                narrative.append(text)
+        # Other content types (lore_fragment, gear_drop) land in PR 5.
+
+    # If nothing rolled and no flavor, fall back to the empty-flavor.
+    if not narrative:
+        narrative.append(
+            feature.get("flavor_empty")
+            or "_You search carefully. Nothing of value._"
+        )
+
+    # Surface any secret reveals at the end so the player notices.
+    for s in secret_reveals:
+        narrative.append(f"_You spot a hidden **{s}** you hadn't seen before._")
+
+    rs.setdefault("found_log", []).extend(
+        [r for r in rewards if r.get("type") in {"gold", "item"}]
+    )
+
+    narrative.extend(tells)
+    return ActionResult(narrative, "explore", rewards=rewards)
 
 
 def take_listen(
@@ -505,20 +786,66 @@ def render_room_intro(
     rs = state["room_states"].get(cur, {})
 
     description = rs.get("description") or room_def.get("description") or "(empty room)"
-    ambient_pool = room_def.get("ambient_pool") or []
     # PR 1: don't auto-include ambient lines in the intro — the LLM will
     # choose them in PR 4. For now, leave them out so authored prose is
     # the whole experience.
     ambient_lines: list[str] = []
 
     exit_buttons: list[dict[str, Any]] = []
-    for exit_node in rooms[cur].get("exits", []):
-        # Label: simple ordinal for PR 1. PR 3 introduces explicit labels.
-        idx = len(exit_buttons) + 1
-        label = f"Move on (path {idx})"
+    for i, exit_node in enumerate(rooms[cur].get("exits", [])):
+        # PR 3 honors explicit per-exit labels when authored on the room.
+        # Looks like: room_def["exits"] = [{id, label}] OR a list of node-id strings.
+        # The graph rooms list is just node ids; we map by index here when
+        # the room_def supplies labels.
+        label = f"Move on (path {i + 1})"
+        room_exits = room_def.get("exits") or []
+        if i < len(room_exits) and isinstance(room_exits[i], dict):
+            authored_label = room_exits[i].get("label")
+            if authored_label:
+                label = f"Move on ({authored_label})"
         exit_buttons.append({"node_id": exit_node, "label": label})
 
     return description, ambient_lines, exit_buttons
+
+
+def visible_feature_buttons(
+    state: dict[str, Any],
+    floor_data: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the list of ``Investigate <feature>`` buttons to render.
+
+    A feature is investigable if:
+      - visibility == 'visible' (always surfaced), OR
+      - visibility == 'concealed' AND its id is in revealed_concealed, OR
+      - visibility == 'secret' AND its id is in revealed_secrets
+
+    AND the player hasn't already searched it (one-Investigate-per-feature).
+
+    Returns dicts: ``{"feature_id": ..., "label": "Investigate the X"}``.
+    """
+    cur = state.get("current")
+    rs = state["room_states"].get(cur, {}) if cur else {}
+    revealed_concealed = set(rs.get("revealed_concealed") or [])
+    revealed_secrets = set(rs.get("revealed_secrets") or [])
+    searched = set(rs.get("searched") or [])
+
+    out: list[dict[str, Any]] = []
+    for feat in _features_in_room(state, floor_data):
+        fid = feat.get("id")
+        if not fid or fid in searched:
+            continue
+        vis = feat.get("visibility", "visible")
+        if vis == "passive":
+            continue  # passive features are flavor only — not interactable
+        if vis == "concealed" and fid not in revealed_concealed:
+            continue
+        if vis == "secret" and fid not in revealed_secrets:
+            continue
+        if vis not in {"visible", "concealed", "secret"}:
+            continue
+        label = feat.get("investigate_label") or f"Investigate the {feat.get('name', fid)}"
+        out.append({"feature_id": fid, "label": label})
+    return out
 
 
 def available_exploration_actions(
@@ -527,8 +854,9 @@ def available_exploration_actions(
 ) -> list[str]:
     """Return the action ids currently surfaced as buttons.
 
-    PR 1: Look Around (if not already done in this room), Listen, Move on
-    (per exit), Investigate (none yet — PR 3).
+    Look Around is once-per-room. Listen is repeatable. Investigate
+    buttons are emitted by :func:`visible_feature_buttons` separately.
+    Move-on buttons come from :func:`render_room_intro`'s exits list.
     """
     cur = state.get("current")
     rs = state["room_states"].get(cur, {}) if cur else {}
@@ -536,6 +864,8 @@ def available_exploration_actions(
     if not rs.get("looked_around"):
         actions.append("look_around")
     actions.append("listen")
+    if visible_feature_buttons(state, floor_data):
+        actions.append("investigate")
     return actions
 
 

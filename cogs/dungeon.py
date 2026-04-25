@@ -192,48 +192,74 @@ class FloorCompleteView(DungeonView):
 class ExploreView(DungeonView):
     """V2 dungeon exploration buttons.
 
-    PR 1 surfaces three actions: Look Around (once per room), Listen
-    (repeatable), and Move on (per discovered exit). Investigate buttons
-    arrive in PR 3 alongside the hidden-content schema.
+    Renders dynamic action buttons based on room state:
+    - Look Around (once per room; greys out after use)
+    - Listen (repeatable)
+    - Investigate <feature> (one per surfaced feature; greys out after use)
+    - Move on <exit> (per discovered exit)
+    - Retreat to town (always available)
+
+    Discord caps at 25 buttons (5 rows of 5). Practically PR 3 won't
+    come close — even the most loaded room has ~10 buttons total.
     """
 
-    def __init__(self, run_id, user_id, sessionmaker, *, looked_around: bool, exits: list[dict[str, Any]]):
+    def __init__(
+        self, run_id, user_id, sessionmaker,
+        *, looked_around: bool,
+        exits: list[dict[str, Any]],
+        investigate_buttons: list[dict[str, Any]] | None = None,
+    ):
         super().__init__(run_id, user_id, sessionmaker)
-        # Look Around — disabled if already done in this room.
+        investigate_buttons = investigate_buttons or []
+
+        # Row 0 — primary actions.
         look_btn = discord.ui.Button(
             label="Look Around",
             style=discord.ButtonStyle.primary,
             emoji="\U0001f50d",
             disabled=looked_around,
+            row=0,
         )
         look_btn.callback = self._look_callback
         self.add_item(look_btn)
-        # Listen — always repeatable.
         listen_btn = discord.ui.Button(
             label="Listen",
             style=discord.ButtonStyle.secondary,
             emoji="\U0001f442",
+            row=0,
         )
         listen_btn.callback = self._listen_callback
         self.add_item(listen_btn)
-        # Move on (per exit). Up to a sensible limit so we don't blow Discord's button cap.
-        for exit_info in exits[:3]:
-            btn = discord.ui.Button(
-                label=exit_info.get("label", "Move on"),
-                style=discord.ButtonStyle.success,
-                emoji="\U0001f6aa",
-                custom_id=f"v2_move:{exit_info['node_id']}",
-            )
-            btn.callback = self._make_move_callback(exit_info["node_id"])
-            self.add_item(btn)
-        # Always offer retreat.
         retreat_btn = discord.ui.Button(
             label="Retreat to Town",
             style=discord.ButtonStyle.secondary,
             emoji="\U0001f3e0",
+            row=0,
         )
         retreat_btn.callback = self._retreat_callback
         self.add_item(retreat_btn)
+
+        # Rows 1-2 — Investigate buttons (up to 5 visible at a time).
+        for i, fb in enumerate(investigate_buttons[:5]):
+            btn = discord.ui.Button(
+                label=(fb.get("label") or "Investigate")[:80],
+                style=discord.ButtonStyle.primary,
+                emoji="\U0001f50e",
+                row=1 + (i // 5),
+            )
+            btn.callback = self._make_investigate_callback(fb["feature_id"])
+            self.add_item(btn)
+
+        # Row 3 — Move on per exit.
+        for exit_info in exits[:5]:
+            btn = discord.ui.Button(
+                label=exit_info.get("label", "Move on"),
+                style=discord.ButtonStyle.success,
+                emoji="\U0001f6aa",
+                row=3,
+            )
+            btn.callback = self._make_move_callback(exit_info["node_id"])
+            self.add_item(btn)
 
     async def _look_callback(self, interaction: discord.Interaction):
         await _handle_v2_explore_action(
@@ -252,6 +278,14 @@ class ExploreView(DungeonView):
             await _handle_v2_explore_action(
                 interaction, self.run_id, self.user_id, self.sessionmaker,
                 action="move_on", target_node=target_node,
+            )
+        return _cb
+
+    def _make_investigate_callback(self, feature_id: str):
+        async def _cb(interaction: discord.Interaction):
+            await _handle_v2_explore_action(
+                interaction, self.run_id, self.user_id, self.sessionmaker,
+                action="investigate", feature_id=feature_id,
             )
         return _cb
 
@@ -2040,10 +2074,40 @@ def _v2_render_view(run_id, user_id, sessionmaker, floor_state, floor_data) -> E
     rs = floor_state.get("room_states", {}).get(cur, {}) if cur else {}
     looked = bool(rs.get("looked_around", False))
     _, _, exits = dungeon_explore.render_room_intro(floor_state, floor_data)
+    investigate_buttons = dungeon_explore.visible_feature_buttons(floor_state, floor_data)
     return ExploreView(
         run_id, user_id, sessionmaker,
         looked_around=looked, exits=exits,
+        investigate_buttons=investigate_buttons,
     )
+
+
+def _v2_perception_modifier(player, race: str) -> int:
+    """Compose the player's perception modifier for v2 search rolls.
+
+    Reuses DEX modifier + the existing ``dungeon.trap_save_bonus`` racial
+    knob (Elf +2, Dwarf -1, others 0). Once classes / gear ship, additional
+    sources can plug in here without touching the explore module.
+    """
+    dex_mod = dungeon_logic.get_modifier(player.dexterity)
+    racial = int(get_racial_modifier(race, "dungeon.trap_save_bonus", 0))
+    return dex_mod + racial
+
+
+def _apply_v2_rewards(run, found_items: list[dict[str, Any]], rewards: list[dict[str, Any]]) -> None:
+    """Apply explore-action rewards to the run.
+
+    Mutates ``run.run_gold`` and ``found_items`` in place. The caller is
+    responsible for serializing ``found_items`` back to ``run.found_items_json``.
+    """
+    for r in rewards or []:
+        rtype = r.get("type")
+        if rtype == "gold":
+            run.run_gold = int(run.run_gold or 0) + int(r.get("amount", 0))
+        elif rtype == "item":
+            item_id = r.get("item_id")
+            if item_id:
+                found_items.append({"item_id": item_id})
 
 
 async def _v2_start_combat(
@@ -2102,15 +2166,23 @@ async def _v2_start_combat(
 
 
 async def _handle_v2_explore_action(
-    interaction, run_id, user_id, sessionmaker, *, action: str, target_node: str | None = None,
+    interaction, run_id, user_id, sessionmaker,
+    *,
+    action: str,
+    target_node: str | None = None,
+    feature_id: str | None = None,
 ):
-    """Apply a v2 exploration action (Look Around / Listen / Move on)."""
+    """Apply a v2 exploration action (Look / Listen / Move on / Investigate)."""
     async with sessionmaker() as session:
         ctx = await _load_run_context(session, run_id)
         if ctx is None:
             await interaction.response.send_message("Run not found.", ephemeral=True)
             return
         run, player, dungeon_data = ctx
+        profile = await rpg_repo.get_or_create_profile(
+            session, run.user_id, run.guild_id
+        )
+        race = profile.race
         floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
         floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
         if not floor_state:
@@ -2119,18 +2191,38 @@ async def _handle_v2_explore_action(
 
         rng = random.Random()
         if action == "look_around":
-            result = dungeon_explore.take_look_around(floor_state, floor_data, rng)
+            result = dungeon_explore.take_look_around(
+                floor_state, floor_data, rng,
+                perception_modifier=_v2_perception_modifier(player, race),
+            )
         elif action == "listen":
             result = dungeon_explore.take_listen(floor_state, floor_data, rng)
         elif action == "move_on" and target_node:
             result = dungeon_explore.take_move_on(
                 floor_state, floor_data, rng, target_node=target_node,
             )
+        elif action == "investigate" and feature_id:
+            result = dungeon_explore.take_investigate(
+                floor_state, floor_data, rng, feature_id=feature_id,
+            )
         else:
             await interaction.response.send_message(
                 "Unknown action.", ephemeral=True,
             )
             return
+
+        # Apply rewards (gold + items) if any. Done before combat handoff
+        # so the player keeps anything they'd already found this room
+        # before a wandering encounter would otherwise interrupt — but in
+        # take_investigate the rewards are only set when no combat fired,
+        # so this is safe either way.
+        if result.rewards:
+            try:
+                found_items = json.loads(run.found_items_json or "[]")
+            except (json.JSONDecodeError, TypeError):
+                found_items = []
+            _apply_v2_rewards(run, found_items, result.rewards)
+            run.found_items_json = json.dumps(found_items)
 
         # Branch on outcome.
         if result.next_step == "combat":
