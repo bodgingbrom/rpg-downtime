@@ -97,6 +97,52 @@ def layout_graph(
 
 
 # ---------------------------------------------------------------------------
+# Direction labels — map a graph edge to "north" / "south" / "east" / "west".
+# ---------------------------------------------------------------------------
+
+# Coordinate convention (from layout_graph): +x = east, -x = west, +y = south,
+# -y = north. Matches typical screen coordinates.
+_DIRECTION_BY_DELTA = {
+    (1, 0): "east",
+    (-1, 0): "west",
+    (0, 1): "south",
+    (0, -1): "north",
+}
+
+
+def exit_directions(
+    rooms: dict[str, dict[str, Any]],
+    entrance: str | None,
+    current: str | None,
+) -> dict[str, str]:
+    """For each exit from ``current``, return a directional label.
+
+    Returns ``{exit_node_id: "east"|"west"|"north"|"south"|"onward"}``.
+    Direction is derived from the layout positions used by the map
+    renderer, so the player's sense of direction matches what they
+    see on the map. Edges with non-unit deltas (rare; only happens
+    when layout had to skip cells) fall back to "onward".
+
+    ``current`` and ``entrance`` may be None — returns ``{}``.
+    """
+    if not current or not entrance:
+        return {}
+    positions = layout_graph(rooms, entrance)
+    if current not in positions:
+        return {}
+    cx, cy = positions[current]
+    out: dict[str, str] = {}
+    for exit_id in (rooms.get(current) or {}).get("exits", []) or []:
+        if exit_id not in positions:
+            out[exit_id] = "onward"
+            continue
+        ex, ey = positions[exit_id]
+        delta = (ex - cx, ey - cy)
+        out[exit_id] = _DIRECTION_BY_DELTA.get(delta, "onward")
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Fog of war.
 # ---------------------------------------------------------------------------
 
