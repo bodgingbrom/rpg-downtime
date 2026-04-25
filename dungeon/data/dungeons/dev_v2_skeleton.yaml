@@ -12,6 +12,23 @@ name: Dev V2 Skeleton
 description: "Placeholder v2 dungeon for engine testing. Admin-only."
 min_role: "Race Admin"
 
+# Three test fragments + a legendary unlock for PR 5 validation.
+lore_fragments:
+  - id: 1
+    text: "_(Test fragment 1)_  The first apprentice never spoke much. Mostly noted things in the margins."
+  - id: 2
+    text: "_(Test fragment 2)_  Margaret was the second apprentice. She drew the eastern hills, and they obliged."
+  - id: 3
+    text: "_(Test fragment 3)_  The master signed his last entry with no name at all — only a small neat sigil where the name should be."
+
+legendary_reward:
+  item_id: vorpal_dagger
+  name: "Apprentice's Pen"
+  flavor: |
+    _The fragments resolve themselves into a complete account. As the last
+    page seals, a slender weight settles into your hand — sharp, balanced,
+    inked steel. **Apprentice's Pen** is yours._
+
 background:
   tone: "Sparse and perfunctory. This is a test fixture, not a story."
   pitch: "A throwaway dungeon for v2 testing. Three rooms. Admin-only."
@@ -79,6 +96,7 @@ floors:
             content:
               - {type: gold, amount: [3, 6], chance: 1.0}
               - {type: narrate, text: "Scratched into the stone, in apprentice handwriting: \"PR1 was here.\""}
+              - {type: lore_fragment, fragment_id: 1, chance: 1.0}
             flavor_success: "_You run your fingers over the marks. They've been scratched in deliberately._"
 
           # Concealed feature — only surfaces if Look Around's perception
@@ -92,6 +110,7 @@ floors:
             noise: 2
             content:
               - {type: gold, amount: [10, 18], chance: 1.0}
+              - {type: lore_fragment, fragment_id: 2, chance: 1.0}
             flavor_success: "_You pry up the flagstone. Beneath it, a small cache of coins, long forgotten._"
 
       - id: dev_corridor
@@ -131,4 +150,5 @@ floors:
             content:
               - {type: gold, amount: [25, 40], chance: 1.0}
               - {type: narrate, text: "_A neat little hidden compartment, lined with velvet. Whoever owned this chest had something to hide._"}
+              - {type: lore_fragment, fragment_id: 3, chance: 1.0}
             flavor_success: "_The chest's bottom panel slides aside under your fingertips._"

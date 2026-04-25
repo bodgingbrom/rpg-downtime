@@ -71,7 +71,7 @@ def floor_is_v2(floor_data: dict[str, Any]) -> bool:
 
 
 KNOWN_VISIBILITIES: set[str] = {"passive", "visible", "concealed", "secret"}
-KNOWN_CONTENT_TYPES: set[str] = {"gold", "item", "narrate"}
+KNOWN_CONTENT_TYPES: set[str] = {"gold", "item", "narrate", "lore_fragment", "corpse_recovery"}
 
 
 def validate_room(room_def: dict[str, Any], path: str = "") -> list[str]:
@@ -130,6 +130,13 @@ def validate_room(room_def: dict[str, Any], path: str = "") -> list[str]:
                                     f"{path}features[{i}].content[{j}].type "
                                     f"'{ctype}' not in {sorted(KNOWN_CONTENT_TYPES)}"
                                 )
+                            elif ctype == "lore_fragment":
+                                fid = c.get("fragment_id")
+                                if not isinstance(fid, int):
+                                    errors.append(
+                                        f"{path}features[{i}].content[{j}].fragment_id "
+                                        f"must be an int"
+                                    )
             # Cross-check secret revealed_by points to a real feature.
             for i, feat in enumerate(features):
                 if not isinstance(feat, dict):
@@ -176,6 +183,93 @@ def validate_room(room_def: dict[str, Any], path: str = "") -> list[str]:
                         )
                     )
     return errors
+
+
+def validate_dungeon_meta(dungeon_data: dict[str, Any], path: str = "") -> list[str]:
+    """Validate the dungeon-level lore_fragments + legendary_reward fields.
+
+    These are PR 5 additions; both are optional. ``lore_fragments`` is a
+    list of ``{id: int, text: str}`` with unique ids. ``legendary_reward``
+    is a dict with at least ``item_id``; the player unlocks it after
+    collecting all fragments (so it's expected to coexist with a non-empty
+    fragments list, but the validator doesn't enforce that pairing).
+
+    Cross-check: every ``lore_fragment`` content reference in any room
+    feature must point at a fragment id that exists in the top-level list.
+    """
+    errors: list[str] = []
+    fragments = dungeon_data.get("lore_fragments")
+    fragment_ids: set[int] = set()
+    if fragments is not None:
+        if not isinstance(fragments, list):
+            errors.append(f"{path}lore_fragments must be a list")
+        else:
+            for i, frag in enumerate(fragments):
+                if not isinstance(frag, dict):
+                    errors.append(f"{path}lore_fragments[{i}] must be a dict")
+                    continue
+                fid = frag.get("id")
+                text = frag.get("text")
+                if not isinstance(fid, int):
+                    errors.append(f"{path}lore_fragments[{i}].id must be an int")
+                elif fid in fragment_ids:
+                    errors.append(f"{path}lore_fragments[{i}].id {fid} duplicated")
+                else:
+                    fragment_ids.add(fid)
+                if not isinstance(text, str) or not text.strip():
+                    errors.append(f"{path}lore_fragments[{i}].text must be a non-empty string")
+
+    legendary = dungeon_data.get("legendary_reward")
+    if legendary is not None:
+        if not isinstance(legendary, dict):
+            errors.append(f"{path}legendary_reward must be a dict")
+        elif not isinstance(legendary.get("item_id"), str) or not legendary["item_id"]:
+            errors.append(f"{path}legendary_reward.item_id must be a non-empty string")
+
+    # Cross-check: lore_fragment content references in features.
+    for f_idx, floor in enumerate(dungeon_data.get("floors", []) or []):
+        for r_idx, room in enumerate(floor.get("room_pool") or []):
+            for feat_idx, feat in enumerate(room.get("features") or []):
+                for c_idx, content in enumerate(feat.get("content") or []):
+                    if not isinstance(content, dict):
+                        continue
+                    if content.get("type") != "lore_fragment":
+                        continue
+                    fid = content.get("fragment_id")
+                    if isinstance(fid, int) and fragment_ids and fid not in fragment_ids:
+                        errors.append(
+                            f"{path}floor[{f_idx}].room_pool[{r_idx}].features[{feat_idx}]"
+                            f".content[{c_idx}].fragment_id {fid} not in top-level "
+                            f"lore_fragments"
+                        )
+    return errors
+
+
+def seed_corpse_in_floor(
+    state: dict[str, Any],
+    rng: random.Random,
+    *,
+    loot: list[dict[str, Any]],
+) -> str | None:
+    """Pick a random non-boss room in the floor graph and seed the corpse.
+
+    Mutates ``state`` in place by setting ``state["corpse"] = {room_node, loot}``.
+    Returns the chosen room node id, or None if no eligible room exists.
+    Caller is responsible for committing the new floor_state.
+    """
+    graph = state.get("graph") or {}
+    rooms = graph.get("rooms") or {}
+    boss = graph.get("boss")
+    eligible = [n for n in rooms.keys() if n != boss]
+    if not eligible:
+        return None
+    chosen = rng.choice(eligible)
+    state["corpse"] = {
+        "room_node": chosen,
+        "loot": list(loot or []),
+        "recovered": False,
+    }
+    return chosen
 
 
 def find_floor_monster(floor_data: dict[str, Any], monster_id: str | None) -> dict[str, Any] | None:
@@ -484,22 +578,54 @@ def _features_in_room(state: dict[str, Any], floor_data: dict[str, Any]) -> list
 
     Variants can declare ``features_add`` (extends the base list) or
     ``features`` (replaces it). Both are honored here.
+
+    If a corpse has been seeded into the current room (``state["corpse"]``
+    with ``room_node`` matching the current room), a synthetic
+    ``your_corpse`` feature is appended so the player can investigate
+    and recover their lost loot.
     """
     room_def = _room_def_for_current(state, floor_data)
     cur = state.get("current")
     rs = state["room_states"].get(cur, {}) if cur else {}
     variant_key = rs.get("variant_key")
     base = list(room_def.get("features") or [])
-    if not variant_key:
-        return base
-    for v in (room_def.get("variants") or []):
-        if v.get("key") != variant_key:
-            continue
-        if "features" in v:
-            return list(v["features"])
-        if "features_add" in v:
-            return base + list(v["features_add"])
-        return base
+
+    # Apply variant overrides.
+    if variant_key:
+        for v in (room_def.get("variants") or []):
+            if v.get("key") != variant_key:
+                continue
+            if "features" in v:
+                base = list(v["features"])
+            elif "features_add" in v:
+                base = base + list(v["features_add"])
+            break
+
+    # Inject synthetic corpse feature if one is seeded in this room.
+    corpse = state.get("corpse")
+    if corpse and corpse.get("room_node") == cur and not corpse.get("recovered"):
+        base = list(base) + [{
+            "id": "your_corpse",
+            "name": "your previous self",
+            "visibility": "visible",
+            "investigate_label": "Loot the body",
+            "noise": 1,
+            "flavor_success": (
+                "_You find a body slumped against the wall — your own gear, "
+                "by the look of it. Whatever you can carry, you take._"
+            ),
+            "flavor_empty": (
+                "_The body is yours, all right. The pockets are already empty._"
+            ),
+            "content": [
+                {
+                    "type": "corpse_recovery",
+                    "loot": list(corpse.get("loot") or []),
+                    "chance": 1.0,
+                },
+            ],
+        }]
+
     return base
 
 
@@ -650,7 +776,36 @@ def take_investigate(
             text = content.get("text") or ""
             if text:
                 narrative.append(text)
-        # Other content types (lore_fragment, gear_drop) land in PR 5.
+        elif ctype == "lore_fragment":
+            fid = content.get("fragment_id")
+            if isinstance(fid, int):
+                rewards.append({"type": "lore_fragment", "fragment_id": fid})
+                # Narrative is intentionally generic here — the cog awards the
+                # fragment (DB write) and produces the personalized
+                # "you found fragment N" line so it can also report
+                # already-collected vs newly-collected.
+        elif ctype == "corpse_recovery":
+            # Synthetic content emitted by an injected corpse feature. The
+            # actual loot lives in content["loot"] (gold / item entries).
+            for inner in (content.get("loot") or []):
+                inner_type = inner.get("type")
+                if inner_type == "gold":
+                    amt_range = inner.get("amount", [1, 1])
+                    if isinstance(amt_range, list) and len(amt_range) == 2:
+                        amt = rng.randint(int(amt_range[0]), int(amt_range[1]))
+                    else:
+                        amt = int(amt_range)
+                    if amt > 0:
+                        rewards.append({"type": "gold", "amount": amt})
+                elif inner_type == "item":
+                    item_id = inner.get("item_id")
+                    if item_id:
+                        rewards.append({"type": "item", "item_id": item_id})
+                elif inner_type == "gear":
+                    gear_id = inner.get("gear_id")
+                    if gear_id:
+                        rewards.append({"type": "gear", "gear_id": gear_id})
+            rewards.append({"type": "corpse_recovered"})  # signal for caller
 
     # If nothing rolled and no flavor, fall back to the empty-flavor.
     if not narrative:
