@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 from discord.ext.commands import Context
 
+from cogs._autocomplete import filter_choices
 from dungeon import logic as dungeon_logic
 from dungeon import repositories as dungeon_repo
 from dungeon import effects as dungeon_effects
@@ -2648,15 +2649,13 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
         dungeons = dungeon_logic.load_dungeons()
-        choices = []
-        current_lower = current.lower()
-        for key, data in dungeons.items():
-            name = data.get("name", key)
-            if current_lower in name.lower() or current_lower in key.lower():
-                choices.append(app_commands.Choice(name=name, value=key))
-            if len(choices) >= 25:
-                break
-        return choices
+        return filter_choices(
+            dungeons.items(),
+            current,
+            label=lambda kv: kv[1].get("name", kv[0]),
+            value=lambda kv: kv[0],
+            match=lambda kv: f"{kv[1].get('name', kv[0])} {kv[0]}",
+        )
 
 
 # ---------------------------------------------------------------------------
