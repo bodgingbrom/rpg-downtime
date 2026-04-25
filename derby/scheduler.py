@@ -61,6 +61,10 @@ class DerbyScheduler:
         self.active_races: set[int] = set()  # race IDs currently simulating (bets closed)
         self.betting_races: set[int] = set()  # race IDs in bet window (bets open)
         self._last_tournament_tick: str | None = None  # "weekday-hour-minute" debounce
+        # Strong refs for fire-and-forget tasks. asyncio only weakly references
+        # tasks once create_task returns, so without this set the GC can collect
+        # an in-flight task and Python warns "Task was destroyed but it is pending!"
+        self._background_tasks: set[asyncio.Task] = set()
 
     def _resolve(
         self,
@@ -94,6 +98,33 @@ class DerbyScheduler:
         return guild.system_channel or (
             guild.text_channels[0] if guild.text_channels else None
         )
+
+    def _spawn_background(
+        self, coro, *, name: str | None = None
+    ) -> asyncio.Task:
+        """Schedule a fire-and-forget coroutine with proper bookkeeping.
+
+        Holds a strong reference (asyncio's own bookkeeping is weak), and
+        attaches a done callback that logs any uncaught exception so failures
+        don't disappear silently. Cancellations are not logged.
+        """
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._background_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                self.bot.logger.error(
+                    "Background task %r failed",
+                    t.get_name(),
+                    exc_info=exc,
+                )
+
+        task.add_done_callback(_on_done)
+        return task
 
     async def start(self) -> None:
         await self._init_db()
@@ -135,7 +166,10 @@ class DerbyScheduler:
         # Ensure pending races exist once the guild cache is ready.
         # This runs in the background so it doesn't block setup_hook.
         if hasattr(self.bot, "wait_until_ready"):
-            asyncio.create_task(self._deferred_ensure_pending_races())
+            self._spawn_background(
+                self._deferred_ensure_pending_races(),
+                name="deferred_ensure_pending_races",
+            )
         else:
             # Tests don't use wait_until_ready — run immediately
             await self._ensure_pending_races()
@@ -156,6 +190,9 @@ class DerbyScheduler:
             self.digest_task.cancel()
         if hasattr(self, "fishing_task") and self.fishing_task and self.fishing_task.is_running():
             self.fishing_task.cancel()
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
         await self.engine.dispose()
 
     async def _init_db(self) -> None:
@@ -1817,10 +1854,11 @@ class DerbyScheduler:
                                 winner_racer.guild_id
                             )
                             flavor = self._resolve("racer_flavor", gs) or ""
-                            asyncio.create_task(
+                            self._spawn_background(
                                 self._regenerate_npc_quips(
                                     npc, flavor, "win"
-                                )
+                                ),
+                                name=f"regen_quips:{npc.id}:win",
                             )
 
             # Check last place (40% chance)
@@ -1846,10 +1884,11 @@ class DerbyScheduler:
                                     last_racer.guild_id
                                 )
                                 flavor = self._resolve("racer_flavor", gs) or ""
-                                asyncio.create_task(
+                                self._spawn_background(
                                     self._regenerate_npc_quips(
                                         npc, flavor, "loss"
-                                    )
+                                    ),
+                                    name=f"regen_quips:{npc.id}:loss",
                                 )
 
         return reactions
