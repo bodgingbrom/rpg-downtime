@@ -70,6 +70,25 @@ def floor_is_v2(floor_data: dict[str, Any]) -> bool:
     return bool(floor_data.get("room_pool"))
 
 
+def find_floor_monster(floor_data: dict[str, Any], monster_id: str | None) -> dict[str, Any] | None:
+    """Look up a monster definition on a floor by id.
+
+    Searches the floor's ``boss`` field first, then ``monsters`` list.
+    Returns None if the id isn't found. Used by v2 combat paths to resolve
+    the active monster from ``run.monster_id`` (which is populated from
+    floor_state's pending_combat).
+    """
+    if not monster_id:
+        return None
+    boss_def = floor_data.get("boss") or {}
+    if boss_def.get("id") == monster_id:
+        return boss_def
+    for m in floor_data.get("monsters") or []:
+        if m.get("id") == monster_id:
+            return m
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Floor graph generation.
 # ---------------------------------------------------------------------------

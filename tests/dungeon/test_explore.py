@@ -303,6 +303,31 @@ def test_load_floor_state_handles_garbage():
     assert explore.load_floor_state("{}") == {}
 
 
+def test_find_floor_monster_finds_boss():
+    floor = _floor()
+    found = explore.find_floor_monster(floor, "test_boss")
+    assert found is not None
+    assert found["name"] == "Test Boss"
+
+
+def test_find_floor_monster_finds_regular():
+    floor = _floor()
+    found = explore.find_floor_monster(floor, "test_rat")
+    assert found is not None
+    assert found["name"] == "Test Rat"
+
+
+def test_find_floor_monster_missing_returns_none():
+    floor = _floor()
+    assert explore.find_floor_monster(floor, "nonexistent") is None
+    assert explore.find_floor_monster(floor, None) is None
+    assert explore.find_floor_monster(floor, "") is None
+
+
+def test_find_floor_monster_handles_empty_floor():
+    assert explore.find_floor_monster({}, "anything") is None
+
+
 def test_dump_load_round_trip():
     floor = _floor()
     state = explore.initial_floor_state(floor, random.Random(0))

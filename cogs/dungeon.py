@@ -1138,9 +1138,6 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
         )
         race = profile.race
 
-        rooms = json.loads(run.rooms_json)
-        room_data = rooms[run.room_index]
-        base_monster = room_data["monster"]
         narrative: list[str] = []
 
         # Load / initialize combat state. Legacy runs from before this
@@ -1149,6 +1146,33 @@ async def _handle_combat_action(interaction, run_id, user_id, sessionmaker, acti
             combat_state = json.loads(run.combat_state_json or "{}")
         except (json.JSONDecodeError, TypeError):
             combat_state = {}
+
+        # Resolve the base monster definition. v1 reads from rooms_json
+        # (which v2 doesn't populate); v2 looks up by run.monster_id in
+        # the current floor's monster pool. The combat handler needs the
+        # full def either way — for variant/phase merging, attack dice,
+        # XP, loot, etc.
+        base_monster: dict[str, Any] | None = None
+        if combat_state.get("return_to") == "v2_explore":
+            floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+            primary_id = (
+                combat_state.get("primary_monster_id") or run.monster_id
+            )
+            base_monster = dungeon_explore.find_floor_monster(floor_data, primary_id)
+        else:
+            rooms = json.loads(run.rooms_json or "[]")
+            if 0 <= run.room_index < len(rooms):
+                room_data = rooms[run.room_index]
+                base_monster = room_data.get("monster")
+
+        if base_monster is None:
+            await interaction.response.send_message(
+                "Combat is in an inconsistent state — the monster definition could not "
+                "be loaded. Please use `/dungeon abandon` and start over.",
+                ephemeral=True,
+            )
+            return
+
         if not combat_state:
             init_rng = random.Random()
             combat_state = dungeon_effects.initial_combat_state(base_monster, init_rng)
@@ -1750,13 +1774,27 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
                 session, run.user_id, run.guild_id
             )
             race = profile.race
-            rooms = json.loads(run.rooms_json)
-            room_data = rooms[run.room_index]
-            base_monster = room_data["monster"]
             try:
                 combat_state_local = json.loads(run.combat_state_json or "{}")
             except (json.JSONDecodeError, TypeError):
                 combat_state_local = {}
+            # v2 looks up the monster by id from the floor pool; v1 reads
+            # from rooms_json[room_index].
+            base_monster: dict[str, Any] | None = None
+            if combat_state_local.get("return_to") == "v2_explore":
+                floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+                primary_id = (
+                    combat_state_local.get("primary_monster_id") or run.monster_id
+                )
+                base_monster = dungeon_explore.find_floor_monster(floor_data, primary_id)
+            else:
+                rooms = json.loads(run.rooms_json or "[]")
+                if 0 <= run.room_index < len(rooms):
+                    base_monster = rooms[run.room_index].get("monster")
+            if base_monster is None:
+                # Fall back to a stub so the use_item flow still resolves
+                # without crashing — the monster turn will be a noop.
+                base_monster = {"id": run.monster_id or "?", "name": "?", "attack_dice": "1d4"}
             # Use the variant/phase-adjusted monster for display + damage.
             monster = dungeon_logic.apply_variant(base_monster, combat_state_local.get("variant"))
             phase_idx = int(combat_state_local.get("phase", 0))
@@ -1819,13 +1857,23 @@ async def _handle_use_item_selected(interaction, run_id, user_id, sessionmaker, 
             view = PostRoomView(run_id, user_id, sessionmaker)
         else:
             # Healed mid-combat, rebuild combat embed (variant/effects-aware).
-            rooms = json.loads(run.rooms_json)
-            room_data = rooms[run.room_index]
-            base_monster = room_data["monster"]
             try:
                 combat_state_for_embed = json.loads(run.combat_state_json or "{}")
             except (json.JSONDecodeError, TypeError):
                 combat_state_for_embed = {}
+            base_monster: dict[str, Any] | None = None
+            if combat_state_for_embed.get("return_to") == "v2_explore":
+                floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+                primary_id = (
+                    combat_state_for_embed.get("primary_monster_id") or run.monster_id
+                )
+                base_monster = dungeon_explore.find_floor_monster(floor_data, primary_id)
+            else:
+                rooms = json.loads(run.rooms_json or "[]")
+                if 0 <= run.room_index < len(rooms):
+                    base_monster = rooms[run.room_index].get("monster")
+            if base_monster is None:
+                base_monster = {"id": run.monster_id or "?", "name": "?"}
             display_monster = dungeon_logic.apply_variant(
                 base_monster, combat_state_for_embed.get("variant")
             )
@@ -1871,7 +1919,8 @@ async def _handle_descend(interaction, run_id, user_id, sessionmaker):
             )
             return
 
-        # Generate rooms for the next floor
+        # Advance to the next floor. v2 generates a fresh floor graph;
+        # v1 generates a linear room list.
         run.floor += 1
         run.room_index = 0
         floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor)
@@ -1882,14 +1931,36 @@ async def _handle_descend(interaction, run_id, user_id, sessionmaker):
             return
 
         new_seed = random.randint(0, 2**31)
-        rooms = dungeon_logic.generate_rooms(floor_data, new_seed)
-        run.rooms_json = json.dumps(rooms)
+        is_v2 = dungeon_explore.floor_is_v2(floor_data)
+        if is_v2:
+            new_floor_state = dungeon_explore.initial_floor_state(
+                floor_data, random.Random(new_seed),
+            )
+            run.floor_state_json = dungeon_explore.dump_floor_state(new_floor_state)
+            run.rooms_json = "[]"
+        else:
+            rooms = dungeon_logic.generate_rooms(floor_data, new_seed)
+            run.rooms_json = json.dumps(rooms)
+            run.floor_state_json = "{}"
         run.room_seed = new_seed
         run.state = "exploring"
         await session.commit()
         await session.refresh(run)
 
-        # Show a "descending" message — player must press Continue to enter first room
+        if is_v2:
+            # Drop straight into the entrance room of the new floor.
+            floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
+            embed = _build_v2_explore_embed(
+                run, player, dungeon_data, floor_state,
+                narrative=[
+                    "_You descend the stairs. The next floor opens around you._",
+                ],
+            )
+            view = _v2_render_view(run_id, user_id, sessionmaker, floor_state, floor_data)
+            await interaction.response.edit_message(embed=embed, view=view)
+            return
+
+        # v1: blind-room "Continue" UX.
         embed = discord.Embed(
             title=f"{dungeon_data['name']} — Floor {run.floor}",
             color=EMBED_COLOR,
@@ -1983,23 +2054,8 @@ async def _v2_start_combat(
     """
     floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
 
-    # Look up the monster definition. Boss field for boss kind, monsters
-    # list (or floor.boss with id match) otherwise.
-    monster_def: dict[str, Any] | None = None
-    if kind == "boss":
-        boss = floor_data.get("boss") or {}
-        if boss.get("id") == monster_id:
-            monster_def = boss
-    if monster_def is None:
-        for m in (floor_data.get("monsters") or []):
-            if m.get("id") == monster_id:
-                monster_def = m
-                break
-    if monster_def is None:
-        # Fall back to any boss with the id.
-        boss = floor_data.get("boss") or {}
-        if boss.get("id") == monster_id:
-            monster_def = boss
+    # Look up the monster definition (boss field or monsters list).
+    monster_def = dungeon_explore.find_floor_monster(floor_data, monster_id)
     if monster_def is None:
         # Defensive: monster id missing — abort to explore.
         floor_state["pending_combat"] = None
