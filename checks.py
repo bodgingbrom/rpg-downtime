@@ -25,19 +25,21 @@ def has_role(role_name: str) -> commands.Check:
 
 
 async def _load_guild_settings(ctx: commands.Context):
-    """Load GuildSettings for the current guild, or None."""
+    """Load GuildSettings for the current guild, or None.
+
+    Uses the scheduler's GuildSettingsResolver cache — channel checks fire
+    on every command, so a per-command DB hit would be wasteful.
+    """
     scheduler = getattr(ctx.bot, "scheduler", None)
     if scheduler is None:
         return None
     guild = ctx.guild
     if guild is None:
         return None
-    sessionmaker = getattr(scheduler, "sessionmaker", None)
-    if sessionmaker is None:
+    resolver = getattr(scheduler, "guild_settings", None)
+    if resolver is None:
         return None
-    from derby import repositories as repo
-    async with sessionmaker() as session:
-        return await repo.get_guild_settings(session, guild.id)
+    return await resolver.get(guild.id)
 
 
 async def in_bot_channel(ctx: commands.Context, channel_key: str | None = None) -> bool:

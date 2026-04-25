@@ -636,7 +636,7 @@ class Fishing(commands.Cog, name="fishing"):
 
         async with self.bot.scheduler.sessionmaker() as session:
             # Get or create wallet
-            gs = await derby_repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
             if wallet is None:
                 default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
@@ -692,7 +692,7 @@ class Fishing(commands.Cog, name="fishing"):
                 return
 
             # Check wallet
-            gs = await derby_repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
             if wallet is None:
                 default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")

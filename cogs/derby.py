@@ -2751,6 +2751,8 @@ class Derby(commands.Cog, name="derby"):
             )
             return
         guild_id = context.guild.id if context.guild else 0
+        # Resolver is None in legacy/test fixtures that stub bot.scheduler.
+        resolver = getattr(self.bot.scheduler, "guild_settings", None)
         async with self.bot.scheduler.sessionmaker() as session:
             gs = await repo.get_guild_settings(session, guild_id)
             if gs is None:
@@ -2762,6 +2764,8 @@ class Derby(commands.Cog, name="derby"):
                 await repo.update_guild_settings(
                     session, guild_id, **{key: None}
                 )
+                if resolver is not None:
+                    resolver.bust(guild_id)
                 global_val = getattr(self.bot.settings, key)
                 await context.send(
                     f"`{key}` reset to global default: **{global_val}**",
@@ -2806,6 +2810,8 @@ class Derby(commands.Cog, name="derby"):
             await repo.update_guild_settings(
                 session, guild_id, **{key: parsed}
             )
+            if resolver is not None:
+                resolver.bust(guild_id)
 
         # Regenerate flavor names when racer_flavor changes
         if key == "racer_flavor":

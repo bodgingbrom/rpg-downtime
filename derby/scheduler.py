@@ -21,6 +21,7 @@ import rpg.models  # noqa: F401 — register rpg tables on Base
 
 from . import commentary, flavor_names, logic, models, npc_generation, npc_quips
 from . import repositories as repo
+from .settings_cache import GuildSettingsResolver
 
 
 def _parse_race_times(time_strings: list[str]) -> list[dt_time]:
@@ -65,6 +66,11 @@ class DerbyScheduler:
         # tasks once create_task returns, so without this set the GC can collect
         # an in-flight task and Python warns "Task was destroyed but it is pending!"
         self._background_tasks: set[asyncio.Task] = set()
+        # Per-guild GuildSettings cache. Hits skip the DB. Admin commands
+        # that mutate settings must call ``self.guild_settings.bust(gid)``.
+        self.guild_settings = GuildSettingsResolver(
+            self.sessionmaker, getattr(bot, "settings", None),
+        )
 
     def _resolve(
         self,
@@ -77,8 +83,8 @@ class DerbyScheduler:
     async def _load_guild_settings(
         self, guild_id: int
     ) -> models.GuildSettings | None:
-        async with self.sessionmaker() as session:
-            return await repo.get_guild_settings(session, guild_id)
+        """Backwards-compat alias — delegates to the cached resolver."""
+        return await self.guild_settings.get(guild_id)
 
     def _get_channel(
         self,
