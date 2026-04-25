@@ -134,16 +134,24 @@ async def test_scheduler_creates_and_runs_race(tmp_path: Path) -> None:
         races = (await session.execute(select(Race))).scalars().all()
         assert len(races) == 0
 
-    # Add racers and create a pending race with entries
+    # Add racers and create a pending race with entries.
+    #
+    # Use 4 racers, not 2: post-race injury rolls in logic.check_injury_risk
+    # use their own random.Random() instance (independent of any global
+    # random.seed), so they're intentionally non-deterministic. With only
+    # 2 racers, an unlucky injury can leave <2 eligible racers and
+    # _create_next_race returns None — failing the "next race" assertion
+    # below for reasons unrelated to scheduler logic. 4 racers tolerates
+    # multiple injuries and exercises the same code path.
     async with scheduler.sessionmaker() as session:
-        r1 = await repo.create_racer(
-            session, name="A", owner_id=1, guild_id=GUILD_ID
-        )
-        r2 = await repo.create_racer(
-            session, name="B", owner_id=2, guild_id=GUILD_ID
-        )
+        racer_ids: list[int] = []
+        for i, name in enumerate(["A", "B", "C", "D"]):
+            r = await repo.create_racer(
+                session, name=name, owner_id=i + 1, guild_id=GUILD_ID,
+            )
+            racer_ids.append(r.id)
         race = await repo.create_race(session, guild_id=guild.id)
-        await repo.create_race_entries(session, race.id, [r1.id, r2.id])
+        await repo.create_race_entries(session, race.id, racer_ids)
 
     # tick() should run the pending race and create the next one
     await scheduler.tick()
