@@ -68,6 +68,31 @@ floors:
           - "A bare stone alcove. Footsteps echo if you move quickly. There is one way forward."
         ambient_pool:
           - "A faint draft from the corridor ahead."
+        features:
+          # Visible feature — surfaced on entry. Investigate has a small
+          # gold reward to validate the rewards plumbing.
+          - id: scratched_wall
+            name: "scratched wall"
+            visibility: visible
+            investigate_label: "Examine the scratched wall"
+            noise: 1
+            content:
+              - {type: gold, amount: [3, 6], chance: 1.0}
+              - {type: narrate, text: "Scratched into the stone, in apprentice handwriting: \"PR1 was here.\""}
+            flavor_success: "_You run your fingers over the marks. They've been scratched in deliberately._"
+
+          # Concealed feature — only surfaces if Look Around's perception
+          # roll beats DC 12 (DEX 10 player has 50% chance per try).
+          - id: loose_stone
+            name: "loose stone"
+            visibility: concealed
+            perception_dc: 12
+            look_hint: "a flagstone that doesn't sit quite flush"
+            investigate_label: "Lift the loose stone"
+            noise: 2
+            content:
+              - {type: gold, amount: [10, 18], chance: 1.0}
+            flavor_success: "_You pry up the flagstone. Beneath it, a small cache of coins, long forgotten._"
 
       - id: dev_corridor
         weight: 100
@@ -85,3 +110,25 @@ floors:
           - "The end of the line. Something larger is waiting in the dim corner."
         ambient_pool:
           - "An indignant huffing sound."
+        features:
+          # Visible feature with a secret unlocked by Investigating it —
+          # validates the secret-reveal chain.
+          - id: rusted_chest
+            name: "rusted chest"
+            visibility: visible
+            investigate_label: "Open the rusted chest"
+            noise: 2
+            content:
+              - {type: item, item_id: health_potion, chance: 1.0}
+            flavor_success: "_The chest's lid creaks open. Inside, a forgotten healing potion._"
+
+          - id: false_bottom
+            name: "false bottom"
+            visibility: secret
+            revealed_by: rusted_chest
+            investigate_label: "Search the false bottom"
+            noise: 1
+            content:
+              - {type: gold, amount: [25, 40], chance: 1.0}
+              - {type: narrate, text: "_A neat little hidden compartment, lined with velvet. Whoever owned this chest had something to hide._"}
+            flavor_success: "_The chest's bottom panel slides aside under your fingertips._"
