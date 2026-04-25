@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import random
 from datetime import datetime, timezone
@@ -38,6 +40,9 @@ try:
     _HAS_BREWING = True
 except ImportError:
     _HAS_BREWING = False
+
+
+logger = logging.getLogger("discord_bot")
 
 
 # ---------------------------------------------------------------------------
@@ -2053,17 +2058,17 @@ async def _handle_descend(interaction, run_id, user_id, sessionmaker):
         if is_v2:
             # Drop straight into the entrance room of the new floor.
             floor_state = dungeon_explore.load_floor_state(run.floor_state_json)
-            # Pre-generate the new entrance's LLM intro before rendering.
-            # (Defer the interaction so the LLM call doesn't blow the 3s
-            # response budget.)
+            # Defer the interaction — pre-gen runs ahead and may take a
+            # couple of seconds.
             if not interaction.response.is_done():
                 await interaction.response.defer()
+            # Show a "preparing" placeholder while pre-gen runs.
+            preparing = _build_preparing_embed(dungeon_data)
+            await interaction.edit_original_response(embed=preparing, view=None)
             # If the player has a corpse on this floor, seed it.
             await _v2_seed_corpse_if_present(session, run, dungeon_data, floor_state)
-            # Force LLM intro on the new floor's entrance — descend is a
-            # significant moment and worth the latency even when room
-            # intros are otherwise disabled via env.
-            await _v2_ensure_room_llm(run, dungeon_data, floor_state, force=True)
+            # Pre-generate every room intro + search outcome for the new floor.
+            await _v2_pregenerate_narration(run, dungeon_data, floor_state)
             run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
             await session.commit()
             await session.refresh(run)
@@ -2155,28 +2160,170 @@ def _build_v2_explore_embed(
     return embed
 
 
+def _build_preparing_embed(dungeon_data: dict[str, Any]) -> discord.Embed:
+    """Brief in-character placeholder while LLM pre-gen runs.
+
+    Shown at delve start and at each floor descent. Replaced by the
+    real explore embed once :func:`_v2_pregenerate_narration` finishes.
+    """
+    name = dungeon_data.get("name", "the dungeon")
+    return discord.Embed(
+        title=f"Entering {name}...",
+        description=(
+            "_The dungeon arranges itself for you — walls compose, "
+            "shadows settle, the maps decide what to be._\n\n"
+            "_(One moment...)_"
+        ),
+        color=EMBED_COLOR,
+    )
+
+
+async def _v2_pregenerate_narration(
+    run, dungeon_data, floor_state,
+) -> None:
+    """Pre-generate ALL room intros + feature search outcomes for the floor.
+
+    Called once per floor entry (delve start + each descent). Fires every
+    LLM call in parallel via ``asyncio.gather`` so wall-clock time is
+    bounded by the slowest call rather than the sum. Anthropic's prompt
+    cache (the dungeon's system block is ``cache_control: ephemeral``)
+    means subsequent calls in the batch hit the cached prefix and pay
+    only the unique tail — so cost is tiny.
+
+    Generated text is stored on the room state:
+      - ``room_states[node].llm_intro``  — room entry prose
+      - ``room_states[node].llm_search_outcomes[feature_id]`` — per-feature
+
+    No-op if the LLM is unavailable. On individual call failure, that
+    specific feature/room falls back to authored prose at click time.
+    Mutates ``floor_state`` in place; caller commits to DB.
+    """
+    if floor_state.get("pregen_status") == "done":
+        return
+    if not dungeon_llm.is_available():
+        floor_state["pregen_status"] = "skipped"
+        return
+
+    floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
+    pool_by_id = {r["id"]: r for r in (floor_data.get("room_pool") or [])}
+    graph = floor_state.get("graph") or {}
+    rooms = graph.get("rooms") or {}
+
+    enable_intros = os.getenv("DUNGEON_LLM_ROOM_INTROS", "1") != "0"
+    enable_outcomes = os.getenv("DUNGEON_LLM_SEARCH_OUTCOMES", "1") != "0"
+
+    # Build the task list — each task is a coroutine + a callback that
+    # writes its result back to floor_state.
+    tasks: list[asyncio.Task] = []
+    apply_callbacks: list[tuple[asyncio.Task, callable]] = []  # type: ignore[name-defined]
+
+    for node_id, node in rooms.items():
+        rs = floor_state.setdefault("room_states", {}).setdefault(node_id, {})
+        room_def_id = node.get("room_def_id")
+        room_def = pool_by_id.get(room_def_id, {})
+
+        # Apply variant overrides for ambient/features used in the prompt.
+        variant_key = rs.get("variant_key")
+        effective_features = list(room_def.get("features") or [])
+        if variant_key:
+            for v in (room_def.get("variants") or []):
+                if v.get("key") == variant_key:
+                    if "features" in v:
+                        effective_features = list(v["features"])
+                    elif "features_add" in v:
+                        effective_features = effective_features + list(v["features_add"])
+                    break
+
+        # Room intro task.
+        description = rs.get("description") or room_def.get("description") or ""
+        if enable_intros and description and not rs.get("llm_intro_attempted"):
+            rs["llm_intro_attempted"] = True
+            t = asyncio.create_task(
+                dungeon_llm.narrate_room_intro(
+                    dungeon_data=dungeon_data,
+                    room_description=description,
+                    ambient_pool=room_def.get("ambient_pool"),
+                    features=effective_features,
+                )
+            )
+            tasks.append(t)
+            apply_callbacks.append((t, _make_intro_setter(rs)))
+
+        # Search outcome tasks — one per feature with a content table.
+        if enable_outcomes:
+            existing_outcomes = rs.setdefault("llm_search_outcomes", {})
+            pre_rolled = rs.get("pre_rolled_rewards") or {}
+            for feat in effective_features:
+                fid = feat.get("id")
+                if not fid or fid in existing_outcomes:
+                    continue
+                rewards = pre_rolled.get(fid)
+                if rewards is None:
+                    continue  # nothing pre-rolled (synthetic feature added later)
+                # Skip when the engine rolled nothing of value — authored
+                # ``flavor_empty`` covers that case fine.
+                applyable = [r for r in rewards if r.get("type") in {
+                    "gold", "item", "lore_fragment", "narrate", "gear",
+                }]
+                if not applyable:
+                    continue
+                t = asyncio.create_task(
+                    dungeon_llm.narrate_search_outcome(
+                        dungeon_data=dungeon_data,
+                        feature_name=feat.get("name") or fid,
+                        feature_flavor=feat.get("flavor_success"),
+                        rewards=rewards,
+                    )
+                )
+                tasks.append(t)
+                apply_callbacks.append((t, _make_outcome_setter(rs, fid)))
+
+    if not tasks:
+        floor_state["pregen_status"] = "done"
+        return
+
+    # Wait for everything to finish. Exceptions are swallowed per-task so
+    # one failure doesn't ruin the batch (each LLM helper already returns
+    # None on its own exceptions; gather with return_exceptions for the
+    # rare case of an outer cancellation).
+    await asyncio.gather(*tasks, return_exceptions=True)
+    for task, setter in apply_callbacks:
+        if task.done() and not task.cancelled():
+            try:
+                setter(task.result())
+            except Exception:
+                logger.exception("Failed applying pre-gen narration result")
+
+    floor_state["pregen_status"] = "done"
+
+
+def _make_intro_setter(rs: dict[str, Any]):
+    def _set(value: str | None) -> None:
+        if value:
+            rs["llm_intro"] = value
+    return _set
+
+
+def _make_outcome_setter(rs: dict[str, Any], feature_id: str):
+    def _set(value: str | None) -> None:
+        if value:
+            rs.setdefault("llm_search_outcomes", {})[feature_id] = value
+    return _set
+
+
 async def _v2_ensure_room_llm(
     run, dungeon_data, floor_state, *, force: bool = False,
 ) -> None:
-    """Generate and cache an LLM room intro for the current room, once.
+    """Lazy single-room LLM intro — used for synthetic / late-bound rooms
+    that didn't exist at floor init (none today, but kept as the safety
+    seam in case a future feature adds runtime rooms).
 
-    No-op if:
-    - LLM is unavailable (no API key, SDK missing, etc.)
-    - The current room already has ``llm_intro_attempted`` set (whether
-      success or failure — we don't retry).
-    - ``DUNGEON_LLM_ROOM_INTROS=0`` is set in the env, UNLESS ``force`` is
-      true (callers force the entrance/boss rooms so the player still
-      gets atmospheric prose at moments that matter).
-
-    Mutates ``floor_state`` in place. Caller commits to DB.
+    The normal path is :func:`_v2_pregenerate_narration` at floor entry,
+    which populates every room's ``llm_intro`` upfront.
     """
     if not dungeon_llm.is_available():
         return
-    # Default OFF — every-room LLM intros add 1-2s of latency per Move-on
-    # which makes the explore loop feel sluggish. Set DUNGEON_LLM_ROOM_INTROS=1
-    # to re-enable. ``force=True`` callers (entrance, descend) always run
-    # regardless of the env so atmosphere is preserved at moments that matter.
-    if not force and os.getenv("DUNGEON_LLM_ROOM_INTROS", "0") != "1":
+    if not force and os.getenv("DUNGEON_LLM_ROOM_INTROS", "1") == "0":
         return
     cur = floor_state.get("current")
     if cur is None:
@@ -2184,8 +2331,6 @@ async def _v2_ensure_room_llm(
     rs = floor_state.setdefault("room_states", {}).setdefault(cur, {})
     if rs.get("llm_intro_attempted"):
         return
-    # Mark attempted up-front so a transient failure doesn't trigger
-    # retries every action.
     rs["llm_intro_attempted"] = True
 
     floor_data = dungeon_logic.get_floor_data(dungeon_data, run.floor) or {}
@@ -2507,23 +2652,10 @@ async def _handle_v2_explore_action(
             await interaction.followup.send("Unknown action.", ephemeral=True)
             return
 
-        # If a search just succeeded, ask the LLM to dress up the outcome.
-        # Authored ``flavor_success`` plus engine rewards stay in result.narrative
-        # as a safe fallback if the LLM is down or returns nothing.
-        # Set DUNGEON_LLM_SEARCH_OUTCOMES=0 to skip this for speed; default ON.
-        if (
-            action == "investigate"
-            and feature_id
-            and result.next_step == "explore"
-            and (result.rewards or any(not n.startswith("_(") for n in result.narrative))
-            and os.getenv("DUNGEON_LLM_SEARCH_OUTCOMES", "1") != "0"
-        ):
-            llm_outcome = await _v2_narrate_search_outcome(
-                dungeon_data, floor_data, floor_state, feature_id, result.rewards,
-            )
-            if llm_outcome:
-                # Replace the narrative entirely so we don't double up flavor.
-                result.narrative = [llm_outcome]
+        # Search outcomes are pre-narrated at floor init (see
+        # _v2_pregenerate_narration). take_investigate already pulls the
+        # cached LLM line into result.narrative when it exists, so no
+        # extra LLM call is needed here.
 
         # Apply rewards (gold + items) if any. Done before combat handoff
         # so the player keeps anything they'd already found this room
@@ -2556,11 +2688,8 @@ async def _handle_v2_explore_action(
             )
             return
 
-        # On a room transition, ensure the new room has its LLM intro generated
-        # and cached before we render the embed. Subsequent actions in the
-        # same room read the cached intro — no LLM call.
-        if action == "move_on" and result.next_step == "transition":
-            await _v2_ensure_room_llm(run, dungeon_data, floor_state)
+        # Room transitions don't need a per-room LLM call — pre-gen at
+        # floor entry already populated every room's ``llm_intro``.
 
         # explore / transition: persist floor_state and re-render.
         run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
@@ -2572,33 +2701,6 @@ async def _handle_v2_explore_action(
         )
         view = _v2_render_view(run_id, user_id, sessionmaker, floor_state, floor_data)
         await interaction.edit_original_response(embed=embed, view=view)
-
-
-async def _v2_narrate_search_outcome(
-    dungeon_data: dict[str, Any],
-    floor_data: dict[str, Any],
-    floor_state: dict[str, Any],
-    feature_id: str,
-    rewards: list[dict[str, Any]],
-) -> str | None:
-    """Wrap dungeon_llm.narrate_search_outcome with feature lookup."""
-    cur = floor_state.get("current")
-    graph = floor_state.get("graph") or {}
-    room_def_id = (graph.get("rooms") or {}).get(cur, {}).get("room_def_id")
-    pool_by_id = {r["id"]: r for r in (floor_data.get("room_pool") or [])}
-    room_def = pool_by_id.get(room_def_id, {})
-    feature_def = next(
-        (f for f in (room_def.get("features") or []) if f.get("id") == feature_id),
-        None,
-    )
-    if feature_def is None:
-        return None
-    return await dungeon_llm.narrate_search_outcome(
-        dungeon_data=dungeon_data,
-        feature_name=feature_def.get("name") or feature_id,
-        feature_flavor=feature_def.get("flavor_success"),
-        rewards=rewards,
-    )
 
 
 async def _v2_post_combat_return(
@@ -3022,11 +3124,15 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 # If the player died here previously and the corpse sits on
                 # floor 1, seed it into the floor state.
                 await _v2_seed_corpse_if_present(session, run, dungeon_data, floor_state)
-                # Pre-generate LLM intro for the entrance room so the very
-                # first thing the player reads is properly atmospheric.
-                # ``force=True`` overrides DUNGEON_LLM_ROOM_INTROS=0 — the
-                # entrance is worth the latency.
-                await _v2_ensure_room_llm(run, dungeon_data, floor_state, force=True)
+
+                # Show a "preparing the dungeon" placeholder so the player
+                # knows why the first interaction takes a beat. Pre-gen
+                # batches every room's atmospheric prose + every feature's
+                # search outcome up-front so subsequent clicks are instant.
+                preparing_embed = _build_preparing_embed(dungeon_data)
+                await msg.edit(embed=preparing_embed, view=None)
+
+                await _v2_pregenerate_narration(run, dungeon_data, floor_state)
                 run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
                 await session.commit()
                 await session.refresh(run)

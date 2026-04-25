@@ -419,41 +419,167 @@ def pick_room_variant(room_def: dict[str, Any], rng: random.Random) -> dict[str,
 WANDERING_THRESHOLD_DEFAULT = 6  # ticks before wandering encounter is armed
 
 
+def roll_feature_content(
+    feature: dict[str, Any], rng: random.Random,
+) -> list[dict[str, Any]]:
+    """Roll a feature's content table once. Returns the list of resolved
+    rewards as ``{type, ...}`` dicts.
+
+    This is the deterministic-from-seed step. Called at floor init time
+    so the engine commits to outcomes upfront — that lets us pre-generate
+    LLM narration against the *known* rewards. Click-time investigation
+    just looks up the pre-rolled rewards.
+
+    Reward shapes match what ``_apply_v2_rewards`` consumes:
+    - ``{type: gold, amount: int}``
+    - ``{type: item, item_id: str}``
+    - ``{type: gear, gear_id: str}``
+    - ``{type: lore_fragment, fragment_id: int}``
+    - ``{type: narrate, text: str}`` — flavor only, not a reward to apply
+    - ``{type: corpse_recovered}`` — signal for the caller
+    """
+    rewards: list[dict[str, Any]] = []
+    for content in (feature.get("content") or []):
+        chance = float(content.get("chance", 1.0))
+        if chance < 1.0 and rng.random() > chance:
+            continue
+        ctype = content.get("type", "")
+        if ctype == "gold":
+            amt_range = content.get("amount", [1, 1])
+            if isinstance(amt_range, list) and len(amt_range) == 2:
+                amt = rng.randint(int(amt_range[0]), int(amt_range[1]))
+            else:
+                amt = int(amt_range)
+            if amt > 0:
+                rewards.append({"type": "gold", "amount": amt})
+        elif ctype == "item":
+            item_id = content.get("item_id")
+            if item_id:
+                rewards.append({"type": "item", "item_id": item_id})
+        elif ctype == "narrate":
+            text = content.get("text") or ""
+            if text:
+                rewards.append({"type": "narrate", "text": text})
+        elif ctype == "lore_fragment":
+            fid = content.get("fragment_id")
+            if isinstance(fid, int):
+                rewards.append({"type": "lore_fragment", "fragment_id": fid})
+        elif ctype == "corpse_recovery":
+            # Synthetic content emitted by an injected corpse feature. The
+            # actual loot lives in content["loot"]. Resolve each inner
+            # entry the same way the top-level roll does.
+            for inner in (content.get("loot") or []):
+                inner_type = inner.get("type")
+                if inner_type == "gold":
+                    amt_range = inner.get("amount", [1, 1])
+                    if isinstance(amt_range, list) and len(amt_range) == 2:
+                        amt = rng.randint(int(amt_range[0]), int(amt_range[1]))
+                    else:
+                        amt = int(amt_range)
+                    if amt > 0:
+                        rewards.append({"type": "gold", "amount": amt})
+                elif inner_type == "item":
+                    item_id = inner.get("item_id")
+                    if item_id:
+                        rewards.append({"type": "item", "item_id": item_id})
+                elif inner_type == "gear":
+                    gear_id = inner.get("gear_id")
+                    if gear_id:
+                        rewards.append({"type": "gear", "gear_id": gear_id})
+            rewards.append({"type": "corpse_recovered"})
+    return rewards
+
+
+def _format_authored_outcome(
+    feature: dict[str, Any], rewards: list[dict[str, Any]],
+) -> list[str]:
+    """Build the authored fallback narration for a search outcome.
+
+    Used when the LLM is unavailable / disabled / failed pre-gen. The
+    authored prose stays the design contract per the overhaul doc:
+    every feature plays cleanly without LLM enhancement.
+    """
+    narrative: list[str] = []
+    success_flavor = feature.get("flavor_success")
+    if success_flavor:
+        narrative.append(success_flavor)
+    for r in rewards:
+        rtype = r.get("type")
+        if rtype == "gold":
+            narrative.append(f"You find **{r['amount']}g**.")
+        elif rtype == "item":
+            narrative.append(f"You find a **{r['item_id']}**.")
+        elif rtype == "narrate":
+            narrative.append(r.get("text") or "")
+    if not narrative:
+        narrative.append(
+            feature.get("flavor_empty")
+            or "_You search carefully. Nothing of value._"
+        )
+    return narrative
+
+
 def initial_floor_state(
     floor_data: dict[str, Any],
     rng: random.Random,
 ) -> dict[str, Any]:
-    """Build the starting floor_state_json payload for a fresh floor entry."""
+    """Build the starting floor_state_json payload for a fresh floor entry.
+
+    Pre-rolls every variant + description + feature content roll using the
+    seeded RNG so the whole floor is deterministic from the seed. Pre-rolling
+    feature content at init time (rather than at investigation time) lets
+    the LLM pre-generation pass narrate the *exact* outcomes, so click-time
+    investigation can look up cached narration without an LLM call.
+    """
     graph = generate_floor_graph(floor_data, rng)
     entrance = graph.get("entrance")
 
-    # Pre-roll variants and ambush state for every room in the graph so the
-    # whole floor is deterministic from a seed.
     pool_by_id = {r["id"]: r for r in (floor_data.get("room_pool") or [])}
     room_states: dict[str, dict[str, Any]] = {}
     for node_id, node in graph["rooms"].items():
         room_def = pool_by_id.get(node["room_def_id"], {})
         variant = pick_room_variant(room_def, rng)
-        # Merge variant ambush override if present.
         ambush_def = (variant or {}).get("ambush") or room_def.get("ambush") or {}
-        # Description picked once per room visit, but stored at first entry
-        # so re-renders are stable.
         descs = (variant or {}).get("description_pool") or room_def.get("description_pool") or []
         picked_desc = rng.choice(descs) if descs else None
+
+        # Build the effective feature list (base + variant overrides) so we
+        # pre-roll outcomes for every potentially-investigable feature,
+        # including concealed and secret ones the player may never reveal.
+        effective_features = list(room_def.get("features") or [])
+        if variant:
+            if "features" in variant:
+                effective_features = list(variant["features"])
+            elif "features_add" in variant:
+                effective_features = effective_features + list(variant["features_add"])
+
+        pre_rolled: dict[str, list[dict[str, Any]]] = {}
+        for feat in effective_features:
+            fid = feat.get("id")
+            if not fid:
+                continue
+            pre_rolled[fid] = roll_feature_content(feat, rng)
+
         room_states[node_id] = {
             "visited": False,
             "looked_around": False,
-            # PR 3 feature tracking:
-            "searched": [],            # feature ids the player has Investigated
-            "revealed_concealed": [],  # concealed feature ids surfaced via Look Around
-            "revealed_secrets": [],    # secret feature ids unlocked via revealed_by
-            "found_log": [],           # human-readable log of what was found in this room
-            # Variant + flavor (PR 1+):
+            # Feature tracking:
+            "searched": [],
+            "revealed_concealed": [],
+            "revealed_secrets": [],
+            "found_log": [],
+            # Pre-rolled rewards per feature id (PR 6 — pre-gen pass).
+            "pre_rolled_rewards": pre_rolled,
+            # Pre-generated LLM narration; populated by pregenerate_narration.
+            "llm_intro": None,
+            "llm_intro_attempted": False,
+            "llm_search_outcomes": {},  # feature_id -> str
+            # Variant + flavor:
             "variant_key": (variant or {}).get("key"),
             "description": picked_desc,
             "ambush_armed": bool(ambush_def.get("armed", False)),
             "ambush_resolved": False,
-            "encounter_resolved": False,  # set after combat completes in this room
+            "encounter_resolved": False,
         }
 
     state: dict[str, Any] = {
@@ -466,6 +592,7 @@ def initial_floor_state(
             floor_data.get("wandering_threshold", WANDERING_THRESHOLD_DEFAULT)
         ),
         "pending_combat": None,
+        "pregen_status": "pending",  # pending | done | skipped (no LLM)
     }
     if entrance:
         room_states[entrance]["visited"] = True
@@ -702,10 +829,15 @@ def take_investigate(
     *cancelled* in that case — the feature is NOT marked searched, the
     player can re-attempt after combat.
 
-    On success, rolls the feature's ``content`` table:
-    - ``{type: gold, amount: [min, max], chance: float}`` — adds gold
-    - ``{type: item, item_id: str, chance: float}`` — drops a consumable
-    - ``{type: narrate, text: str}`` — pure flavor
+    Rewards come from the floor's pre-rolled content table (rolled at
+    floor init via :func:`roll_feature_content`). Synthetic features
+    that are injected at runtime (like the corpse-recovery feature)
+    don't have pre-rolls in ``room_states`` — for those, we fall back
+    to rolling at click time.
+
+    Narration prefers the pre-generated LLM line if the floor's pre-gen
+    pass produced one for this feature. Otherwise falls back to the
+    authored ``flavor_success`` + reward listing.
 
     Marks the feature as searched. Reveals any ``secret`` features whose
     ``revealed_by`` matches this feature.
@@ -723,7 +855,7 @@ def take_investigate(
     if feature_id in (rs.get("searched") or []):
         return ActionResult(["_You've already searched that._"], "explore")
 
-    # Tick before content roll. If a wandering encounter triggers, the
+    # Tick before resolving. If a wandering encounter triggers, the
     # action is cancelled — the player has to retry.
     cost = int(feature.get("noise", 2))
     tells, monster_id = advance_tick(state, floor_data, rng, cost=cost)
@@ -746,73 +878,24 @@ def take_investigate(
             rs.setdefault("revealed_secrets", []).append(sid)
             secret_reveals.append(f.get("name") or sid)
 
-    # Roll content.
-    narrative: list[str] = []
-    rewards: list[dict[str, Any]] = []
-    success_flavor = feature.get("flavor_success")
-    if success_flavor:
-        narrative.append(success_flavor)
+    # Look up pre-rolled rewards. Fall back to a click-time roll for
+    # synthetic features that didn't exist at init (corpse recovery).
+    pre_rolled = (rs.get("pre_rolled_rewards") or {}).get(feature_id)
+    if pre_rolled is None:
+        pre_rolled = roll_feature_content(feature, rng)
 
-    for content in (feature.get("content") or []):
-        chance = float(content.get("chance", 1.0))
-        if chance < 1.0 and rng.random() > chance:
-            continue
-        ctype = content.get("type", "")
-        if ctype == "gold":
-            amt_range = content.get("amount", [1, 1])
-            if isinstance(amt_range, list) and len(amt_range) == 2:
-                amt = rng.randint(int(amt_range[0]), int(amt_range[1]))
-            else:
-                amt = int(amt_range)
-            if amt > 0:
-                rewards.append({"type": "gold", "amount": amt})
-                narrative.append(f"You find **{amt}g**.")
-        elif ctype == "item":
-            item_id = content.get("item_id")
-            if item_id:
-                rewards.append({"type": "item", "item_id": item_id})
-                narrative.append(f"You find a **{item_id}**.")
-        elif ctype == "narrate":
-            text = content.get("text") or ""
-            if text:
-                narrative.append(text)
-        elif ctype == "lore_fragment":
-            fid = content.get("fragment_id")
-            if isinstance(fid, int):
-                rewards.append({"type": "lore_fragment", "fragment_id": fid})
-                # Narrative is intentionally generic here — the cog awards the
-                # fragment (DB write) and produces the personalized
-                # "you found fragment N" line so it can also report
-                # already-collected vs newly-collected.
-        elif ctype == "corpse_recovery":
-            # Synthetic content emitted by an injected corpse feature. The
-            # actual loot lives in content["loot"] (gold / item entries).
-            for inner in (content.get("loot") or []):
-                inner_type = inner.get("type")
-                if inner_type == "gold":
-                    amt_range = inner.get("amount", [1, 1])
-                    if isinstance(amt_range, list) and len(amt_range) == 2:
-                        amt = rng.randint(int(amt_range[0]), int(amt_range[1]))
-                    else:
-                        amt = int(amt_range)
-                    if amt > 0:
-                        rewards.append({"type": "gold", "amount": amt})
-                elif inner_type == "item":
-                    item_id = inner.get("item_id")
-                    if item_id:
-                        rewards.append({"type": "item", "item_id": item_id})
-                elif inner_type == "gear":
-                    gear_id = inner.get("gear_id")
-                    if gear_id:
-                        rewards.append({"type": "gear", "gear_id": gear_id})
-            rewards.append({"type": "corpse_recovered"})  # signal for caller
+    # Strip narrate-flavor entries — those are folded into the narration
+    # rather than handed to the run-state mutator.
+    rewards: list[dict[str, Any]] = [
+        r for r in pre_rolled if r.get("type") != "narrate"
+    ]
 
-    # If nothing rolled and no flavor, fall back to the empty-flavor.
-    if not narrative:
-        narrative.append(
-            feature.get("flavor_empty")
-            or "_You search carefully. Nothing of value._"
-        )
+    # Narration: prefer pre-generated LLM line if present, else authored.
+    pregen = (rs.get("llm_search_outcomes") or {}).get(feature_id)
+    if pregen:
+        narrative: list[str] = [pregen]
+    else:
+        narrative = _format_authored_outcome(feature, pre_rolled)
 
     # Surface any secret reveals at the end so the player notices.
     for s in secret_reveals:
