@@ -213,8 +213,7 @@ class Help(commands.Cog, name="help"):
         if context.invoked_subcommand is not None:
             return
         guild_id = context.guild.id if context.guild else 0
-        async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+        gs = await self.bot.scheduler.guild_settings.get(guild_id)
         emoji = self._racer_emoji(gs)
         embed = discord.Embed(
             title="Downtime Help",
@@ -233,8 +232,7 @@ class Help(commands.Cog, name="help"):
     @help_command.command(name="derby", description="Show Downtime Derby commands and tips")
     async def help_derby(self, context: Context) -> None:
         guild_id = context.guild.id if context.guild else 0
-        async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+        gs = await self.bot.scheduler.guild_settings.get(guild_id)
         emoji = self._racer_emoji(gs)
         embed = discord.Embed(
             title=f"{emoji} Downtime Derby — Help",

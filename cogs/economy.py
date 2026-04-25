@@ -33,7 +33,7 @@ class Economy(commands.Cog, name="economy"):
             )
             was_new = wallet is None
             if wallet is None:
-                gs = await repo.get_guild_settings(session, guild_id)
+                gs = await self.bot.scheduler.guild_settings.get(guild_id)
                 default_bal = resolve_guild_setting(
                     gs, self.bot.settings, "default_wallet"
                 )
@@ -80,7 +80,7 @@ class Economy(commands.Cog, name="economy"):
             # Generate on the spot if no pre-generated reward exists
             # (new player who joined mid-day, or daily gen hasn't run yet)
             if reward is None:
-                gs = await repo.get_guild_settings(session, guild_id)
+                gs = await self.bot.scheduler.guild_settings.get(guild_id)
                 daily_min = resolve_guild_setting(gs, self.bot.settings, "daily_min")
                 daily_max = resolve_guild_setting(gs, self.bot.settings, "daily_max")
                 racer_flavor = resolve_guild_setting(gs, self.bot.settings, "racer_flavor")
@@ -163,7 +163,7 @@ class Economy(commands.Cog, name="economy"):
             # Update wallet
             wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
             if wallet is None:
-                gs = await repo.get_guild_settings(session, guild_id)
+                gs = await self.bot.scheduler.guild_settings.get(guild_id)
                 default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
                 wallet = await wallet_repo.create_wallet(
                     session, user_id=user_id, guild_id=guild_id, balance=default_bal,
@@ -223,10 +223,10 @@ class Economy(commands.Cog, name="economy"):
         guild_id = context.guild.id if context.guild else 0
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
-            default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
+        gs = await self.bot.scheduler.guild_settings.get(guild_id)
+        default_bal = resolve_guild_setting(gs, self.bot.settings, "default_wallet")
 
+        async with self.bot.scheduler.sessionmaker() as session:
             # Check daily gift limit to this recipient
             already_gifted = await wallet_repo.get_gift_total_today(
                 session,
