@@ -72,12 +72,12 @@ async def unowned_racer_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[int]]:
     """Autocomplete showing unowned racers with prices."""
-    sessionmaker = interaction.client.scheduler.sessionmaker
+    scheduler = interaction.client.scheduler
     guild_id = interaction.guild_id or 0
     settings = interaction.client.settings
-    async with sessionmaker() as session:
+    async with scheduler.sessionmaker() as session:
         racers = await repo.get_unowned_guild_racers(session, guild_id)
-        gs = await repo.get_guild_settings(session, guild_id)
+    gs = await scheduler.guild_settings.get(guild_id)
     base = resolve_guild_setting(gs, settings, "racer_buy_base")
     mult = resolve_guild_setting(gs, settings, "racer_buy_multiplier")
     fem_mult = resolve_guild_setting(gs, settings, "female_buy_multiplier")
@@ -239,7 +239,7 @@ async def _execute_bet(
     async with bot.scheduler.sessionmaker() as session:
         wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
         if wallet is None:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await bot.scheduler.guild_settings.get(guild_id)
             default_bal = resolve_guild_setting(gs, bot.settings, "default_wallet")
             wallet = await wallet_repo.create_wallet(
                 session, user_id=user_id, guild_id=guild_id, balance=default_bal,
@@ -1240,7 +1240,7 @@ class Derby(commands.Cog, name="derby"):
         async with self.bot.scheduler.sessionmaker() as session:
             wallet = await wallet_repo.get_wallet(session, user.id, guild_id)
             if wallet is None:
-                gs = await repo.get_guild_settings(session, guild_id)
+                gs = await self.bot.scheduler.guild_settings.get(guild_id)
                 default_bal = resolve_guild_setting(
                     gs, self.bot.settings, "default_wallet"
                 )
@@ -1348,7 +1348,7 @@ class Derby(commands.Cog, name="derby"):
                 racer.signature_ability = sig_key
             if quirk_key:
                 racer.quirk_ability = quirk_key
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             flavor = getattr(gs, "racer_flavor", None) if gs else None
             if flavor:
                 desc = await descriptions.generate_description(
@@ -1604,7 +1604,7 @@ class Derby(commands.Cog, name="derby"):
             if racer_obj is None or racer_obj.guild_id != guild_id:
                 await context.send("Racer not found.", ephemeral=True)
                 return
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             flavor = getattr(gs, "racer_flavor", None) if gs else None
             if not flavor:
                 await context.send(
@@ -1664,7 +1664,7 @@ class Derby(commands.Cog, name="derby"):
         guild_id = context.guild.id if context.guild else 0
 
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             flavor = getattr(gs, "racer_flavor", None) if gs else None
             if unowned_only:
                 all_racers = await repo.get_unowned_guild_racers(
@@ -1768,7 +1768,7 @@ class Derby(commands.Cog, name="derby"):
         count = max(1, min(200, count))
 
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
         flavor = getattr(gs, "racer_flavor", None) if gs else None
         if not flavor:
             await context.send(
@@ -1890,7 +1890,7 @@ class Derby(commands.Cog, name="derby"):
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             npcs = await repo.get_guild_npcs(session, guild_id)
             npc = next(
                 (n for n in npcs if n.name.lower() == name.lower()),
@@ -1957,7 +1957,7 @@ class Derby(commands.Cog, name="derby"):
         await context.defer(ephemeral=True)
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             flavor = getattr(gs, "racer_flavor", None) if gs else None
             if not flavor:
                 await context.send(
@@ -2051,7 +2051,7 @@ class Derby(commands.Cog, name="derby"):
             bet_results = await logic.resolve_payouts(
                 session, race.id, result.placements, guild_id=guild_id
             )
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             prize_list = logic.parse_placement_prizes(
                 resolve_guild_setting(gs, self.bot.settings, "placement_prizes")
             )
@@ -2719,7 +2719,7 @@ class Derby(commands.Cog, name="derby"):
         await context.defer()
         guild_id = context.guild.id if context.guild else 0
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
         embed = discord.Embed(title="Guild Settings")
         for key in self.SETTING_KEYS:
             guild_val = getattr(gs, key, None) if gs else None
@@ -2754,7 +2754,7 @@ class Derby(commands.Cog, name="derby"):
         # Resolver is None in legacy/test fixtures that stub bot.scheduler.
         resolver = getattr(self.bot.scheduler, "guild_settings", None)
         async with self.bot.scheduler.sessionmaker() as session:
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             if gs is None:
                 gs = await repo.create_guild_settings(
                     session, guild_id=guild_id

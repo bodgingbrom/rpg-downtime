@@ -280,7 +280,7 @@ class Brewing(commands.Cog, name="brewing"):
             if total_cost > 0:
                 wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
                 if wallet is None:
-                    gs = await repo.get_guild_settings(session, guild_id)
+                    gs = await self.bot.scheduler.guild_settings.get(guild_id)
                     default_bal = resolve_guild_setting(
                         gs, self.bot.settings, "default_wallet"
                     )
@@ -351,7 +351,7 @@ class Brewing(commands.Cog, name="brewing"):
                 return
 
             # Resolve bottle fee from config
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             bottle_fee = resolve_guild_setting(gs, self.bot.settings, "bottle_fee")
 
             # Get/create wallet and check balance
@@ -504,7 +504,7 @@ class Brewing(commands.Cog, name="brewing"):
                     cauldron_ingredients.append(cauldron_ing)
 
             # Calculate potency gain
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             base_potency = resolve_guild_setting(
                 gs, self.bot.settings, "base_potency"
             )
@@ -638,7 +638,7 @@ class Brewing(commands.Cog, name="brewing"):
             # Add payout to wallet
             wallet = await wallet_repo.get_wallet(session, user_id, guild_id)
             if wallet is None:
-                gs = await repo.get_guild_settings(session, guild_id)
+                gs = await self.bot.scheduler.guild_settings.get(guild_id)
                 default_bal = resolve_guild_setting(
                     gs, self.bot.settings, "default_wallet"
                 )
@@ -649,7 +649,7 @@ class Brewing(commands.Cog, name="brewing"):
 
             # Rare ingredient drop at 200+ potency
             rare_drop_name = None
-            gs = await repo.get_guild_settings(session, guild_id)
+            gs = await self.bot.scheduler.guild_settings.get(guild_id)
             rare_threshold = resolve_guild_setting(
                 gs, self.bot.settings, "rare_drop_potency"
             )
