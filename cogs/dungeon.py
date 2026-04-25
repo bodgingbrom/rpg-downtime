@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from datetime import datetime, timezone
 from typing import Any
@@ -2059,7 +2060,10 @@ async def _handle_descend(interaction, run_id, user_id, sessionmaker):
                 await interaction.response.defer()
             # If the player has a corpse on this floor, seed it.
             await _v2_seed_corpse_if_present(session, run, dungeon_data, floor_state)
-            await _v2_ensure_room_llm(run, dungeon_data, floor_state)
+            # Force LLM intro on the new floor's entrance — descend is a
+            # significant moment and worth the latency even when room
+            # intros are otherwise disabled via env.
+            await _v2_ensure_room_llm(run, dungeon_data, floor_state, force=True)
             run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
             await session.commit()
             await session.refresh(run)
@@ -2151,17 +2155,28 @@ def _build_v2_explore_embed(
     return embed
 
 
-async def _v2_ensure_room_llm(run, dungeon_data, floor_state) -> None:
+async def _v2_ensure_room_llm(
+    run, dungeon_data, floor_state, *, force: bool = False,
+) -> None:
     """Generate and cache an LLM room intro for the current room, once.
 
     No-op if:
     - LLM is unavailable (no API key, SDK missing, etc.)
     - The current room already has ``llm_intro_attempted`` set (whether
       success or failure — we don't retry).
+    - ``DUNGEON_LLM_ROOM_INTROS=0`` is set in the env, UNLESS ``force`` is
+      true (callers force the entrance/boss rooms so the player still
+      gets atmospheric prose at moments that matter).
 
     Mutates ``floor_state`` in place. Caller commits to DB.
     """
     if not dungeon_llm.is_available():
+        return
+    # Default OFF — every-room LLM intros add 1-2s of latency per Move-on
+    # which makes the explore loop feel sluggish. Set DUNGEON_LLM_ROOM_INTROS=1
+    # to re-enable. ``force=True`` callers (entrance, descend) always run
+    # regardless of the env so atmosphere is preserved at moments that matter.
+    if not force and os.getenv("DUNGEON_LLM_ROOM_INTROS", "0") != "1":
         return
     cur = floor_state.get("current")
     if cur is None:
@@ -2393,7 +2408,7 @@ async def _v2_start_combat(
             narrative=[f"_(combat aborted: monster '{monster_id}' not found)_"],
         )
         view = _v2_render_view(run.id, run.user_id, sessionmaker, floor_state, floor_data)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await _v2_send_or_edit(interaction, embed=embed, view=view)
         return
 
     # Initialize combat state via the existing effects pipeline so phases /
@@ -2424,7 +2439,19 @@ async def _v2_start_combat(
 
     intro = build_combat_start_embed(run, player, effective, dungeon_data)
     view = CombatView(run.id, run.user_id, sessionmaker)
-    await interaction.response.edit_message(embed=intro, view=view)
+    await _v2_send_or_edit(interaction, embed=intro, view=view)
+
+
+async def _v2_send_or_edit(interaction, *, embed, view):
+    """Update the parent message regardless of whether the interaction was
+    already deferred. v2 paths can be reached from a freshly-clicked button
+    (use ``response.edit_message``) OR from the explore handler that
+    already deferred (use ``edit_original_response``). Pick the right call.
+    """
+    if interaction.response.is_done():
+        await interaction.edit_original_response(embed=embed, view=view)
+    else:
+        await interaction.response.edit_message(embed=embed, view=view)
 
 
 async def _handle_v2_explore_action(
@@ -2483,11 +2510,13 @@ async def _handle_v2_explore_action(
         # If a search just succeeded, ask the LLM to dress up the outcome.
         # Authored ``flavor_success`` plus engine rewards stay in result.narrative
         # as a safe fallback if the LLM is down or returns nothing.
+        # Set DUNGEON_LLM_SEARCH_OUTCOMES=0 to skip this for speed; default ON.
         if (
             action == "investigate"
             and feature_id
             and result.next_step == "explore"
             and (result.rewards or any(not n.startswith("_(") for n in result.narrative))
+            and os.getenv("DUNGEON_LLM_SEARCH_OUTCOMES", "1") != "0"
         ):
             llm_outcome = await _v2_narrate_search_outcome(
                 dungeon_data, floor_data, floor_state, feature_id, result.rewards,
@@ -2598,7 +2627,7 @@ async def _v2_post_combat_return(
         max_floor = dungeon_logic.get_max_floor(dungeon_data)
         can_descend = run.floor < max_floor
         view = FloorCompleteView(run.id, run.user_id, sessionmaker, can_descend)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await _v2_send_or_edit(interaction, embed=embed, view=view)
         return
 
     # Non-boss kill → return to explore. Clear combat state, keep floor state.
@@ -2617,7 +2646,7 @@ async def _v2_post_combat_return(
         narrative=["_The corridor settles. You return your attention to the room._"],
     )
     view = _v2_render_view(run.id, run.user_id, sessionmaker, floor_state, floor_data)
-    await interaction.response.edit_message(embed=embed, view=view)
+    await _v2_send_or_edit(interaction, embed=embed, view=view)
 
 
 # ---------------------------------------------------------------------------
@@ -2995,7 +3024,9 @@ class DungeonCrawler(commands.Cog, name="dungeoncrawler"):
                 await _v2_seed_corpse_if_present(session, run, dungeon_data, floor_state)
                 # Pre-generate LLM intro for the entrance room so the very
                 # first thing the player reads is properly atmospheric.
-                await _v2_ensure_room_llm(run, dungeon_data, floor_state)
+                # ``force=True`` overrides DUNGEON_LLM_ROOM_INTROS=0 — the
+                # entrance is worth the latency.
+                await _v2_ensure_room_llm(run, dungeon_data, floor_state, force=True)
                 run.floor_state_json = dungeon_explore.dump_floor_state(floor_state)
                 await session.commit()
                 await session.refresh(run)
