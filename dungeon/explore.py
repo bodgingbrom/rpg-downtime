@@ -303,39 +303,59 @@ class GraphRoom:
     exits: list[str]  # graph node ids
 
 
+def _range_pick(value: Any, rng: random.Random) -> int:
+    """``rng.randint`` against a ``[min, max]`` list, or pass-through int."""
+    if isinstance(value, list) and len(value) == 2:
+        return rng.randint(int(value[0]), int(value[1]))
+    return int(value)
+
+
 def generate_floor_graph(
     floor_data: dict[str, Any],
     rng: random.Random,
 ) -> dict[str, Any]:
-    """Build a procedural floor graph from the floor's room_pool and anchors.
+    """Build a procedural floor graph from the floor's room_pool, anchors,
+    and layout config.
 
-    Returns a graph dict ready to embed in floor_state_json::
+    Layout shape::
+
+        layout:
+          rooms_per_run: [min, max]   # length of the main spine
+          branches:      [min, max]   # number of side branches off the spine
+          branch_length: [min, max]   # rooms per branch (excluding the attach point)
+
+    Generation:
+      1. Pick spine length and branch count from the layout ranges.
+      2. Build the main spine: entrance anchor → middle pool rooms → boss
+         anchor. Spine middle is sampled weighted-without-replacement from
+         non-anchor rooms.
+      3. For each branch, pick an unused middle spine node and grow a side
+         path of ``branch_length`` rooms off it. Branch attach points are
+         drawn without replacement so two branches never share a node
+         (keeps the layout legible and the map render clean).
+      4. Side branch rooms come from the same remaining pool as spine
+         fillers. If the pool runs out, we ship fewer branches.
+
+    Result::
 
         {
             "rooms": {
-                "r0": {"room_def_id": "dev_alcove", "exits": ["r1"]},
-                "r1": {"room_def_id": "dev_corridor", "exits": ["r0", "r2"]},
-                "r2": {"room_def_id": "dev_endroom", "exits": ["r1"]},
+                "r0": {"room_def_id": ..., "exits": ["r1"]},
+                "r1": {"room_def_id": ..., "exits": ["r0", "r2", "r5"]},  # branch attach
+                ...
+                "r5": {"room_def_id": ..., "exits": ["r1"]},              # branch leaf
             },
             "entrance": "r0",
-            "boss": "r2",
+            "boss": "rN",
         }
-
-    PR 1 implementation: linear chain. Picks anchors first (entrance, boss),
-    fills the rest from the pool (without replacement, weighted), connects
-    sequentially. Branches and complex topologies land in later PRs but the
-    return shape is forward-compatible.
     """
     layout = floor_data.get("layout") or {}
-    rpr = layout.get("rooms_per_run", [3, 3])
-    if isinstance(rpr, list) and len(rpr) == 2:
-        room_count = rng.randint(int(rpr[0]), int(rpr[1]))
-    else:
-        room_count = int(rpr)
+    spine_target = _range_pick(layout.get("rooms_per_run", [3, 3]), rng)
+    branch_count_target = _range_pick(layout.get("branches", [0, 0]), rng)
+    branch_length_range = layout.get("branch_length", [1, 1])
 
     pool = list(floor_data.get("room_pool") or [])
     anchors = list(floor_data.get("anchors") or [])
-    by_id = {r["id"]: r for r in pool}
 
     # Find entrance and boss anchors; everything else fills the middle.
     entrance_id: str | None = None
@@ -351,42 +371,84 @@ def generate_floor_graph(
     if boss_id is None and pool:
         boss_id = pool[-1]["id"]
 
-    # Sample non-anchor rooms by weight, without replacement, until we have
-    # enough to fill room_count - 2 (entrance + boss are already chosen).
-    # If the pool is too small, we just use as many as we have.
-    middle_target = max(0, room_count - 2)
+    # Sample non-anchor rooms by weight, without replacement.
     candidates = [r for r in pool if r["id"] != entrance_id and r["id"] != boss_id]
-    middle_picks: list[str] = []
     remaining = list(candidates)
-    while remaining and len(middle_picks) < middle_target:
+
+    def _pick_one() -> dict[str, Any] | None:
+        if not remaining:
+            return None
         weights = [int(r.get("weight", 100)) for r in remaining]
         picked = rng.choices(remaining, weights=weights, k=1)[0]
-        middle_picks.append(picked["id"])
         remaining.remove(picked)
+        return picked
 
-    # Assemble linear chain: entrance → middle... → boss.
-    sequence: list[str] = []
+    # Build the spine: entrance + (spine_target - 2) middle + boss.
+    middle_target = max(0, spine_target - 2)
+    middle_picks: list[str] = []
+    while remaining and len(middle_picks) < middle_target:
+        picked = _pick_one()
+        if picked is None:
+            break
+        middle_picks.append(picked["id"])
+
+    spine: list[str] = []
     if entrance_id is not None:
-        sequence.append(entrance_id)
-    sequence.extend(middle_picks)
-    if boss_id is not None and (not sequence or sequence[-1] != boss_id):
-        sequence.append(boss_id)
+        spine.append(entrance_id)
+    spine.extend(middle_picks)
+    if boss_id is not None and (not spine or spine[-1] != boss_id):
+        spine.append(boss_id)
 
-    # Build graph nodes with exits. Each room gets a graph id rN.
+    # Build graph nodes for the spine — sequential rN ids.
     graph_rooms: dict[str, dict[str, Any]] = {}
-    for i, room_def_id in enumerate(sequence):
+    for i, room_def_id in enumerate(spine):
         node_id = f"r{i}"
         exits: list[str] = []
         if i > 0:
             exits.append(f"r{i - 1}")
-        if i < len(sequence) - 1:
+        if i < len(spine) - 1:
             exits.append(f"r{i + 1}")
         graph_rooms[node_id] = {"room_def_id": room_def_id, "exits": exits}
 
+    # Branches — only attach to spine *middle* nodes (not entrance, not
+    # boss). Each branch attach is a unique node so two branches never
+    # share a junction (keeps layout legible).
+    next_node_idx = len(spine)
+    if len(spine) >= 3 and branch_count_target > 0 and remaining:
+        attach_pool = [f"r{i}" for i in range(1, len(spine) - 1)]
+        rng.shuffle(attach_pool)
+        attached = 0
+        for attach_node in attach_pool:
+            if attached >= branch_count_target or not remaining:
+                break
+            bl = max(1, _range_pick(branch_length_range, rng))
+            branch_room_ids: list[str] = []
+            while remaining and len(branch_room_ids) < bl:
+                picked = _pick_one()
+                if picked is None:
+                    break
+                branch_room_ids.append(picked["id"])
+            if not branch_room_ids:
+                continue
+            # Wire the branch into the graph. Each branch room exits to
+            # its predecessor (the previous branch room or the spine
+            # attach point); the spine node gets a new exit added.
+            prev_node = attach_node
+            for room_def_id in branch_room_ids:
+                new_node = f"r{next_node_idx}"
+                next_node_idx += 1
+                graph_rooms[new_node] = {
+                    "room_def_id": room_def_id,
+                    "exits": [prev_node],
+                }
+                graph_rooms[prev_node]["exits"].append(new_node)
+                prev_node = new_node
+            attached += 1
+
     return {
         "rooms": graph_rooms,
-        "entrance": "r0" if sequence else None,
-        "boss": f"r{len(sequence) - 1}" if sequence else None,
+        "entrance": "r0" if spine else None,
+        "boss": f"r{len(spine) - 1}" if spine else None,
     }
 
 
@@ -1011,9 +1073,14 @@ def render_room_intro(
 ) -> tuple[str, list[str], list[dict[str, Any]]]:
     """Return ``(description, ambient_lines, exit_buttons)`` for the current room.
 
-    ``exit_buttons`` is a list of ``{"node_id": "rN", "label": "north"}`` dicts.
-    The cog wires them up as Discord buttons.
+    ``exit_buttons`` is a list of ``{"node_id": "rN", "label": "Move east"}``
+    dicts. Direction labels are derived from the same layout positions the
+    map renderer uses, so the button labels match the player's view of
+    the map. Visited exits get a ``(back)`` suffix so the player can
+    distinguish "the way I came" from "an unexplored direction."
     """
+    from dungeon import map_render as _map_render  # local to avoid cycle
+
     cur = state.get("current")
     graph = state.get("graph") or {}
     rooms = graph.get("rooms") or {}
@@ -1024,23 +1091,26 @@ def render_room_intro(
     rs = state["room_states"].get(cur, {})
 
     description = rs.get("description") or room_def.get("description") or "(empty room)"
-    # PR 1: don't auto-include ambient lines in the intro — the LLM will
-    # choose them in PR 4. For now, leave them out so authored prose is
-    # the whole experience.
+    # Ambient lines are surfaced by the LLM intro path — keep this empty
+    # so authored fallback isn't doubled up.
     ambient_lines: list[str] = []
 
+    discovered = set(state.get("discovered") or [])
+    directions = _map_render.exit_directions(rooms, graph.get("entrance"), cur)
+
     exit_buttons: list[dict[str, Any]] = []
-    for i, exit_node in enumerate(rooms[cur].get("exits", [])):
-        # PR 3 honors explicit per-exit labels when authored on the room.
-        # Looks like: room_def["exits"] = [{id, label}] OR a list of node-id strings.
-        # The graph rooms list is just node ids; we map by index here when
-        # the room_def supplies labels.
-        label = f"Move on (path {i + 1})"
-        room_exits = room_def.get("exits") or []
-        if i < len(room_exits) and isinstance(room_exits[i], dict):
-            authored_label = room_exits[i].get("label")
-            if authored_label:
-                label = f"Move on ({authored_label})"
+    seen_dirs: dict[str, int] = {}
+    for exit_node in rooms[cur].get("exits", []) or []:
+        direction = directions.get(exit_node, "onward")
+        # In the rare case two exits share a direction (shouldn't happen
+        # with current single-attach branch layout, but defensive), append
+        # a small ordinal so labels stay unique.
+        seen = seen_dirs.get(direction, 0)
+        seen_dirs[direction] = seen + 1
+        suffix = "" if seen == 0 else f" ({seen + 1})"
+        label = f"Move {direction}{suffix}"
+        if exit_node in discovered:
+            label = f"{label} (back)"
         exit_buttons.append({"node_id": exit_node, "label": label})
 
     return description, ambient_lines, exit_buttons
