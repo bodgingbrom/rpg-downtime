@@ -13,7 +13,7 @@ import pytest
 from dungeon import explore, logic
 
 
-DUNGEON_KEY = "goblin_warrens_v2"
+DUNGEON_KEY = "goblin_warrens"
 
 
 @pytest.fixture(autouse=True)
@@ -38,8 +38,9 @@ def test_loads_and_is_v2():
     assert explore.is_v2_dungeon(_dungeon()) is True
 
 
-def test_admin_role_gate():
-    assert _dungeon().get("min_role") == "Race Admin"
+def test_no_admin_role_gate():
+    # v2 cutover: dungeon is open to all players.
+    assert _dungeon().get("min_role") is None
 
 
 def test_background_block_complete():
