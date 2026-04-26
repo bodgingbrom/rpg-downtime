@@ -1,5 +1,22 @@
+# =============================================================================
+# THE CARTOGRAPHER'S FOLLY — v2 (RPG-lite overhaul)
+# =============================================================================
+# Sibling of the_cartographers_folly.yaml. Admin-gated until cutover (PR 8).
+# Reuses the v1 monsters / bosses (already authored with abilities, phases,
+# and variants) and layers the new v2 room-pool / features / lore_fragments
+# / legendary_reward schema on top.
+#
+# Floors:
+#   1 — The Margins   (Scale Bar boss; dice escalation)
+#   2 — The Legend    (Key Legend boss; phases + random weird effects)
+#   3 — The Territory (Alaric Venn boss; summons → wall → existential)
+#
+# Lore: 12 fragments tracing Alaric's descent from royal cartographer to
+# author-of-the-world. Collecting all 12 unlocks Alaric's Quill.
+# =============================================================================
+
 id: the_cartographers_folly
-name: The Cartographer's Folly
+name: "The Cartographer's Folly"
 description: "An abandoned survey tower. The maps inside are correcting themselves."
 
 background:
@@ -24,25 +41,167 @@ background:
     - "Corrections scratched over the apprentice notes in a tighter, angrier hand"
     - "Compass needles embedded in stone, all pointing different directions"
     - "Unfinished corridors sketched in graphite, ceilings marked '(detail forthcoming)'"
+    - "The faint smell of old ink that lingers even in chambers nominally outdoors"
   style_notes: |
     Favor cartography jargon (latitude, rhumb line, lacuna, cartouche).
     Avoid modern idiom. Lean literary rather than bombastic.
     Puns are allowed if they're dry.
 
+# ---------------------------------------------------------------------------
+# Lore fragments — Alaric's descent, told in twelve pieces.
+# ---------------------------------------------------------------------------
+
+lore_fragments:
+  - id: 1
+    text: |
+      _From the apprentice ledger, opening page._
+
+      First day. Master V. has signed me on for the year. He showed me
+      the surveying chains and the theodolite and a single drawer that he
+      said was off-limits. I did not ask why. He likes me already, I think.
+      He said my hand was steady.
+
+  - id: 2
+    text: |
+      _A folded leaf, water-damaged._
+
+      Margaret took the eastern survey today. She came back with the
+      coastline two miles further north than Master V. had recorded last
+      season. He was quiet for a long while. When he spoke, he said,
+      "Then it must be made to be where it was."
+
+  - id: 3
+    text: |
+      _Margin note, in the apprentice's hand._
+
+      The master no longer asks us to verify our surveys. He says
+      verification is a confession of doubt.
+
+  - id: 4
+    text: |
+      _Crossed-out passage, rewritten in tighter script._
+
+      ~~The map should describe the territory.~~
+
+      The map shall instruct the territory. In all things, henceforth.
+
+  - id: 5
+    text: |
+      _Apprentice notebook, scrap page._
+
+      A village was relocated this morning. Not by carts — by ink. Master
+      V. drew it three furlongs further from the road. We rode out at noon
+      to confirm. The village was three furlongs further from the road.
+      The villagers seemed to remember it always being so. I did not.
+
+  - id: 6
+    text: |
+      _Letter, never sent._
+
+      Mother — I should be home for the harvest. I will not be. The work
+      requires my hand. Master V. has been awake for five nights running.
+      He says he is finishing what cartographers should always have been
+      finishing: the world.
+
+  - id: 7
+    text: |
+      _Master's hand, ledger entry._
+
+      Today I corrected a weather pattern. The eastern hills are drier
+      than they were. They will remain drier. They were always drier.
+
+      The apprentices flinch when they see what I have written, then they
+      forget they flinched. This is appropriate.
+
+  - id: 8
+    text: |
+      _A leaf torn out. A different leaf inserted. The handwriting matches,
+      but the date does not._
+
+      Margaret has not returned from the survey of the eastern hills.
+      I have looked for her in the maps. She is not in any of them.
+      I cannot decide whether this troubles me or proves me right.
+
+  - id: 9
+    text: |
+      _A list, in two hands. Apprentice names, crossed out one by one._
+
+      Olin. Margaret. Calder. Voss.
+
+      The last name is in the master's hand and the master's hand alone:
+      _himself._
+
+  - id: 10
+    text: |
+      _Near-final ledger entry. The ink has run, perhaps from sweat._
+
+      Something is in the margins. I drew it there to keep it from being
+      anywhere else. It does not appreciate the courtesy.
+
+  - id: 11
+    text: |
+      _A loose page, pressed between two unrelated maps._
+
+      The boy still alive — the boy still alive watches me draft. He
+      thinks I do not see him. He is wrong about so few things. I will
+      leave a path open for him. The map will not insist on his erasure.
+
+      Let him find what I leave. Let the page take me, when the time
+      comes. Let it take only me.
+
+  - id: 12
+    text: |
+      _The final entry. Unsigned, but — newly inked — a small neat sigil
+      sits where a name should be. The same sigil that closes the
+      legendary chest below._
+
+      I have surveyed the world enough. It will hold its breath now,
+      and so will I.
+
+      To whoever finds this — the quill is yours. You are not the master.
+      You will not be tempted as I was. The world wishes to be sloppy.
+      Honor that. Draw lightly.
+
+# ---------------------------------------------------------------------------
+# Legendary reward — granted once all 12 fragments are collected.
+# ---------------------------------------------------------------------------
+
+legendary_reward:
+  item_id: vorpal_dagger
+  name: "Alaric's Quill"
+  flavor: |
+    _The book is complete. As the last fragment slots into place, a
+    small velvet case opens itself in the chamber's corner. Inside:
+    a slender quill of inked steel, balanced like it has decided
+    exactly where it wants to go. **Alaric's Quill** is yours._
+
+# ---------------------------------------------------------------------------
+# FLOORS
+# ---------------------------------------------------------------------------
+
 floors:
-  # =======================================================================
+  # =========================================================================
   - floor: 1
     theme: the_margins
     background: |
       The outer edges of the map — where Alaric hadn't yet imposed detail.
       Corridors are half-sketched. Monsters here are doodles, marginalia,
       things that escaped from apprentice practice sheets.
-    rooms: [5, 6]
-    room_weights:
-      combat: 50
-      treasure: 20
-      trap: 15
-      rest: 15
+
+    layout:
+      rooms_per_run: [5, 6]
+      branches: [1, 2]
+      branch_length: [1, 1]
+
+    anchors:
+      - {position: entrance, room_id: scribble_archway}
+      - {position: boss, room_id: scale_chamber}
+
+    wandering_threshold: 6
+    wandering_pool:
+      - {monster_id: margin_scribble, weight: 100}
+      - {monster_id: compass_rose, weight: 60}
+
     monsters:
       - id: compass_rose
         name: Compass Rose
@@ -53,7 +212,6 @@ floors:
         attack_bonus: 0
         xp: 10
         gold: [2, 7]
-        # Unpredictable AI — almost evenly split between three actions.
         ai: {attack: 40, heavy: 35, defend: 25}
         loot:
           - {item_id: worm, chance: 20, type: cross_game_bait}
@@ -70,7 +228,6 @@ floors:
         attack_bonus: 2
         xp: 12
         gold: [3, 9]
-        # Glass cannon: hits hard, never defends, low HP.
         ai: {attack: 60, heavy: 40}
         loot:
           - {item_id: health_potion, chance: 15}
@@ -90,35 +247,19 @@ floors:
         loot:
           - {item_id: worm, chance: 25, type: cross_game_bait}
           - {item_id: Coilweed, chance: 6, type: cross_game_ingredient, name: Coilweed}
-    traps:
-      - id: x_marks_the_spot
-        name: X Marks The Spot
-        damage: [3, 8]
-        dex_dc: 12
-        flavor_success: "A black X burns itself onto the floor — you dive aside as something bursts from under it."
-        flavor_fail: "An X flares beneath your feet and the floor erupts in ink-black brimstone!"
-      - id: latitude_drift
-        name: Latitude Drift
-        damage: [2, 6]
-        dex_dc: 11
-        flavor_success: "The corridor tilts northward — you catch yourself before sliding into the wall."
-        flavor_fail: "The room's coordinates shift mid-step; you slam into unexpected geography!"
-    treasure_tier: common
-    rest_shrines: 1
+
     boss:
       id: the_scale_bar
       name: The Scale Bar
       description: "A measuring line, embedded in the floor, humming with incremental authority. Each turn a new unit of measure appears on it, and it grows."
       hp: 30
       defense: 1
-      attack_dice: "1d4"   # Base dice — escalates via dice_step_self ability.
+      attack_dice: "1d4"
       attack_bonus: 1
       xp: 32
       gold: [15, 30]
       ai: {attack: 70, heavy: 30}
       abilities:
-        # Signature mechanic: attack dice grow on a schedule. Turn 1 = 1d4,
-        # turn 3 = 1d6, turn 5 = 1d8, turn 7 = 1d10. Burn it down fast.
         - type: dice_step_self
           trigger: on_turn
           every: 1
@@ -140,19 +281,181 @@ floors:
         - {item_id: shortsword_plus1, chance: 10, type: gear}
         - {item_id: leather_armor_plus1, chance: 10, type: gear}
 
-  # =======================================================================
+    room_pool:
+      # ---- Anchor: entrance ----
+      - id: scribble_archway
+        weight: 100
+        description_pool:
+          - "An archway sketched in graphite, the apprentice's signature still wet at the keystone. Beyond, the dungeon is, in places, finished."
+        ambient_pool:
+          - "A faint draft of paper-warmed air, as if you'd opened a long-shut book."
+          - "The graphite hums, very quietly, where you do not look at it."
+        features:
+          - id: apprentice_signature
+            name: "apprentice's signature"
+            visibility: visible
+            investigate_label: "Read the signature"
+            noise: 1
+            content:
+              - {type: lore_fragment, fragment_id: 1, chance: 1.0}
+              - {type: gold, amount: [2, 4], chance: 0.4}
+            flavor_success: "_The signature is fresh enough to smudge. The hand is young, careful, and a little proud._"
+          - id: graphite_keystone
+            name: "graphite keystone"
+            visibility: concealed
+            perception_dc: 11
+            look_hint: "the keystone, where the graphite hasn't quite set"
+            investigate_label: "Press the keystone"
+            noise: 1
+            content:
+              - {type: gold, amount: [4, 8], chance: 1.0}
+            flavor_success: "_The graphite gives. A small cavity in the stone surrenders a handful of coins someone forgot they hid._"
+
+      # ---- Anchor: boss ----
+      - id: scale_chamber
+        weight: 100
+        description_pool:
+          - "The chamber widens into a long gallery, and at its end the floor is incised with a single, perfectly straight measuring line that has not yet decided how long it is."
+
+      # ---- Pool: filler rooms ----
+      - id: margin_alcove
+        weight: 100
+        description_pool:
+          - "A shallow alcove, walls dense with apprentice doodles: a recurring cat, a very angry sun, three caricatures of someone who must have been the master."
+        ambient_pool:
+          - "The cat's eye, unmistakably, follows you."
+          - "Someone has corrected the angry sun in a tighter, angrier hand."
+        features:
+          - id: practice_doodles
+            name: "practice doodles"
+            visibility: visible
+            investigate_label: "Read the doodles"
+            noise: 1
+            content:
+              - {type: gold, amount: [3, 6], chance: 1.0}
+              - {type: narrate, text: "_The cat in the doodles has been drawn, very faintly, looking out from the wall directly at you. It is not the same cat any more._"}
+            flavor_success: "_Apprentice handwriting, tight and tired. Names. Dates. A half-finished joke._"
+          - id: tucked_letter
+            name: "tucked letter"
+            visibility: concealed
+            perception_dc: 12
+            look_hint: "a fold of paper, jammed behind the wainscot"
+            investigate_label: "Read the letter"
+            noise: 2
+            content:
+              - {type: lore_fragment, fragment_id: 6, chance: 1.0}
+            flavor_success: "_The paper is stiff with un-sent intention. It was meant for a mother who never read it._"
+
+      - id: blotted_passage
+        weight: 100
+        description_pool:
+          - "A narrow passage, half its length blotted out by a long pool of dried ink. Footprints stop at the edge and do not resume on the far side."
+        ambient_pool:
+          - "The ink puddle reflects nothing — not the ceiling, not the torch, not you."
+        features:
+          - id: dried_ink
+            name: "dried ink puddle"
+            visibility: visible
+            investigate_label: "Examine the ink"
+            noise: 2
+            content:
+              - {type: gold, amount: [4, 9], chance: 0.8}
+              - {type: narrate, text: "_The ink is older than it looks. Beneath it, embedded, a small bone button — not yours, but the size of an apprentice's._"}
+            flavor_success: "_You crouch. The ink is dry but somehow still tacky, the way old grief is._"
+
+      - id: apprentice_carrel
+        weight: 100
+        description_pool:
+          - "A study carrel set into the corridor wall, three drafting tables crammed shoulder-to-shoulder. The candle stubs are recent. The drafts are not."
+        features:
+          - id: drafting_table
+            name: "drafting table"
+            visibility: visible
+            investigate_label: "Sift through the drafts"
+            noise: 2
+            content:
+              - {type: lore_fragment, fragment_id: 2, chance: 1.0}
+              - {type: gold, amount: [4, 7], chance: 0.5}
+            flavor_success: "_The top draft is a coastline that does not sit where any coastline should. Margaret's chain-marks confirm it as accurate. The corrections are not Margaret's._"
+          - id: hidden_compartment
+            name: "hidden compartment under the table"
+            visibility: secret
+            revealed_by: drafting_table
+            investigate_label: "Pry up the floorboard"
+            noise: 2
+            content:
+              - {type: gold, amount: [10, 18], chance: 1.0}
+              - {type: item, item_id: health_potion, chance: 0.7}
+            flavor_success: "_A loose plank lifts cleanly. Whoever set the cache last did so in a hurry._"
+
+      - id: rumor_crossing
+        weight: 100
+        description_pool:
+          - "A four-way crossing where someone — long ago — has carved warnings at each branch. Two have been chiseled clean again. The remaining two read **HERE BE DRAGONS** and **DETAIL FORTHCOMING**."
+        ambient_pool:
+          - "One of the chiseled-clean signs has, very recently, begun to grow new lettering. You cannot quite read it yet."
+        features:
+          - id: warning_carving
+            name: "warning carving"
+            visibility: visible
+            investigate_label: "Read the warnings"
+            noise: 1
+            content:
+              - {type: narrate, text: "_The chisel work is the master's. He warned them away from where he himself, eventually, went anyway._"}
+
+      - id: smudged_corner
+        weight: 90
+        description_pool:
+          - "A blunt corner of the corridor where someone has, repeatedly, scrubbed something from the wall. The stone is paler there. The smudge persists faintly through every cleaning."
+        features:
+          - id: persistent_smudge
+            name: "persistent smudge"
+            visibility: concealed
+            perception_dc: 13
+            look_hint: "the way the smudge resists every angle of light"
+            investigate_label: "Lean close to the smudge"
+            noise: 2
+            content:
+              - {type: lore_fragment, fragment_id: 3, chance: 1.0}
+            flavor_success: "_The smudge is a single line of margin script. The master, in a moment of weakness, wrote down a doubt — and then tried, ever after, to unwrite it._"
+
+      - id: rest_carrel_north
+        weight: 80
+        description_pool:
+          - "A small recess with a bench, a wax-melted candle, and a half-eaten meal someone left behind in better days. The corner is, somehow, restful."
+        features:
+          - id: cooled_meal
+            name: "cooled meal"
+            visibility: visible
+            investigate_label: "Take the meal"
+            noise: 1
+            content:
+              - {type: item, item_id: health_potion, chance: 0.9}
+            flavor_success: "_A sealed flask the apprentice never came back to drink. The seal is still good._"
+
+  # =========================================================================
   - floor: 2
     theme: the_legend
     background: |
       The map's legend — its key of symbols — given form. Things here are
       still abstract, but the abstraction has teeth. Icons step off the
       cartouche and come for you.
-    rooms: [6, 7]
-    room_weights:
-      combat: 55
-      treasure: 15
-      trap: 20
-      rest: 10
+
+    layout:
+      rooms_per_run: [6, 7]
+      branches: [1, 2]
+      branch_length: [1, 2]
+
+    anchors:
+      - {position: entrance, room_id: cartouche_threshold}
+      - {position: boss, room_id: legend_chamber}
+
+    wandering_threshold: 6
+    wandering_pool:
+      - {monster_id: capital_city_icon, weight: 70}
+      - {monster_id: elevation_line, weight: 100}
+      - {monster_id: terrain_swatch, weight: 80}
+
     monsters:
       - id: capital_city_icon
         name: Capital-City Icon
@@ -181,7 +484,6 @@ floors:
         gold: [4, 10]
         ai: {attack: 60, heavy: 30, defend: 10}
         abilities:
-          # After its first hit lands, "high ground" grants flat bonus damage.
           - type: flat_damage_bonus_self
             trigger: on_hit
             amount: 2
@@ -201,7 +503,6 @@ floors:
         xp: 15
         gold: [4, 10]
         ai: {attack: 55, heavy: 30, defend: 15}
-        # Variant mechanic — one of three biomes is picked at spawn.
         variants:
           - key: swamp
             name_suffix: "(Swamp)"
@@ -218,29 +519,7 @@ floors:
           - {item_id: worm, chance: 20, type: cross_game_bait}
           - {item_id: Coilweed, chance: 8, type: cross_game_ingredient, name: Coilweed}
           - {item_id: Rot Blossom, chance: 6, type: cross_game_ingredient, name: Rot Blossom}
-    traps:
-      - id: not_to_scale
-        name: Not To Scale
-        damage: [1, 20]
-        # Low DC = easy to avoid, but on failure the damage is wildly random.
-        # Reality briefly consults the wrong map.
-        dex_dc: 11
-        flavor_success: "The corridor's proportions tear loose — but you spot the lie and slip through unhurt."
-        flavor_fail: "Reality consults the wrong map. The pit is the wrong size, and so, briefly, are you!"
-      - id: compass_confusion
-        name: Compass Confusion
-        damage: [3, 9]
-        dex_dc: 13
-        flavor_success: "Four compass needles embedded in the ceiling swing wildly — you crouch and cross beneath them."
-        flavor_fail: "The needles all point at you. Something in the air shifts — you stumble into a wall that wasn't there a moment ago!"
-      - id: cartouche_clamp
-        name: Cartouche Clamp
-        damage: [4, 10]
-        dex_dc: 12
-        flavor_success: "An ornate frame drops from above — you dance sideways as it crashes to the floor."
-        flavor_fail: "A heavy decorative cartouche slams down around your ankles and pins you!"
-    treasure_tier: uncommon
-    rest_shrines: 1
+
     boss:
       id: the_key_legend
       name: The Key Legend
@@ -252,27 +531,20 @@ floors:
       xp: 52
       gold: [25, 50]
       ai: {attack: 50, heavy: 30, defend: 20}
-      # Three phases cycle as HP drops. Each phase has a distinct
-      # damage profile. On top of phases, every 2 turns a random
-      # weird effect fires — keeps every turn off-kilter.
       phases:
-        # Phase 1 = INKED (baseline heavy singles) is implicit — no overrides.
         - hp_below_pct: 66
-          # DRAFTED — multi-hit flurry (bias heavy).
           attack_dice: "1d8"
           ai: {attack: 35, heavy: 55, defend: 10}
           on_enter:
             type: narrate
             text: "_The symbols shift. The page rearranges itself — now drafted, not yet inked._"
         - hp_below_pct: 33
-          # ANNOTATED — debuff-leaning, tighter defense.
           attack_dice: "1d10"
           ai: {attack: 40, heavy: 30, defend: 30}
           on_enter:
             type: narrate
             text: "_Annotations bloom across the page. The Legend is **explaining itself** at you._"
       abilities:
-        # Signature mechanic: every 2 turns, roll a weird effect.
         - type: random_effect_pool
           trigger: on_turn
           every: 2
@@ -293,19 +565,182 @@ floors:
         - {item_id: longsword_plus1, chance: 12, type: gear}
         - {item_id: chain_shirt_plus1, chance: 12, type: gear}
 
-  # =======================================================================
+    room_pool:
+      - id: cartouche_threshold
+        weight: 100
+        description_pool:
+          - "A wide threshold framed by an enormous decorative cartouche, its scrollwork carved deep enough to put a hand into. Beyond it, the legend begins to assert itself."
+        ambient_pool:
+          - "Faint bell-tones, as if symbols somewhere down the corridor were chiming softly to each other."
+        features:
+          - id: cartouche_seal
+            name: "carved cartouche"
+            visibility: visible
+            investigate_label: "Trace the carving"
+            noise: 1
+            content:
+              - {type: gold, amount: [4, 8], chance: 1.0}
+              - {type: narrate, text: "_The carving's central seal is unsigned. A space has been left for a name no one ever wrote in._"}
+            flavor_success: "_Your finger comes away faintly inked. The carving is, very slightly, still wet._"
+
+      - id: legend_chamber
+        weight: 100
+        description_pool:
+          - "The chamber opens onto a vast suspended manuscript page, its symbols turning lazily in mid-air. They are aware of you. They are deciding what to call you."
+
+      - id: icon_gallery
+        weight: 100
+        description_pool:
+          - "A long gallery, both walls lined with miniature drawn icons in their cartouche frames. Many of the icons are, very slightly, the wrong way up."
+        features:
+          - id: castle_icon_panel
+            name: "castle-icon panel"
+            visibility: visible
+            investigate_label: "Examine the castle icons"
+            noise: 1
+            content:
+              - {type: gold, amount: [6, 12], chance: 1.0}
+              - {type: lore_fragment, fragment_id: 4, chance: 1.0}
+            flavor_success: "_The largest castle in the row has been carefully, repeatedly, drawn over its predecessor. Each layer of correction makes it more confidently itself._"
+          - id: tipped_icon
+            name: "wrongly-tipped icon"
+            visibility: concealed
+            perception_dc: 12
+            look_hint: "an icon that has, alone among them, refused to be turned right way up"
+            investigate_label: "Right the icon"
+            noise: 1
+            content:
+              - {type: gold, amount: [3, 7], chance: 1.0}
+              - {type: item, item_id: smoke_bomb, chance: 0.5}
+            flavor_success: "_The icon clicks back into its proper orientation. Behind it, a small recess. Inside the recess, a small mercy._"
+
+      - id: elevation_shelf
+        weight: 100
+        description_pool:
+          - "A shelf-room: vertical contour-line stacks lining the walls like rolled scrolls, each labeled with an elevation that does not, you suspect, agree with itself."
+        features:
+          - id: contour_stack
+            name: "contour-line stack"
+            visibility: visible
+            investigate_label: "Pull a contour from the rack"
+            noise: 2
+            content:
+              - {type: gold, amount: [6, 10], chance: 1.0}
+              - {type: narrate, text: "_The contour, when you unroll it, is the elevation of a hill that no one has ever reported. It feels accurate anyway._"}
+            flavor_success: "_The roll comes out heavier than parchment should be._"
+
+      - id: rumor_table
+        weight: 90
+        description_pool:
+          - "A long, low table covered in a single laid-out map. Pins of red, of black, of one color you cannot name mark places that are, clearly, important."
+        features:
+          - id: laid_out_map
+            name: "laid-out map"
+            visibility: visible
+            investigate_label: "Lean over the map"
+            noise: 1
+            content:
+              - {type: gold, amount: [2, 5], chance: 0.7}
+              - {type: narrate, text: "_The pins of the unfamiliar color mark places that are not on any map you've ever seen. The pins remain after you stop looking._"}
+          - id: ledger_under_map
+            name: "ledger beneath the map"
+            visibility: secret
+            revealed_by: laid_out_map
+            investigate_label: "Open the ledger"
+            noise: 2
+            content:
+              - {type: lore_fragment, fragment_id: 5, chance: 1.0}
+              - {type: gold, amount: [8, 14], chance: 0.6}
+            flavor_success: "_The ledger has been pinned beneath the map for so long the parchment has rusted. The first entry you can read is dated yesterday._"
+
+      - id: drafted_hall
+        weight: 100
+        description_pool:
+          - "A long hall lined with empty drafting tables. At each table, a stool. On each stool, a faintly outlined apprentice — drawn here, never erased."
+        ambient_pool:
+          - "One of the outlined apprentices, very faintly, turns the page of a book that isn't there."
+        features:
+          - id: standing_inkpot
+            name: "still-warm inkpot"
+            visibility: visible
+            investigate_label: "Examine the inkpot"
+            noise: 1
+            content:
+              - {type: gold, amount: [3, 6], chance: 1.0}
+            flavor_success: "_The inkpot is recently used. The apprentices, you suspect, do not know the master is no longer here._"
+          - id: half_drafted_letter
+            name: "a draft letter, half-written"
+            visibility: concealed
+            perception_dc: 12
+            look_hint: "a sheet of paper one of the outlined apprentices is, very faintly, still holding"
+            investigate_label: "Read what was drafted"
+            noise: 2
+            content:
+              - {type: lore_fragment, fragment_id: 7, chance: 1.0}
+            flavor_success: "_The draft is a confession. The apprentice begins to write 'I am afraid' and then stops, mid-stroke. They have been mid-stroke for a long time._"
+
+      - id: mirror_atlas
+        weight: 80
+        description_pool:
+          - "A circular chamber whose walls are tall, bound atlases, identical, all open to the same map. The map is, in each, slightly different. None of the differences are accidental."
+        features:
+          - id: open_atlas
+            name: "open atlas"
+            visibility: visible
+            investigate_label: "Compare the atlases"
+            noise: 2
+            content:
+              - {type: gold, amount: [5, 10], chance: 0.8}
+              - {type: narrate, text: "_The differences between the atlases are corrections. They make a sequence. The sequence is the master's reasoning, walked backward from the answer._"}
+          - id: tucked_marker
+            name: "marker tucked in the binding"
+            visibility: secret
+            revealed_by: open_atlas
+            investigate_label: "Pull the marker free"
+            noise: 1
+            content:
+              - {type: lore_fragment, fragment_id: 8, chance: 1.0}
+            flavor_success: "_The marker is bone, not parchment. It still has the faint warmth of someone's pocket._"
+
+      - id: rest_legend_alcove
+        weight: 70
+        description_pool:
+          - "A small alcove between cartouches, empty save for a stool, a candle, and a single drawn cup of tea that is, somehow, still warm."
+        features:
+          - id: drawn_tea
+            name: "drawn cup of tea"
+            visibility: visible
+            investigate_label: "Drink the tea"
+            noise: 1
+            content:
+              - {type: item, item_id: health_potion, chance: 0.9}
+              - {type: narrate, text: "_The tea tastes exactly like a tea you remember. You cannot remember when._"}
+            flavor_success: "_The cup gives way under your hand the moment you set it down. It was, after all, drawn._"
+
+  # =========================================================================
   - floor: 3
     theme: the_territory
     background: |
       The deep interior. Alaric's obsession stopped being metaphorical
       somewhere up the stairs. Rooms rearrange if you take your eyes off
       them. The air smells faintly of ink.
-    rooms: [6, 8]
-    room_weights:
-      combat: 60
-      treasure: 15
-      trap: 20
-      rest: 5
+
+    layout:
+      rooms_per_run: [6, 8]
+      branches: [1, 3]
+      branch_length: [1, 2]
+
+    anchors:
+      - {position: entrance, room_id: ink_threshold}
+      - {position: boss, room_id: drafting_room}
+
+    wandering_threshold: 5
+    wandering_pool:
+      - {monster_id: surveyors_ghost, weight: 80}
+      - {monster_id: wandering_landmark, weight: 70}
+      - {monster_id: scribbled_hound, weight: 60}
+      - {monster_id: inkwash_wraith, weight: 60}
+
     monsters:
       - id: surveyors_ghost
         name: Surveyor's Ghost
@@ -339,7 +774,6 @@ floors:
         attack_bonus: 3
         xp: 26
         gold: [10, 20]
-        # Heavy, slow, defensive — like a landmark.
         ai: {attack: 40, heavy: 30, defend: 30}
         loot:
           - {item_id: worm, chance: 20, type: cross_game_bait}
@@ -347,10 +781,6 @@ floors:
           - {item_id: Duskfen Mud, chance: 8, type: cross_game_ingredient, name: Duskfen Mud}
           - {item_id: Scorchcap Spore, chance: 7, type: cross_game_ingredient, name: Scorchcap Spore}
 
-      # Alaric's summoned adds — included as regular floor-3 monsters so
-      # they can also appear in normal combat rooms AND be looked up by
-      # Alaric's summon_add ability at runtime. Weak on purpose — meant
-      # to be a speed bump, not a wall.
       - id: scribbled_hound
         name: Scribbled Hound
         description: "A dog drawn in hurried ink strokes. Its outline flickers. Its teeth are very, very permanent."
@@ -374,7 +804,6 @@ floors:
         attack_bonus: 2
         xp: 12
         gold: [4, 9]
-        # More fragile than the hound, hits harder — different tactical threat.
         ai: {attack: 70, heavy: 30}
         loot:
           - {item_id: insect, chance: 20, type: cross_game_bait}
@@ -392,8 +821,6 @@ floors:
         gold: [8, 18]
         ai: {attack: 60, heavy: 30, defend: 10}
         abilities:
-          # Once per fight: when HP drops below 50%, redraw the room around
-          # the player — a high-damage partial-armor-bypass strike.
           - type: redraw_strike
             trigger: on_hp_below_pct
             pct: 50
@@ -406,27 +833,7 @@ floors:
           - {item_id: shiny_lure, chance: 5, type: cross_game_bait}
           - {item_id: Ghostlight Oil, chance: 13, type: cross_game_ingredient, name: Ghostlight Oil}
           - {item_id: Nullite Powder, chance: 8, type: cross_game_ingredient, name: Nullite Powder}
-    traps:
-      - id: rerouting
-        name: Rerouting
-        damage: [5, 12]
-        dex_dc: 14
-        flavor_success: "The corridor tries to loop back on itself — you notice the repeated patterns and force your way through."
-        flavor_fail: "You walked for an hour. You ended up right where you started. Exhaustion hits like a hammer!"
-      - id: contour_fall
-        name: Contour Fall
-        damage: [6, 14]
-        dex_dc: 15
-        flavor_success: "A line of elevation peels off the wall and slams down — you dive sideways as it crashes."
-        flavor_fail: "A contour line falls on you with the weight of real topography!"
-      - id: legend_rewrite
-        name: Legend Rewrite
-        damage: [4, 12]
-        dex_dc: 14
-        flavor_success: "The floor's legend rewrites itself — you spot the change and sidestep before the new terrain can take effect."
-        flavor_fail: "The floor quietly reclassifies itself from 'stone' to 'void' — you plummet through!"
-    treasure_tier: rare
-    rest_shrines: 1
+
     boss:
       id: alaric_venn
       name: Alaric Venn, The Cartographer
@@ -437,16 +844,13 @@ floors:
       attack_bonus: 4
       xp: 90
       gold: [50, 100]
-      # Phase 1 caster: biases heavy (drawing big summons); defensive.
       ai: {attack: 40, heavy: 35, defend: 25}
       phases:
-        # Phase 2: wall — becomes harder to reach. AI leans defend.
         - hp_below_pct: 66
           ai: {attack: 30, heavy: 20, defend: 50}
           on_enter:
             type: narrate
             text: "_Alaric lays down his quill. He draws a wall between you — fast, practiced lines. **His defense rises.**_"
-        # Phase 3: quill up — existential attacks each turn. Race to finish him.
         - hp_below_pct: 33
           ai: {attack: 70, heavy: 30}
           on_enter:
@@ -460,11 +864,6 @@ floors:
               damage_bonus: 3
               text: "_The quill moves. You feel yourself being flattened — simplified, labeled. Your outline is being **traced**._"
       abilities:
-        # Phase 1 ONLY (phase_max: 0 = baseline phase only). Summon one add
-        # every 2 turns, picked randomly from the sketchbook. When HP drops
-        # below 66% we're in phase 1 (internal index), which gate-blocks
-        # this ability so Alaric stops summoning — transitioning the fight
-        # to the wall phase.
         - type: summon_add
           trigger: on_turn
           every: 2
@@ -472,8 +871,6 @@ floors:
           add_pool: [scribbled_hound, inkwash_wraith]
           max_active: 1
           untargetable_self: true
-        # Phase 2 only: defense buff (the wall) — fires once when HP drops
-        # below 66% via on_hp_below_pct. Permanent (remaining -1).
         - type: defense_bonus_self
           trigger: on_hp_below_pct
           pct: 66
@@ -496,3 +893,140 @@ floors:
         - {item_id: scale_mail_plus1, chance: 12, type: gear}
         - {item_id: war_hammer_plus2, chance: 5, type: gear}
         - {item_id: scale_mail_plus2, chance: 5, type: gear}
+
+    room_pool:
+      - id: ink_threshold
+        weight: 100
+        description_pool:
+          - "The stairs end at a slow black surface — neither liquid nor stone — that the corridor passes through without resistance. On the far side, the air smells of cold ink."
+        ambient_pool:
+          - "The ink is, you suspect, listening."
+          - "Behind you, the stairs you came down are no longer there."
+        features:
+          - id: ink_threshold_seal
+            name: "threshold seal"
+            visibility: visible
+            investigate_label: "Touch the seal"
+            noise: 1
+            content:
+              - {type: gold, amount: [6, 12], chance: 1.0}
+              - {type: narrate, text: "_Your fingertips come away dry but inked. The mark will not wash off for some hours._"}
+            flavor_success: "_The seal is unsigned, like the cartouche above. The space for a name has been left, very deliberately, blank._"
+
+      - id: drafting_room
+        weight: 100
+        description_pool:
+          - "A circular chamber. White walls. A single drafting table at the center. An old man, bent over it, drawing very carefully. He has not yet looked up."
+
+      - id: landmark_grove
+        weight: 100
+        description_pool:
+          - "A grove of landmarks — standing stones, lone oaks, way-shrines, a roadside well — none of which can possibly fit in a corridor, all of which clearly do."
+        ambient_pool:
+          - "One of the standing stones, you are almost sure, was not there a moment ago."
+        features:
+          - id: way_shrine
+            name: "way-shrine"
+            visibility: visible
+            investigate_label: "Pray at the way-shrine"
+            noise: 2
+            content:
+              - {type: item, item_id: health_potion, chance: 1.0}
+              - {type: narrate, text: "_The shrine accepts the prayer with an answering warmth. You will not learn what it was a shrine to, and that is, you sense, a kindness._"}
+
+      - id: drowned_archive
+        weight: 100
+        description_pool:
+          - "A long room flooded ankle-deep in cold black ink. Map-cases project from the surface like stalagmites. Some still hold their charts."
+        features:
+          - id: surface_case
+            name: "map case"
+            visibility: visible
+            investigate_label: "Open a map case"
+            noise: 2
+            content:
+              - {type: gold, amount: [8, 14], chance: 0.8}
+              - {type: lore_fragment, fragment_id: 9, chance: 1.0}
+            flavor_success: "_The case unrolls a list of the master's apprentices. Three names are crossed out. Beneath them, in the master's hand, sits his own._"
+          - id: submerged_case
+            name: "submerged map case"
+            visibility: concealed
+            perception_dc: 13
+            look_hint: "a stub barely above the ink-surface"
+            investigate_label: "Reach into the ink"
+            noise: 3
+            content:
+              - {type: gold, amount: [10, 18], chance: 1.0}
+              - {type: item, item_id: greater_health_potion, chance: 0.4}
+            flavor_success: "_Your arm comes up black to the elbow. The case still seals. Whatever is inside it is very, very dry._"
+
+      - id: false_promontory
+        weight: 90
+        description_pool:
+          - "A balcony of stone overlooking a sketched coastline that has not been finished. The sea has been begun. The cliff edge has not been agreed on."
+        features:
+          - id: cliff_edge
+            name: "unfinished cliff edge"
+            visibility: visible
+            investigate_label: "Examine the cliff"
+            noise: 2
+            content:
+              - {type: narrate, text: "_The cliff edge is a sketch, but the drop is real. Whoever finishes the line decides where the coast goes. The pencil is gone._"}
+              - {type: gold, amount: [4, 9], chance: 0.6}
+            flavor_success: "_The horizon is faintly, faintly visible — a line drawn lightly enough that you could rub it out, if you had the cruelty._"
+
+      - id: hourglass_alcove
+        weight: 80
+        description_pool:
+          - "A dead-end alcove dominated by a tall hourglass whose sand is, instead, fine black ink. The ink, you notice, runs both directions at once."
+        features:
+          - id: ink_hourglass
+            name: "ink hourglass"
+            visibility: visible
+            investigate_label: "Tip the hourglass"
+            noise: 2
+            content:
+              - {type: gold, amount: [10, 16], chance: 0.7}
+              - {type: narrate, text: "_The hourglass refuses to invert in a way that should be impossible. Time, here, has opinions._"}
+          - id: behind_the_hourglass
+            name: "alcove behind the hourglass"
+            visibility: secret
+            revealed_by: ink_hourglass
+            investigate_label: "Slip behind the hourglass"
+            noise: 1
+            content:
+              - {type: lore_fragment, fragment_id: 10, chance: 1.0}
+              - {type: gold, amount: [12, 20], chance: 0.7}
+            flavor_success: "_A narrow space behind the hourglass. The wall has been written on, then painted over, then written on again, then painted over._"
+
+      - id: phantom_workshop
+        weight: 100
+        description_pool:
+          - "A drafting workshop, fully occupied — by translucent apprentices working in silence. They do not look up. They will not see you."
+        features:
+          - id: open_letter
+            name: "open letter on the floor"
+            visibility: visible
+            investigate_label: "Read the letter"
+            noise: 1
+            content:
+              - {type: lore_fragment, fragment_id: 11, chance: 1.0}
+              - {type: narrate, text: "_One of the apprentices, very faintly, watches you read it. They do not approach._"}
+            flavor_success: "_The letter is the master's. It speaks to a 'boy still alive' — the only one of his apprentices who has not yet been crossed out._"
+
+      - id: drafting_anteroom
+        weight: 100
+        description_pool:
+          - "A small antechamber to the drafting room itself, empty except for a single chair, a single closed door, and a single ink-stained handprint on the door at exactly the height of someone leaning to push it open."
+        ambient_pool:
+          - "From beyond the door: the very faint sound of careful drawing. It does not stop while you are listening."
+        features:
+          - id: closed_door
+            name: "closed door"
+            visibility: visible
+            investigate_label: "Examine the door"
+            noise: 1
+            content:
+              - {type: lore_fragment, fragment_id: 12, chance: 1.0}
+              - {type: narrate, text: "_The handprint on the door is yours. You have not touched the door yet. It is yours all the same._"}
+            flavor_success: "_The door is the kind of door that knows you are coming. It has been waiting very patiently._"

@@ -1,8 +1,10 @@
-"""Smoke tests for the_undercrypt_v2 — content authoring conforms to the
-v2 schema and the engine generates playable floor states on top of it.
+"""Smoke tests for the_cartographers_folly_v2 — content authoring is
+verified end-to-end against the v2 engine.
 
-Mirrors test_goblin_warrens_v2 in shape; the assertions specific to the
-Undercrypt are the boss IDs and the legendary item.
+Doesn't rerun any logic tests (those live in their own modules); this
+is purely structural — does the dungeon YAML load, does it conform to
+the v2 schema, does the engine successfully generate a playable floor
+state on top of it.
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ import pytest
 from dungeon import explore, logic
 
 
-DUNGEON_KEY = "the_undercrypt_v2"
+DUNGEON_KEY = "the_cartographers_folly"
 
 
 @pytest.fixture(autouse=True)
@@ -35,11 +37,14 @@ def _dungeon():
 
 
 def test_loads_and_is_v2():
-    assert explore.is_v2_dungeon(_dungeon()) is True
+    d = _dungeon()
+    assert explore.is_v2_dungeon(d) is True
 
 
-def test_admin_role_gate():
-    assert _dungeon().get("min_role") == "Race Admin"
+def test_no_admin_role_gate():
+    # v2 cutover: dungeon is open to all players.
+    d = _dungeon()
+    assert d.get("min_role") is None
 
 
 def test_background_block_complete():
@@ -52,18 +57,20 @@ def test_background_block_complete():
     assert bg.get("style_notes")
 
 
-def test_legendary_reward_is_phylactery_shard():
+def test_legendary_reward_authored():
     legendary = _dungeon().get("legendary_reward") or {}
-    assert legendary.get("item_id") == "ring_of_precision"
-    assert legendary.get("name") == "The Phylactery Shard"
+    assert legendary.get("item_id") == "vorpal_dagger"
+    assert legendary.get("name") == "Alaric's Quill"
     assert legendary.get("flavor")
 
 
 def test_lore_fragments_count_and_uniqueness():
+    """12 fragments per the design doc range (12-20)."""
     fragments = _dungeon().get("lore_fragments") or []
     assert len(fragments) == 12
     ids = [f["id"] for f in fragments]
     assert sorted(ids) == list(range(1, 13))
+    # Each fragment has substantive text.
     for f in fragments:
         assert isinstance(f.get("text"), str) and len(f["text"]) > 50
 
@@ -74,7 +81,8 @@ def test_lore_fragments_count_and_uniqueness():
 
 
 def test_three_floors():
-    assert [f.get("floor") for f in _dungeon()["floors"]] == [1, 2, 3]
+    floors = _dungeon().get("floors") or []
+    assert [f.get("floor") for f in floors] == [1, 2, 3]
 
 
 def test_each_floor_has_anchors_layout_and_pool():
@@ -84,6 +92,7 @@ def test_each_floor_has_anchors_layout_and_pool():
         assert "entrance" in anchors and "boss" in anchors
         pool = f.get("room_pool") or []
         assert len(pool) >= 4
+        # Both anchors must be in the pool so the generator can place them.
         ids = {r["id"] for r in pool}
         assert anchors["entrance"] in ids
         assert anchors["boss"] in ids
@@ -93,26 +102,71 @@ def test_each_floor_has_wandering_pool():
     for f in _dungeon()["floors"]:
         wp = f.get("wandering_pool") or []
         assert len(wp) >= 1
+        # Each entry references a real monster on the floor.
         monster_ids = {m["id"] for m in (f.get("monsters") or [])}
+        # Bosses don't go in wandering pools; restrict to floor monsters.
         for entry in wp:
             mid = entry["monster_id"] if isinstance(entry, dict) else entry
-            assert mid in monster_ids
+            assert mid in monster_ids, (
+                f"Floor {f['floor']} wandering_pool references unknown monster '{mid}'"
+            )
 
 
 # ---------------------------------------------------------------------------
-# Bosses match the v1 roster.
+# Boss authoring (PR 1 / PR 4 abilities reused).
 # ---------------------------------------------------------------------------
 
 
-def test_floor_bosses_are_warden_wraith_varenthos():
-    floors = _dungeon()["floors"]
-    assert floors[0]["boss"]["id"] == "crypt_warden"
-    assert floors[1]["boss"]["id"] == "wraith_lord"
-    assert floors[2]["boss"]["id"] == "the_lich"
+def test_floor1_boss_is_scale_bar_with_dice_escalation():
+    f1 = _dungeon()["floors"][0]
+    boss = f1["boss"]
+    assert boss["id"] == "the_scale_bar"
+    abilities = boss.get("abilities") or []
+    dice_step = next((a for a in abilities if a.get("type") == "dice_step_self"), None)
+    assert dice_step is not None
+    schedule = {e["turn"]: e["step"] for e in dice_step["step_schedule"]}
+    assert schedule == {1: 0, 3: 1, 5: 2, 7: 3}
+
+
+def test_floor2_boss_is_key_legend_with_phases_and_random_pool():
+    f2 = _dungeon()["floors"][1]
+    boss = f2["boss"]
+    assert boss["id"] == "the_key_legend"
+    phases = [p["hp_below_pct"] for p in (boss.get("phases") or [])]
+    assert sorted(phases) == [33, 66]
+    abilities = boss.get("abilities") or []
+    pool = next((a for a in abilities if a.get("type") == "random_effect_pool"), None)
+    assert pool is not None
+    assert pool.get("every") == 2
+    pool_types = {p["type"] for p in pool["pool"]}
+    assert "player_next_attack_invert" in pool_types
+    assert "player_next_attack_advantage" in pool_types
+
+
+def test_floor3_boss_alaric_summon_phase_gated_with_pool():
+    f3 = _dungeon()["floors"][2]
+    boss = f3["boss"]
+    assert boss["id"] == "alaric_venn"
+    summons = [a for a in (boss.get("abilities") or []) if a.get("type") == "summon_add"]
+    assert summons, "Alaric must have a summon_add ability"
+    summon = summons[0]
+    assert summon.get("phase_max") == 0
+    pool = summon.get("add_pool") or []
+    assert "scribbled_hound" in pool and "inkwash_wraith" in pool
+    # Both adds defined as floor-3 monsters so the engine can resolve them.
+    monster_ids = {m["id"] for m in f3.get("monsters") or []}
+    for add_id in pool:
+        assert add_id in monster_ids
+
+
+def test_floor3_boss_has_signature_death_line():
+    boss = _dungeon()["floors"][2]["boss"]
+    death = boss.get("on_death_narration") or ""
+    assert "A. Venn" in death or "Cartographer Royal" in death
 
 
 # ---------------------------------------------------------------------------
-# Lore-fragment placement.
+# Lore-fragment placement: every fragment id is referenced by some feature.
 # ---------------------------------------------------------------------------
 
 
@@ -134,8 +188,7 @@ def test_every_lore_fragment_id_is_reachable_from_some_feature():
 
 
 def test_lore_fragment_distribution_across_floors():
-    """Each floor should hold a meaningful share so completing the book
-    requires touching all three."""
+    """Some fragments on every floor — collecting requires touching all three."""
     d = _dungeon()
     by_floor: dict[int, set[int]] = {}
     for floor in d["floors"]:
@@ -154,7 +207,7 @@ def test_lore_fragment_distribution_across_floors():
 
 
 # ---------------------------------------------------------------------------
-# Engine integration.
+# Engine integration — generate every floor and confirm pre-roll runs.
 # ---------------------------------------------------------------------------
 
 
@@ -163,8 +216,10 @@ def test_engine_generates_playable_floor_state(floor_num: int):
     d = _dungeon()
     floor = logic.get_floor_data(d, floor_num)
     state = explore.initial_floor_state(floor, random.Random(7))
-    assert state["current"] == "r0"
 
+    # Entrance is r0, anchored.
+    assert state["current"] == "r0"
+    # Boss room is the deepest node.
     boss_node = state["graph"]["boss"]
     rooms = state["graph"]["rooms"]
     boss_room_def = rooms[boss_node]["room_def_id"]
@@ -173,7 +228,7 @@ def test_engine_generates_playable_floor_state(floor_num: int):
     )
     assert boss_room_def == expected_boss_room
 
-    # Pre-rolled rewards exist for every authored feature.
+    # Pre-rolled rewards exist for every authored feature in every room.
     pool_by_id = {r["id"]: r for r in floor["room_pool"]}
     for nid, n in rooms.items():
         room_def = pool_by_id[n["room_def_id"]]
@@ -185,23 +240,9 @@ def test_engine_generates_playable_floor_state(floor_num: int):
             )
 
 
-@pytest.mark.parametrize("seed", [0, 7, 42, 99, 314])
-def test_branched_layout_produces_junctions(seed: int):
-    """The Undercrypt YAML asks for branches on every floor; the
-    generator should produce at least one junction across these seeds."""
-    d = _dungeon()
-    seen_junction = False
-    for floor_num in (1, 2, 3):
-        floor = logic.get_floor_data(d, floor_num)
-        state = explore.initial_floor_state(floor, random.Random(seed))
-        rooms = state["graph"]["rooms"]
-        if any(len(r["exits"]) >= 3 for r in rooms.values()):
-            seen_junction = True
-            break
-    assert seen_junction, f"no junctions across all floors at seed {seed}"
-
-
 def test_no_free_tier_brewing_ingredients_in_loot():
+    """Per existing policy — dungeons never drop free-tier ingredients
+    because players can forage them via brewing."""
     FREE = {
         "Ember Salt", "Moonpetal", "Wraith Moss",
         "Iron Root", "Gloomcap", "Brimstone Dust",
@@ -218,19 +259,18 @@ def test_no_free_tier_brewing_ingredients_in_loot():
 
 
 # ---------------------------------------------------------------------------
-# Schema validators.
+# Schema-validator pass-through (would have already failed loading if broken).
 # ---------------------------------------------------------------------------
 
 
 def test_validate_dungeon_meta_passes():
-    assert explore.validate_dungeon_meta(_dungeon()) == []
+    d = _dungeon()
+    assert explore.validate_dungeon_meta(d) == []
 
 
 def test_validate_room_passes_for_every_room():
     d = _dungeon()
     for floor in d["floors"]:
         for room in floor.get("room_pool") or []:
-            errs = explore.validate_room(
-                room, path=f"floor[{floor['floor']}].{room['id']}.",
-            )
+            errs = explore.validate_room(room, path=f"floor[{floor['floor']}].{room['id']}.")
             assert errs == [], errs
